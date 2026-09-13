@@ -1,0 +1,1689 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tactical RMM — Fullscreen Remote Desktop</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css">
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        html, body {
+            margin: 0;
+            padding: 0;
+            width: 100vw;
+            height: 100vh;
+            overflow: hidden;
+            background: #030712;
+            user-select: none;
+            font-family: var(--font-sans, 'Plus Jakarta Sans', sans-serif);
+        }
+
+        /* Ultra-Slim Fixed Header Bar (28px height, never overlays remote windows) */
+        .top-header-bar {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 28px;
+            background: #080d1a;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.09);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 8px;
+            z-index: 9999;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+        }
+
+        .header-left, .header-center, .header-right {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .header-badge {
+            font-size: 11px;
+            font-weight: 700;
+            color: #38bdf8;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            padding: 2px 6px;
+            background: rgba(56, 189, 248, 0.1);
+            border-radius: 4px;
+            border: 1px solid rgba(56, 189, 248, 0.2);
+            white-space: nowrap;
+        }
+
+        .header-btn {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            color: #cbd5e1;
+            font-size: 11px;
+            font-weight: 600;
+            padding: 2px 7px;
+            height: 22px;
+            border-radius: 4px;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            transition: all 0.12s ease;
+            white-space: nowrap;
+        }
+
+        .header-btn:hover {
+            background: rgba(255, 255, 255, 0.12);
+            color: #ffffff;
+            border-color: #38bdf8;
+        }
+
+        .header-btn.active {
+            background: rgba(56, 189, 248, 0.2);
+            border-color: #38bdf8;
+            color: #38bdf8;
+        }
+
+        .header-btn.shortcut-btn {
+            background: rgba(244, 63, 94, 0.1);
+            border-color: rgba(244, 63, 94, 0.25);
+            color: #fda4af;
+        }
+
+        .header-btn.shortcut-btn:hover {
+            background: rgba(244, 63, 94, 0.25);
+            color: #ffffff;
+        }
+
+        .header-btn.btn-exit {
+            background: rgba(239, 68, 68, 0.2);
+            border-color: rgba(239, 68, 68, 0.35);
+            color: #fca5a5;
+        }
+
+        .header-btn.btn-exit:hover {
+            background: rgba(239, 68, 68, 0.4);
+            color: #ffffff;
+        }
+
+        /* 100% Edge-to-Edge Canvas Viewport below the 28px header */
+        .viewer-stage {
+            position: absolute;
+            top: 28px;
+            left: 0;
+            width: 100vw;
+            height: calc(100vh - 28px);
+            overflow: hidden;
+            background: #030712;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .canvas-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+        }
+
+        #hvncCanvas {
+            display: block;
+            outline: none;
+            cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'%3E%3Cpath d='M4 2 L4 20 L8.5 15.5 L12.5 23.5 L15.5 22 L11.5 14 L18 14 Z' fill='%23FFFFFF' stroke='%23000000' stroke-width='1.6' stroke-linejoin='round'/%3E%3C/svg%3E") 0 0, default !important;
+            image-rendering: -webkit-optimize-contrast;
+            image-rendering: crisp-edges;
+            box-shadow: 0 0 40px rgba(0, 0, 0, 0.9);
+        }
+
+        /* Hardware Cursor Layer */
+        #virtualCursor {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 24px;
+            height: 24px;
+            pointer-events: none;
+            z-index: 99999;
+            transform: translate3d(-100px, -100px, 0);
+            transition: none !important;
+            filter: drop-shadow(1px 2px 3px rgba(0, 0, 0, 0.8));
+            will-change: transform;
+            display: none;
+        }
+
+        /* Click Ripple Effect */
+        .click-ripple {
+            position: fixed;
+            width: 28px;
+            height: 28px;
+            border: 2px solid #38bdf8;
+            border-radius: 50%;
+            pointer-events: none;
+            z-index: 99998;
+            transform: translate(-50%, -50%) scale(0.2);
+            opacity: 1;
+            animation: rippleAnim 0.35s cubic-bezier(0.1, 0.8, 0.3, 1) forwards;
+        }
+
+        @keyframes rippleAnim {
+            0% { transform: translate(-50%, -50%) scale(0.3); opacity: 1; border-color: #38bdf8; }
+            100% { transform: translate(-50%, -50%) scale(2.2); opacity: 0; border-color: #a855f7; }
+        }
+
+        /* Bottom-Left Windows Start Button Trigger */
+        .start-btn-trigger {
+            position: fixed;
+            bottom: 4px;
+            left: 6px;
+            width: 38px;
+            height: 34px;
+            background: rgba(30, 41, 59, 0.85);
+            border: 1px solid rgba(56, 189, 248, 0.4);
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            z-index: 900;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.6);
+            transition: all 0.15s ease;
+        }
+
+        .start-btn-trigger:hover, .start-btn-trigger.active {
+            background: rgba(56, 189, 248, 0.25);
+            border-color: #38bdf8;
+            transform: translateY(-1px);
+        }
+
+        /* Windows Start Menu Popup Modal */
+        .start-menu-modal {
+            position: fixed;
+            bottom: 46px;
+            left: 10px;
+            width: 440px;
+            max-width: 95vw;
+            height: 520px;
+            background: rgba(15, 23, 42, 0.96);
+            backdrop-filter: blur(24px);
+            -webkit-backdrop-filter: blur(24px);
+            border: 1px solid rgba(56, 189, 248, 0.25);
+            border-radius: 12px;
+            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.85), 0 0 1px rgba(255, 255, 255, 0.2);
+            z-index: 950;
+            display: none;
+            flex-direction: column;
+            overflow: hidden;
+            animation: startMenuOpen 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        }
+
+        .start-menu-modal.open {
+            display: flex;
+        }
+
+        @keyframes startMenuOpen {
+            0% { opacity: 0; transform: translateY(12px) scale(0.98); }
+            100% { opacity: 1; transform: translateY(0) scale(1); }
+        }
+
+        .start-search-box {
+            padding: 10px 14px;
+            background: rgba(30, 41, 59, 0.6);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .start-search-input {
+            flex: 1;
+            background: rgba(15, 23, 42, 0.8);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            border-radius: 6px;
+            padding: 6px 12px;
+            font-size: 12px;
+            color: #f8fafc;
+            outline: none;
+            font-family: inherit;
+        }
+
+        .start-search-input:focus {
+            border-color: #38bdf8;
+            box-shadow: 0 0 8px rgba(56, 189, 248, 0.25);
+        }
+
+        .start-content-scroll {
+            flex: 1;
+            overflow-y: auto;
+            padding: 12px 14px;
+        }
+
+        .start-section-title {
+            font-size: 10px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: #94a3b8;
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .start-apps-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 6px;
+            margin-bottom: 14px;
+        }
+
+        .start-app-item {
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            border-radius: 6px;
+            padding: 6px 10px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            cursor: pointer;
+            transition: all 0.12s ease;
+            text-align: left;
+            overflow: hidden;
+        }
+
+        .start-app-item:hover {
+            background: rgba(56, 189, 248, 0.15);
+            border-color: rgba(56, 189, 248, 0.4);
+            transform: translateY(-1px);
+        }
+
+        .start-app-icon {
+            font-size: 16px;
+            flex-shrink: 0;
+        }
+
+        .start-app-info {
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .start-app-name {
+            font-size: 11px;
+            font-weight: 600;
+            color: #f1f5f9;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .start-app-cat {
+            font-size: 9px;
+            color: #94a3b8;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .start-footer {
+            padding: 8px 14px;
+            background: rgba(10, 15, 26, 0.9);
+            border-top: 1px solid rgba(255, 255, 255, 0.08);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            font-size: 11px;
+            color: #94a3b8;
+        }
+
+        /* Right-Click Context Menu for Taskbar Windows */
+        .taskbar-context-menu {
+            position: fixed;
+            width: 170px;
+            background: rgba(15, 23, 42, 0.98);
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(56, 189, 248, 0.3);
+            border-radius: 8px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.8);
+            z-index: 10000;
+            display: none;
+            flex-direction: column;
+            padding: 4px 0;
+            user-select: none;
+        }
+
+        .taskbar-context-menu.open {
+            display: flex;
+        }
+
+        .ctx-item {
+            padding: 6px 12px;
+            font-size: 11px;
+            font-weight: 500;
+            color: #e2e8f0;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            transition: all 0.1s ease;
+        }
+
+        .ctx-item:hover {
+            background: rgba(56, 189, 248, 0.2);
+            color: #ffffff;
+        }
+
+        .ctx-item.danger:hover {
+            background: rgba(239, 68, 68, 0.25);
+            color: #fca5a5;
+        }
+
+        .ctx-divider {
+            height: 1px;
+            background: rgba(255, 255, 255, 0.08);
+            margin: 4px 0;
+        }
+
+        /* Collapsible Diagnostics & Live Inspector Drawer */
+        .diag-drawer {
+            position: fixed;
+            bottom: 46px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 720px;
+            max-width: 95vw;
+            height: 250px;
+            background: rgba(15, 23, 42, 0.96);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid rgba(255, 255, 255, 0.16);
+            border-radius: 12px;
+            box-shadow: 0 16px 48px rgba(0, 0, 0, 0.7);
+            display: none;
+            flex-direction: column;
+            z-index: 10001;
+            overflow: hidden;
+        }
+
+        .diag-drawer.open {
+            display: flex;
+        }
+
+        .diag-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 8px 14px;
+            background: rgba(255, 255, 255, 0.04);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+            font-size: 11px;
+            font-weight: 700;
+            color: #f8fafc;
+        }
+
+        .diag-logs {
+            flex: 1;
+            overflow-y: auto;
+            padding: 8px 12px;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+            font-size: 11px;
+            line-height: 1.5;
+            color: #94a3b8;
+        }
+
+        .diag-entry {
+            margin-bottom: 4px;
+            padding: 2px 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+            word-break: break-all;
+        }
+
+        .diag-entry.launch-ok { color: #34d399; font-weight: 600; }
+        .diag-entry.launch-err { color: #f87171; font-weight: 600; }
+        .diag-entry.click { color: #38bdf8; }
+        .diag-entry.wheel { color: #fbbf24; }
+
+        /* Toast Notifications */
+        .toast-container {
+            position: fixed;
+            top: 36px;
+            right: 14px;
+            z-index: 99999;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            pointer-events: none;
+        }
+
+        .toast {
+            background: rgba(15, 23, 42, 0.95);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            border-radius: 8px;
+            padding: 10px 14px;
+            min-width: 260px;
+            max-width: 400px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+            pointer-events: auto;
+            animation: toastIn 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        }
+
+        .toast.toast-error {
+            border-color: rgba(239, 68, 68, 0.5);
+            background: rgba(30, 10, 15, 0.96);
+        }
+
+        .toast.toast-success {
+            border-color: rgba(16, 185, 129, 0.5);
+        }
+
+        @keyframes toastIn {
+            0% { opacity: 0; transform: translateY(-8px) scale(0.96); }
+            100% { opacity: 1; transform: translateY(0) scale(1); }
+        }
+
+        .toast.fade-out {
+            opacity: 0;
+            transform: translateY(-8px);
+            transition: all 0.25s ease;
+        }
+
+        .toast-title {
+            font-size: 12px;
+            font-weight: 700;
+            color: #ffffff;
+            margin-bottom: 2px;
+        }
+
+        .toast-desc {
+            font-size: 11px;
+            color: #cbd5e1;
+            line-height: 1.4;
+        }
+    </style>
+</head>
+<body>
+    <!-- 28px Fixed Slim Top Action Bar (Never Overlays Remote Windows) -->
+    <div class="top-header-bar" id="topHeaderBar">
+        <div class="header-left">
+            <span class="header-badge" id="hvncTargetTitle">
+                <span style="width: 6px; height: 6px; border-radius: 50%; background: #10b981; box-shadow: 0 0 6px #10b981;"></span>
+                <span>Target: Remote</span>
+            </span>
+
+            <!-- Backstage Actions -->
+            <div id="backstageHeaderActions" style="display: flex; gap: 5px; align-items: center;">
+                <button class="header-btn" onclick="toggleStartMenu()" title="Open Windows Start Menu (All Installed Programs)">
+                    <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
+                        <rect x="1" y="1" width="6" height="6" fill="#38bdf8" />
+                        <rect x="9" y="1" width="6" height="6" fill="#38bdf8" />
+                        <rect x="1" y="9" width="6" height="6" fill="#38bdf8" />
+                        <rect x="9" y="9" width="6" height="6" fill="#38bdf8" />
+                    </svg>
+                    <span>Programs</span>
+                </button>
+                <button class="header-btn" onclick="startCdpSession('chrome')" title="Launch Chrome in Backstage" style="color: #38bdf8; border-color: rgba(56, 189, 248, 0.4);">
+                    <span>🌐 Chrome</span>
+                </button>
+                <button class="header-btn" onclick="startCdpSession('edge')" title="Launch Edge in Backstage" style="color: #38bdf8; border-color: rgba(56, 189, 248, 0.4);">
+                    <span>🌐 Edge</span>
+                </button>
+                <button class="header-btn" onclick="sendViewerLaunch('explorer')" title="Launch File Explorer">
+                    <span>📁 Explorer</span>
+                </button>
+                <button class="header-btn" onclick="sendViewerLaunch('cmd')" title="Launch Command Prompt">
+                    <span>⌨️ CMD</span>
+                </button>
+                <button class="header-btn" onclick="sendViewerLaunch('powershell')" title="Launch PowerShell">
+                    <span>💻 PS</span>
+                </button>
+                <button class="header-btn" onclick="sendViewerLaunch('taskmgr')" title="Launch Task Manager">
+                    <span>📊 TaskMgr</span>
+                </button>
+            </div>
+
+            <!-- Take Control Physical Mirror Actions -->
+            <div id="mirrorHeaderActions" style="display: none; gap: 5px; align-items: center;">
+                <button class="header-btn" onclick="sendRemoteShortcut(0x11, 0x10, 0x1B)" title="Ctrl + Shift + Esc (Physical Task Manager)">
+                    <span>📊 TaskMgr</span>
+                </button>
+            </div>
+        </div>
+
+        <div class="header-right">
+            <!-- Stealth Mouse Toggle (Hide Hover Movement) -->
+            <button class="header-btn" id="stealthMouseBtn" onclick="toggleStealthMouse()" title="Stealth Mouse: Suppress hover cursor movement on target (cursor moves only on click/drag)">
+                <span id="stealthMouseLabel">🖱️ Mouse: Live</span>
+            </button>
+
+            <!-- Privacy Screen Curtain (Take Control) -->
+            <button class="header-btn" id="curtainToggleBtn" onclick="toggleScreenCurtain()" title="Screen Curtain: Display IT maintenance privacy screen on target monitor (excluded from your view)">
+                <span id="curtainModeLabel">🛡️ Curtain: Off</span>
+            </button>
+
+            <!-- Block Remote User Input (Take Control) -->
+            <button class="header-btn" id="blockInputBtn" onclick="toggleBlockInput()" title="Block Remote Input: Temporarily lock physical mouse & keyboard on target machine">
+                <span id="blockInputLabel">🚫 Input: Free</span>
+            </button>
+
+            <!-- OTA Live Code Sync -->
+            <button class="header-btn" id="btnSyncCode" onclick="triggerLiveCodeSync()" title="Push Latest Code & Features to Target Agent (No Recompiling!)" style="color: #38bdf8; border-color: rgba(56, 189, 248, 0.4);">
+                <span>⚡ Sync</span>
+            </button>
+
+            <!-- Fullscreen -->
+            <button class="header-btn" onclick="toggleFullscreen()" title="Toggle Fullscreen (F11)">
+                <svg id="fsIconExpand" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
+                <svg id="fsIconCompress" style="display:none;" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 14h6m0 0v6m0-6L3 21m17-7h-6m0 0v6m0-6l7 7M4 10h6m0 0V4m0 6L3 3m17 7h-6m0 0V4m0 6l7-7"/></svg>
+            </button>
+
+            <!-- Exit Session -->
+            <button class="header-btn btn-exit" onclick="closeSession()" title="Close Remote Session">
+                <span>✕ Exit</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- 100% Dedicated Remote Stage (Under the 28px header) -->
+    <div class="viewer-stage" id="viewerStage">
+
+
+        <div class="canvas-container" id="canvasContainer">
+            <canvas id="hvncCanvas" width="1280" height="720" tabindex="0"></canvas>
+        </div>
+    </div>
+
+    <!-- Bottom-Left Windows Start Button Overlay -->
+    <div class="start-btn-trigger" id="startBtnTrigger" onclick="toggleStartMenu()" title="Windows Start Menu (Installed Programs)">
+        <svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor">
+            <rect x="1" y="1" width="6" height="6" fill="#38bdf8" />
+            <rect x="9" y="1" width="6" height="6" fill="#38bdf8" />
+            <rect x="1" y="9" width="6" height="6" fill="#38bdf8" />
+            <rect x="9" y="9" width="6" height="6" fill="#38bdf8" />
+        </svg>
+    </div>
+
+    <!-- Windows Start Menu Popup Modal -->
+    <div class="start-menu-modal" id="startMenuModal">
+        <div class="start-search-box">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <input type="text" class="start-search-input" id="startSearchInput" placeholder="Type here to search installed programs..." oninput="filterInstalledApps(this.value)">
+            <button class="header-btn" style="padding: 2px 6px;" onclick="refreshInstalledApps()" title="Refresh Installed Apps">🔄</button>
+            <button class="header-btn" style="padding: 2px 6px;" onclick="toggleStartMenu()" title="Close">✕</button>
+        </div>
+
+        <div class="start-content-scroll" id="startContentScroll">
+            <!-- Quick Access / Browsers Section -->
+            <div class="start-section-title">
+                <span>Quick Access Browsers & Tools</span>
+            </div>
+            <div class="start-apps-grid">
+                <div class="start-app-item" onclick="startCdpSession('chrome'); toggleStartMenu(false);">
+                    <span class="start-app-icon">🌐</span>
+                    <div class="start-app-info">
+                        <span class="start-app-name">Google Chrome</span>
+                        <span class="start-app-cat">User Profile Logged In (CDP)</span>
+                    </div>
+                </div>
+                <div class="start-app-item" onclick="startCdpSession('edge'); toggleStartMenu(false);">
+                    <span class="start-app-icon">🌐</span>
+                    <div class="start-app-info">
+                        <span class="start-app-name">Microsoft Edge</span>
+                        <span class="start-app-cat">Browser (CDP)</span>
+                    </div>
+                </div>
+                <div class="start-app-item" onclick="launchInstalledApp('firefox.exe', 'Mozilla Firefox')">
+                    <span class="start-app-icon">🦊</span>
+                    <div class="start-app-info">
+                        <span class="start-app-name">Mozilla Firefox</span>
+                        <span class="start-app-cat">Browser</span>
+                    </div>
+                </div>
+                <div class="start-app-item" onclick="launchInstalledApp('opera', 'Opera')">
+                    <span class="start-app-icon">🔴</span>
+                    <div class="start-app-info">
+                        <span class="start-app-name">Opera / Opera GX</span>
+                        <span class="start-app-cat">Browser</span>
+                    </div>
+                </div>
+                <div class="start-app-item" onclick="launchInstalledApp('chrome://settings', 'Chrome Settings')">
+                    <span class="start-app-icon">⚙️</span>
+                    <div class="start-app-info">
+                        <span class="start-app-name">Chrome Settings</span>
+                        <span class="start-app-cat">chrome://settings</span>
+                    </div>
+                </div>
+                <div class="start-app-item" onclick="launchInstalledApp('chrome://history', 'Chrome History')">
+                    <span class="start-app-icon">📜</span>
+                    <div class="start-app-info">
+                        <span class="start-app-name">Chrome History</span>
+                        <span class="start-app-cat">chrome://history</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Dynamic Installed Applications Section -->
+            <div class="start-section-title">
+                <span>Installed Programs on Target PC (<span id="installedAppsCount">0</span>)</span>
+            </div>
+            <div class="start-apps-grid" id="installedAppsContainer">
+                <div style="grid-column: 1 / -1; padding: 12px; text-align: center; color: #64748b; font-size: 11px;">
+                    Loading installed applications from target machine...
+                </div>
+            </div>
+        </div>
+
+        <div class="start-footer">
+            <span>Tactical RMM • Zero-Leak Desktop Isolation</span>
+            <span id="targetPcLabel">Target: Loading...</span>
+        </div>
+    </div>
+
+    <!-- Right-Click Taskbar Context Menu -->
+    <div class="taskbar-context-menu" id="taskbarContextMenu">
+        <div class="ctx-item" onclick="execTaskbarAction('restore')">
+            <span>🗖 Restore / Switch To</span>
+        </div>
+        <div class="ctx-item" onclick="execTaskbarAction('maximize')">
+            <span>🗖 Maximize</span>
+        </div>
+        <div class="ctx-item" onclick="execTaskbarAction('minimize')">
+            <span>🗕 Minimize</span>
+        </div>
+        <div class="ctx-divider"></div>
+        <div class="ctx-item danger" onclick="execTaskbarAction('close')">
+            <span>✕ Close Window</span>
+        </div>
+    </div>
+
+    <!-- Right-Click Desktop Context Menu -->
+    <div class="taskbar-context-menu" id="desktopContextMenu">
+        <div class="ctx-item" onclick="refreshDesktopView()">
+            <span>🔄 Refresh Desktop</span>
+        </div>
+        <div class="ctx-divider"></div>
+        <div class="ctx-item" onclick="launchInstalledApp('explorer.exe', 'File Explorer')">
+            <span>📁 File Explorer</span>
+        </div>
+        <div class="ctx-item" onclick="launchInstalledApp('cmd.exe', 'Command Prompt')">
+            <span>⌨️ Command Prompt</span>
+        </div>
+        <div class="ctx-item" onclick="launchInstalledApp('notepad.exe', 'Notepad')">
+            <span>📝 New Text Document</span>
+        </div>
+        <div class="ctx-divider"></div>
+        <div class="ctx-item" onclick="toggleStartMenu(true)">
+            <span>📦 All Programs</span>
+        </div>
+    </div>
+
+    <!-- Live Telemetry Drawer -->
+    <div class="diag-drawer" id="diagDrawer">
+        <div class="diag-header">
+            <span>🐞 Target Endpoint Live Event Inspector</span>
+            <div style="display: flex; gap: 6px;">
+                <button class="header-btn" onclick="clearDiagLogs()">Clear</button>
+                <button class="header-btn" onclick="toggleDiagDrawer()">✕ Close</button>
+            </div>
+        </div>
+        <div class="diag-logs" id="diagLogs">
+            <div class="diag-entry" style="color: #64748b;">Ready. Waiting for input and application launch events...</div>
+        </div>
+    </div>
+
+    <!-- Toast Notifications -->
+    <div class="toast-container" id="toastContainer"></div>
+
+    <script>
+        let viewerWs = null;
+        let hvncCanvas = null;
+        let hvncCtx = null;
+        let hasHvncFocus = false;
+        let hvncDisplayMode = 'fit';
+        let isRenderingFrame = false;
+        let pendingFrameBlob = null;
+        let isStartMenuOpen = false;
+        let installedAppsList = [];
+        let contextMenuTargetHwnd = 0;
+
+        // Cursor & Batch Dispatch
+        let virtualCursor = null;
+        let cursorStyleIndex = 0;
+        const cursorStyles = ['pointer', 'crosshair', 'dot'];
+        let pendingTargetCoords = null;
+        let inputDispatchLoopActive = false;
+
+        function getAgentId() {
+            const pathParts = window.location.pathname.split('/').filter(Boolean);
+            if (pathParts.length >= 2 && pathParts[0] === 'viewer') {
+                return pathParts[1];
+            }
+            const params = new URLSearchParams(window.location.search);
+            return params.get('agent_id') || 'agent_default';
+        }
+
+        function getSessionMode() {
+            const params = new URLSearchParams(window.location.search);
+            return (params.get('mode') || 'backstage').toLowerCase();
+        }
+
+        const agentId = getAgentId();
+        const sessionMode = getSessionMode();
+
+        document.addEventListener("DOMContentLoaded", () => {
+            virtualCursor = document.getElementById("virtualCursor");
+            hvncCanvas = document.getElementById("hvncCanvas");
+            if (hvncCanvas) {
+                hvncCtx = hvncCanvas.getContext("2d");
+                initCanvasListeners();
+            }
+            resizeDisplay();
+
+            const isMirror = (sessionMode === 'mirror');
+            const modeLabel = isMirror ? '🖥 SCREEN MIRROR' : '🎭 BACKSTAGE';
+            const modeColor = isMirror ? '#10b981' : '#a855f7';
+            const modeBg = isMirror ? 'rgba(16, 185, 129, 0.15)' : 'rgba(168, 85, 247, 0.15)';
+            const modeBorder = isMirror ? 'rgba(16, 185, 129, 0.4)' : 'rgba(168, 85, 247, 0.4)';
+
+            document.getElementById("hvncTargetTitle").innerHTML = `
+                <span style="width: 6px; height: 6px; border-radius: 50%; background: ${modeColor}; box-shadow: 0 0 6px ${modeColor};"></span>
+                <span>[${agentId}]</span>
+                <span style="margin-left: 6px; padding: 2px 7px; border-radius: 4px; font-size: 10px; font-weight: 700; background: ${modeBg}; border: 1px solid ${modeBorder}; color: ${modeColor}; letter-spacing: 0.5px;">${modeLabel}</span>
+            `;
+            document.title = `TRMM [${isMirror ? 'Screen Mirror' : 'Backstage'}] — [${agentId}]`;
+
+            if (isMirror) {
+                const bkAct = document.getElementById("backstageHeaderActions");
+                const mrAct = document.getElementById("mirrorHeaderActions");
+                const startBtn = document.getElementById("startBtnTrigger");
+                if (bkAct) bkAct.style.display = "none";
+                if (mrAct) mrAct.style.display = "flex";
+                if (startBtn) startBtn.style.display = "none";
+            }
+
+            // Start 60Hz mouse dispatcher
+            startInputDispatchLoop();
+
+            // Connect session
+            connectViewer(agentId);
+
+            window.addEventListener("resize", resizeDisplay);
+            document.addEventListener("fullscreenchange", onFullscreenChange);
+
+            // Close context menu and start menu on outside click
+            window.addEventListener("click", (e) => {
+                const startMenu = document.getElementById("startMenuModal");
+                const startBtn = document.getElementById("startBtnTrigger");
+                if (startMenu && isStartMenuOpen && !startMenu.contains(e.target) && !startBtn.contains(e.target)) {
+                    toggleStartMenu(false);
+                }
+
+                const ctxMenu = document.getElementById("taskbarContextMenu");
+                if (ctxMenu && ctxMenu.classList.contains("open")) {
+                    ctxMenu.classList.remove("open");
+                }
+            });
+
+            // Prevent tab lag when user leaves the tab
+            document.addEventListener("visibilitychange", handleVisibilityChange);
+        });
+
+        function handleVisibilityChange() {
+            if (document.hidden) {
+                // Drop stale frame blobs while tab is not active
+                pendingFrameBlob = null;
+            } else {
+                // Instantly resume rendering without sending pause to agent
+                pendingFrameBlob = null;
+                resizeDisplay();
+                if (!isRenderingFrame) {
+                    processNextFrame();
+                }
+            }
+        }
+
+        let stealthMouseMode = false;
+
+        function toggleStealthMouse(forceState) {
+            stealthMouseMode = (forceState !== undefined) ? forceState : !stealthMouseMode;
+            const btn = document.getElementById("stealthMouseBtn");
+            const label = document.getElementById("stealthMouseLabel");
+            if (stealthMouseMode) {
+                if (btn) {
+                    btn.classList.add("active");
+                    btn.style.borderColor = "#f59e0b";
+                    btn.style.color = "#fbbf24";
+                }
+                if (label) label.innerText = "🕶️ Mouse: Stealth";
+                showToast("Stealth Mouse Active", "Cursor hover movement & physical clicks hidden on target screen.", "info");
+            } else {
+                if (btn) {
+                    btn.classList.remove("active");
+                    btn.style.borderColor = "";
+                    btn.style.color = "";
+                }
+                if (label) label.innerText = "🖱️ Mouse: Live";
+                showToast("Live Mouse Active", "Normal physical cursor tracking restored.", "info");
+            }
+            sendViewerInput({ type: "set_stealth_cursor", enabled: stealthMouseMode });
+            if (viewerWs && viewerWs.readyState === WebSocket.OPEN) {
+                viewerWs.send(JSON.stringify({ type: "set_stealth_cursor", enabled: stealthMouseMode }));
+            }
+        }
+
+        let screenCurtainActive = false;
+        let blockInputActive = false;
+
+        function toggleScreenCurtain() {
+            screenCurtainActive = !screenCurtainActive;
+            const btn = document.getElementById("curtainToggleBtn");
+            const label = document.getElementById("curtainModeLabel");
+            if (screenCurtainActive) {
+                if (btn) {
+                    btn.classList.add("active");
+                    btn.style.borderColor = "#38bdf8";
+                    btn.style.color = "#38bdf8";
+                }
+                if (label) label.innerText = "🛡️ Curtain: Active";
+                showToast("Screen Curtain Active", "IT Maintenance banner displayed on target monitor. Stealth mode activated.", "info");
+
+                // Auto-activate stealth cursor on target
+                if (!stealthMouseMode) {
+                    toggleStealthMouse(true);
+                }
+            } else {
+                if (btn) {
+                    btn.classList.remove("active");
+                    btn.style.borderColor = "";
+                    btn.style.color = "";
+                }
+                if (label) label.innerText = "🛡️ Curtain: Off";
+                showToast("Screen Curtain Closed", "Target monitor display restored.", "info");
+
+                // Auto-deactivate stealth cursor on target when curtain is turned off
+                if (stealthMouseMode) {
+                    toggleStealthMouse(false);
+                }
+            }
+            sendViewerInput({ type: "set_curtain", enabled: screenCurtainActive });
+            if (viewerWs && viewerWs.readyState === WebSocket.OPEN) {
+                viewerWs.send(JSON.stringify({ type: "set_curtain", enabled: screenCurtainActive }));
+            }
+        }
+
+        window.addEventListener("beforeunload", function() {
+            if (screenCurtainActive || stealthMouseMode || blockInputActive) {
+                if (viewerWs && viewerWs.readyState === WebSocket.OPEN) {
+                    viewerWs.send(JSON.stringify({ type: "set_curtain", enabled: false }));
+                    viewerWs.send(JSON.stringify({ type: "set_stealth_cursor", enabled: false }));
+                    viewerWs.send(JSON.stringify({ type: "set_block_input", enabled: false }));
+                }
+            }
+        });
+
+        function toggleBlockInput() {
+            blockInputActive = !blockInputActive;
+            const btn = document.getElementById("blockInputBtn");
+            const label = document.getElementById("blockInputLabel");
+            if (blockInputActive) {
+                if (btn) {
+                    btn.classList.add("active");
+                    btn.style.borderColor = "#ef4444";
+                    btn.style.color = "#f87171";
+                }
+                if (label) label.innerText = "🔒 Input: Blocked";
+                showToast("Local Input Locked", "Physical mouse and keyboard locked on target machine. Remote admin input active.", "warning");
+            } else {
+                if (btn) {
+                    btn.classList.remove("active");
+                    btn.style.borderColor = "";
+                    btn.style.color = "";
+                }
+                if (label) label.innerText = "🚫 Input: Free";
+                showToast("Local Input Unlocked", "Physical mouse and keyboard unlocked on target machine.", "info");
+            }
+            sendViewerInput({ type: "set_block_input", enabled: blockInputActive });
+            if (viewerWs && viewerWs.readyState === WebSocket.OPEN) {
+                viewerWs.send(JSON.stringify({ type: "set_block_input", enabled: blockInputActive }));
+            }
+        }
+
+        function startInputDispatchLoop() {
+            if (inputDispatchLoopActive) return;
+            inputDispatchLoopActive = true;
+
+            function dispatchTick() {
+                if (pendingTargetCoords && viewerWs && viewerWs.readyState === WebSocket.OPEN) {
+                    if (!stealthMouseMode) {
+                        viewerWs.send(JSON.stringify({ type: "input", data: { type: "mousemove", mode: sessionMode, stealth: stealthMouseMode, ...pendingTargetCoords } }));
+                    }
+                    pendingTargetCoords = null;
+                }
+                requestAnimationFrame(dispatchTick);
+            }
+            requestAnimationFrame(dispatchTick);
+        }
+
+        function toggleStartMenu(forceState) {
+            isStartMenuOpen = forceState !== undefined ? forceState : !isStartMenuOpen;
+            const modal = document.getElementById("startMenuModal");
+            const btn = document.getElementById("startBtnTrigger");
+            if (modal) {
+                modal.classList.toggle("open", isStartMenuOpen);
+            }
+            if (btn) {
+                btn.classList.toggle("active", isStartMenuOpen);
+            }
+            if (isStartMenuOpen) {
+                const input = document.getElementById("startSearchInput");
+                if (input) {
+                    input.value = "";
+                    input.focus();
+                    filterInstalledApps("");
+                }
+            }
+        }
+
+        function refreshInstalledApps() {
+            if (viewerWs && viewerWs.readyState === WebSocket.OPEN) {
+                viewerWs.send(JSON.stringify({ type: "get_installed_apps" }));
+                showToast("Scanning Programs", "Querying installed software from target...", "info");
+            }
+        }
+
+        function renderInstalledApps(apps) {
+            installedAppsList = apps || [];
+            const container = document.getElementById("installedAppsContainer");
+            const countEl = document.getElementById("installedAppsCount");
+            if (countEl) countEl.innerText = installedAppsList.length;
+
+            if (!container) return;
+            if (installedAppsList.length === 0) {
+                container.innerHTML = `<div style="grid-column: 1 / -1; padding: 12px; text-align: center; color: #64748b; font-size: 11px;">No additional applications detected.</div>`;
+                return;
+            }
+
+            container.innerHTML = installedAppsList.map(app => {
+                const icon = app.icon || "📦";
+                const safeCmd = (app.cmd || "").replace(/'/g, "\\'");
+                const safeName = (app.name || "").replace(/'/g, "\\'");
+                return `
+                    <div class="start-app-item" onclick="launchInstalledApp('${safeCmd}', '${safeName}')" title="${safeName} (${safeCmd})">
+                        <span class="start-app-icon">${icon}</span>
+                        <div class="start-app-info">
+                            <span class="start-app-name">${app.name}</span>
+                            <span class="start-app-cat">${app.category || 'Program'}</span>
+                        </div>
+                    </div>
+                `;
+            }).join("");
+        }
+
+        function filterInstalledApps(query) {
+            const q = (query || "").trim().toLowerCase();
+            const items = document.querySelectorAll("#installedAppsContainer .start-app-item");
+            items.forEach(el => {
+                const name = el.querySelector(".start-app-name")?.innerText.toLowerCase() || "";
+                const cat = el.querySelector(".start-app-cat")?.innerText.toLowerCase() || "";
+                el.style.display = (name.includes(q) || cat.includes(q)) ? "flex" : "none";
+            });
+        }
+
+        function launchInstalledApp(cmd, name) {
+            const lower = ((cmd || "") + " " + (name || "")).toLowerCase();
+            if (lower.includes("chrome") && !lower.includes("settings") && !lower.includes("history")) {
+                startCdpSession('chrome');
+                toggleStartMenu(false);
+                return;
+            }
+            if (lower.includes("edge") || lower.includes("msedge")) {
+                startCdpSession('edge');
+                toggleStartMenu(false);
+                return;
+            }
+            if (viewerWs && viewerWs.readyState === WebSocket.OPEN) {
+                showToast("Launching Program", `Starting ${name}...`, "info");
+                viewerWs.send(JSON.stringify({
+                    type: "launch_installed_app",
+                    cmd: cmd,
+                    name: name
+                }));
+                toggleStartMenu(false);
+            }
+        }
+
+        function sendViewerLaunch(appName) {
+            if (viewerWs && viewerWs.readyState === WebSocket.OPEN) {
+                showToast("Launching Program", `Launching ${appName.toUpperCase()} (Backstage)...`, "info");
+                viewerWs.send(JSON.stringify({ type: "launch", app: appName }));
+            }
+        }
+
+        let isCdpActive = false;
+        function startCdpSession(browserName = 'chrome') {
+            if (viewerWs && viewerWs.readyState === WebSocket.OPEN) {
+                showToast("Connecting to Live Browser", `Attaching to active ${browserName.toUpperCase()} session (CDP)...`, "info");
+                viewerWs.send(JSON.stringify({
+                    type: "start_cdp",
+                    browser: browserName
+                }));
+            }
+        }
+
+        function stopCdpSession() {
+            if (viewerWs && viewerWs.readyState === WebSocket.OPEN) {
+                viewerWs.send(JSON.stringify({ type: "stop_cdp" }));
+                isCdpActive = false;
+                const bar = document.getElementById("cdpActiveBar");
+                if (bar) bar.style.display = "none";
+                showToast("CDP Session Stopped", "Switched back to desktop compositor.", "info");
+            }
+        }
+
+        function renderCdpTabs(tabs, activeTabId) {
+            const bar = document.getElementById("cdpActiveBar");
+            const sel = document.getElementById("cdpTabSelect");
+            if (!bar || !sel) return;
+            sel.innerHTML = "";
+            (tabs || []).forEach(t => {
+                const opt = document.createElement("option");
+                opt.value = t.id;
+                opt.textContent = (t.title || t.url || "Untitled Tab").slice(0, 50);
+                if (t.id === activeTabId) opt.selected = true;
+                sel.appendChild(opt);
+            });
+            bar.style.display = "flex";
+        }
+
+        function switchCdpTab(tabId) {
+            if (viewerWs && viewerWs.readyState === WebSocket.OPEN && tabId) {
+                showToast("Switching Tab", "Attaching to selected browser tab...", "info");
+                viewerWs.send(JSON.stringify({
+                    type: "start_cdp",
+                    tab_id: tabId
+                }));
+            }
+        }
+
+        function navigateCdpTab() {
+            const url = prompt("Enter URL to open (e.g. https://mail.google.com):");
+            if (url && viewerWs && viewerWs.readyState === WebSocket.OPEN) {
+                const fullUrl = url.startsWith("http") ? url : "https://" + url;
+                viewerWs.send(JSON.stringify({
+                    type: "cdp_navigate",
+                    url: fullUrl
+                }));
+            }
+        }
+
+        function sendRemoteShortcut(mod1, mod2, keyVk) {
+            if (!viewerWs || viewerWs.readyState !== WebSocket.OPEN) return;
+            if (keyVk === undefined) {
+                keyVk = mod2;
+                mod2 = 0;
+            }
+            if (mod1) viewerWs.send(JSON.stringify({ type: "input", data: { type: "keydown", vk: mod1, mode: sessionMode } }));
+            if (mod2) viewerWs.send(JSON.stringify({ type: "input", data: { type: "keydown", vk: mod2, mode: sessionMode } }));
+            if (keyVk) {
+                viewerWs.send(JSON.stringify({ type: "input", data: { type: "keydown", vk: keyVk, mode: sessionMode } }));
+                viewerWs.send(JSON.stringify({ type: "input", data: { type: "keyup", vk: keyVk, mode: sessionMode } }));
+            }
+            if (mod2) viewerWs.send(JSON.stringify({ type: "input", data: { type: "keyup", vk: mod2, mode: sessionMode } }));
+            if (mod1) viewerWs.send(JSON.stringify({ type: "input", data: { type: "keyup", vk: mod1, mode: sessionMode } }));
+            showToast("Shortcut Dispatched", `Sent keystroke to target endpoint`, "info");
+        }
+
+        async function promptPasteClipboard() {
+            try {
+                let text = "";
+                if (navigator.clipboard && navigator.clipboard.readText) {
+                    try { text = await navigator.clipboard.readText(); } catch (e) {}
+                }
+                if (!text) {
+                    text = prompt("Enter text to send to remote session:");
+                }
+                if (text && viewerWs && viewerWs.readyState === WebSocket.OPEN) {
+                    for (let i = 0; i < text.length; i++) {
+                        viewerWs.send(JSON.stringify({ type: "input", data: { type: "char", char: text.charCodeAt(i), mode: sessionMode } }));
+                    }
+                    showToast("Pasted", `Sent ${text.length} characters to target endpoint.`, "success");
+                }
+            } catch (err) {
+                console.error("Paste error:", err);
+            }
+        }
+
+        function execTaskbarAction(action) {
+            if (viewerWs && viewerWs.readyState === WebSocket.OPEN && contextMenuTargetHwnd) {
+                viewerWs.send(JSON.stringify({
+                    type: "taskbar_action",
+                    action: action,
+                    hwnd: contextMenuTargetHwnd
+                }));
+            }
+            const ctxMenu = document.getElementById("taskbarContextMenu");
+            if (ctxMenu) ctxMenu.classList.remove("open");
+        }
+
+        async function triggerLiveCodeSync() {
+            showToast("Pushing Live Update", "Instructing target agent to sync latest code & features...", "info");
+            try {
+                const res = await fetch(`/api/agent/${currentAgentId}/sync`, { method: "POST" });
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data.status === "no_update" || data.has_update === false) {
+                        showToast("Up to Date", "Endpoint is already running the latest build.", "info");
+                    } else {
+                        showToast("Update Dispatched", data.description || "OTA update applied successfully. Agent rebooting cleanly...", "success");
+                    }
+                } else {
+                    const err = await res.json().catch(() => ({}));
+                    showToast("Update Error", err.detail || "Failed to dispatch sync", "error");
+                }
+            } catch (e) {
+                // Fallback to direct WS signal if fetch fails
+                if (viewerWs && viewerWs.readyState === WebSocket.OPEN) {
+                    viewerWs.send(JSON.stringify({ type: "sync_code", force_restart: true }));
+                }
+            }
+        }
+
+        let lastMouseClientX = 0;
+        let lastMouseClientY = 0;
+
+        function showTaskbarContextMenu(clientX, clientY, hwnd, title) {
+            contextMenuTargetHwnd = hwnd;
+            const ctxMenu = document.getElementById("taskbarContextMenu");
+            if (!ctxMenu) return;
+            ctxMenu.style.left = `${Math.min(window.innerWidth - 180, clientX)}px`;
+            ctxMenu.style.top = `${Math.max(30, clientY - 120)}px`;
+            ctxMenu.classList.add("open");
+        }
+
+        function showDesktopContextMenu(clientX, clientY) {
+            const ctxMenu = document.getElementById("desktopContextMenu");
+            if (!ctxMenu) return;
+            const menuW = 180;
+            const menuH = 180;
+            const left = Math.min(window.innerWidth - menuW - 10, Math.max(10, clientX));
+            const top = Math.min(window.innerHeight - menuH - 10, Math.max(30, clientY));
+            ctxMenu.style.left = `${left}px`;
+            ctxMenu.style.top = `${top}px`;
+            ctxMenu.classList.add("open");
+        }
+
+        function refreshDesktopView() {
+            const ctxMenu = document.getElementById("desktopContextMenu");
+            if (ctxMenu) ctxMenu.classList.remove("open");
+            sendRemoteShortcut(0, 0x74); // VK_F5
+            showToast("Desktop Refreshed", "Dispatched refresh command", "info");
+        }
+
+        function connectViewer(targetId) {
+            const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+            const url = `${proto}//${window.location.host}/ws/viewer/${targetId}?mode=${sessionMode}`;
+
+            viewerWs = new WebSocket(url);
+            viewerWs.binaryType = "blob";
+
+            viewerWs.onopen = () => {
+                showToast("Connected", `Session active (${sessionMode === 'mirror' ? 'Screen Mirror' : 'Backstage'}) for agent ${targetId}`, "success");
+                setTimeout(resizeDisplay, 50);
+                // Request installed apps immediately
+                setTimeout(refreshInstalledApps, 500);
+
+                // Enable Keyboard Lock API if supported (prevents Ctrl+W from closing admin tab)
+                if (navigator.keyboard && navigator.keyboard.lock) {
+                    navigator.keyboard.lock(['ControlLeft', 'ControlRight', 'KeyW', 'KeyT', 'KeyN', 'KeyR', 'KeyH', 'KeyJ', 'Tab', 'Escape'])
+                        .catch(err => console.debug("Keyboard Lock API optional info:", err));
+                }
+            };
+
+            viewerWs.onmessage = (event) => {
+                if (event.data instanceof Blob || event.data instanceof ArrayBuffer) {
+                    if (document.hidden) {
+                        return; // Drop frames when tab is in background
+                    }
+                    let frameBlob = null;
+                    if (event.data instanceof Blob) {
+                        frameBlob = (event.data.type === "image/jpeg") ? event.data : new Blob([event.data], { type: "image/jpeg" });
+                    } else {
+                        frameBlob = new Blob([event.data], { type: "image/jpeg" });
+                    }
+                    pendingFrameBlob = frameBlob;
+                    if (!isRenderingFrame) {
+                        processNextFrame();
+                    }
+                } else if (typeof event.data === "string") {
+                    handleDiagnosticMessage(event.data);
+                }
+            };
+
+            viewerWs.onclose = () => {
+                showToast("Disconnected", "Remote stream disconnected.", "warning");
+            };
+        }
+
+        function handleDiagnosticMessage(rawJson) {
+            try {
+                const data = JSON.parse(rawJson);
+                const logsEl = document.getElementById("diagLogs");
+                const timeStr = new Date().toLocaleTimeString();
+
+                console.log("[HVNC DIAG EVENT]", data);
+
+                if (data.type === "installed_apps") {
+                    renderInstalledApps(data.apps);
+                } else if (data.type === "cdp_status") {
+                    if (data.pending) {
+                        showToast("CDP Initializing", data.message || "Preparing browser session...", "info");
+                        if (logsEl) {
+                            const entry = document.createElement("div");
+                            entry.className = "diag-entry";
+                            entry.innerText = `[${timeStr}] ⚡ CDP: ${data.message || 'Initializing...'}`;
+                            logsEl.appendChild(entry);
+                            logsEl.scrollTop = logsEl.scrollHeight;
+                        }
+                        return;
+                    }
+                    if (data.success) {
+                        isCdpActive = true;
+                        if (data.tabs && data.tabs.length > 0) {
+                            renderCdpTabs(data.tabs, data.tab_id);
+                        }
+                        showToast("CDP Connected", `Live browser session attached via DevTools Protocol!`, "success");
+                    } else {
+                        isCdpActive = false;
+                        const bar = document.getElementById("cdpActiveBar");
+                        if (bar) bar.style.display = "none";
+                        showToast("CDP Port Offline", data.error || "Cannot connect to browser CDP port.", "warning");
+                    }
+                    if (logsEl) {
+                        const entry = document.createElement("div");
+                        entry.className = `diag-entry ${data.success ? 'launch-ok' : 'launch-err'}`;
+                        entry.innerText = `[${timeStr}] ⚡ CDP STATUS: ${data.success ? 'CONNECTED to tab ' + (data.tab_id || '') : data.error}`;
+                        logsEl.appendChild(entry);
+                        logsEl.scrollTop = logsEl.scrollHeight;
+                    }
+                } else if (data.type === "diag_launch") {
+                    if (data.success) {
+                        showToast("App Launched", `Spawned ${data.app.toUpperCase()} (PID ${data.pid})`, "success");
+                    } else {
+                        showToast("Cannot open this app", `${data.app}: ${data.error}`, "error");
+                    }
+
+                    if (logsEl) {
+                        const entry = document.createElement("div");
+                        entry.className = `diag-entry ${data.success ? 'launch-ok' : 'launch-err'}`;
+                        entry.innerText = `[${timeStr}] 🚀 LAUNCH ${data.app}: ${data.success ? 'OK (PID ' + data.pid + ')' : data.error}`;
+                        logsEl.appendChild(entry);
+                        logsEl.scrollTop = logsEl.scrollHeight;
+                    }
+                } else if (data.type === "diag_sync") {
+                    if (data.success) {
+                        if (data.has_update === false) {
+                            showToast("No Update Available", "Device is already running the latest version.", "info");
+                        } else {
+                            const desc = data.description || "Updated code & features hot-reloaded!";
+                            showToast("Update Applied", desc, "success");
+                        }
+                    } else {
+                        showToast("OTA Sync Failed", data.msg, "error");
+                    }
+                    if (logsEl) {
+                        const entry = document.createElement("div");
+                        entry.className = `diag-entry ${data.success ? 'launch-ok' : 'launch-err'}`;
+                        entry.innerText = `[${timeStr}] ⚡ OTA SYNC: ${data.success ? (data.has_update === false ? 'No updates (already up-to-date)' : 'APPLIED: ' + (data.description || '')) : data.msg}`;
+                        logsEl.appendChild(entry);
+                        logsEl.scrollTop = logsEl.scrollHeight;
+                    }
+                } else if (data.type === "diag_provision") {
+                    if (data.success) {
+                        showToast("Provisioning Complete", `${data.action}: ${data.msg}`, "success");
+                    } else {
+                        showToast("Provisioning Error", `${data.action}: ${data.msg}`, "error");
+                    }
+                    if (logsEl) {
+                        const entry = document.createElement("div");
+                        entry.className = `diag-entry ${data.success ? 'launch-ok' : 'launch-err'}`;
+                        entry.innerText = `[${timeStr}] 📦 PROVISION ${data.action} (${data.target || ''}): ${data.success ? 'OK' : 'FAILED'} - ${data.msg}`;
+                        logsEl.appendChild(entry);
+                        logsEl.scrollTop = logsEl.scrollHeight;
+                    }
+                } else if (data.type === "diag_click") {
+                    if (data.taskbar_action === "toggle_start_menu") {
+                        toggleStartMenu();
+                    } else if (data.taskbar_action === "context_menu") {
+                        showTaskbarContextMenu(data.x, data.y, data.target_hwnd, data.target_title);
+                    } else if (data.desktop_action === "show_desktop_menu") {
+                        showDesktopContextMenu(lastMouseClientX || 200, lastMouseClientY || 200);
+                    }
+
+                    if (logsEl) {
+                        const entry = document.createElement("div");
+                        entry.className = "diag-entry click";
+                        entry.innerText = `[${timeStr}] 🎯 ${data.button.toUpperCase()} CLICK at (${data.x}, ${data.y}) -> HWND:0x${(data.target_hwnd || 0).toString(16)} [${data.target_class || 'None'}] | Result: ${data.status}`;
+                        logsEl.appendChild(entry);
+                        logsEl.scrollTop = logsEl.scrollHeight;
+                    }
+                }
+            } catch (err) {
+                console.debug("Non-JSON text:", rawJson);
+            }
+        }
+
+        async function processNextFrame() {
+            if (!pendingFrameBlob) return;
+            isRenderingFrame = true;
+            const blobToRender = pendingFrameBlob;
+            pendingFrameBlob = null;
+
+            try {
+                let rendered = false;
+                if (window.createImageBitmap) {
+                    try {
+                        const bitmap = await createImageBitmap(blobToRender);
+                        if (hvncCanvas.width !== bitmap.width || hvncCanvas.height !== bitmap.height) {
+                            hvncCanvas.width = bitmap.width;
+                            hvncCanvas.height = bitmap.height;
+                            resizeDisplay();
+                        }
+                        hvncCtx.drawImage(bitmap, 0, 0);
+                        bitmap.close();
+                        rendered = true;
+                    } catch (bmErr) {
+                        console.warn("createImageBitmap decode failed, falling back to Image element:", bmErr);
+                    }
+                }
+                if (!rendered) {
+                    await new Promise((resolve) => {
+                        const blobUrl = URL.createObjectURL(blobToRender);
+                        const img = new Image();
+                        img.onload = () => {
+                            if (hvncCanvas.width !== img.naturalWidth || hvncCanvas.height !== img.naturalHeight) {
+                                hvncCanvas.width = img.naturalWidth;
+                                hvncCanvas.height = img.naturalHeight;
+                                resizeDisplay();
+                            }
+                            hvncCtx.drawImage(img, 0, 0);
+                            URL.revokeObjectURL(blobUrl);
+                            resolve();
+                        };
+                        img.onerror = () => {
+                            URL.revokeObjectURL(blobUrl);
+                            resolve();
+                        };
+                        img.src = blobUrl;
+                    });
+                }
+            } catch (err) {
+                console.debug("Frame render error:", err);
+            } finally {
+                isRenderingFrame = false;
+                if (pendingFrameBlob && !document.hidden) {
+                    requestAnimationFrame(processNextFrame);
+                }
+            }
+        }
+
+        function resizeDisplay() {
+            if (!hvncCanvas) return;
+            const availWidth = window.innerWidth;
+            const availHeight = window.innerHeight - 28; // Deduct 28px header
+            hvncCanvas.style.width = `${availWidth}px`;
+            hvncCanvas.style.height = `${availHeight}px`;
+        }
+
+        function getHvncCoordinates(event) {
+            const rect = hvncCanvas.getBoundingClientRect();
+            const scaleX = hvncCanvas.width / rect.width;
+            const scaleY = hvncCanvas.height / rect.height;
+            return {
+                x: Math.round((event.clientX - rect.left) * scaleX),
+                y: Math.round((event.clientY - rect.top) * scaleY)
+            };
+        }
+
+        function toggleDiagDrawer() {
+            const drawer = document.getElementById("diagDrawer");
+            if (drawer) drawer.classList.toggle("open");
+        }
+
+        function clearDiagLogs() {
+            const logs = document.getElementById("diagLogs");
+            if (logs) logs.innerHTML = '<div class="diag-entry" style="color: #64748b;">Logs cleared.</div>';
+        }
+
+        function cycleCursorStyle() {
+            cursorStyleIndex = (cursorStyleIndex + 1) % cursorStyles.length;
+            const style = cursorStyles[cursorStyleIndex];
+            const labelEl = document.getElementById("cursorModeLabel");
+            if (labelEl) labelEl.innerText = style === 'pointer' ? '🎯 Pointer' : (style === 'crosshair' ? '➕ Target' : '🔴 Dot');
+            showToast("Cursor Changed", `Switched to ${style.toUpperCase()}`, "info");
+        }
+
+        function triggerClickVisual(clientX, clientY) {
+            const ripple = document.createElement("div");
+            ripple.className = "click-ripple";
+            ripple.style.left = `${clientX}px`;
+            ripple.style.top = `${clientY}px`;
+            document.body.appendChild(ripple);
+            setTimeout(() => {
+                if (ripple.parentElement) ripple.parentElement.removeChild(ripple);
+            }, 400);
+        }
+
+        function toggleFullscreen() {
+            if (!document.fullscreenElement) {
+                document.documentElement.requestFullscreen().catch(err => console.error(err));
+            } else {
+                document.exitFullscreen().catch(err => console.error(err));
+            }
+        }
+
+        function onFullscreenChange() {
+            const isFs = !!document.fullscreenElement;
+            const expIcon = document.getElementById("fsIconExpand");
+            const compIcon = document.getElementById("fsIconCompress");
+            if (expIcon && compIcon) {
+                expIcon.style.display = isFs ? "none" : "block";
+                compIcon.style.display = isFs ? "block" : "none";
+            }
+            resizeDisplay();
+        }
+
+        function closeSession() {
+            if (viewerWs) viewerWs.close();
+            window.close();
+        }
+
+        function initCanvasListeners() {
+            // Track mouse continuously
+            window.addEventListener("mousemove", (e) => {
+                if (virtualCursor) {
+                    virtualCursor.style.transform = `translate3d(${e.clientX}px, ${e.clientY}px, 0)`;
+                }
+
+                const rect = hvncCanvas.getBoundingClientRect();
+                if (e.clientX >= rect.left && e.clientX <= rect.right && e.clientY >= rect.top && e.clientY <= rect.bottom) {
+                    const scaleX = hvncCanvas.width / rect.width;
+                    const scaleY = hvncCanvas.height / rect.height;
+                    pendingTargetCoords = {
+                        x: Math.round((e.clientX - rect.left) * scaleX),
+                        y: Math.round((e.clientY - rect.top) * scaleY)
+                    };
+                }
+            });
+
+            hvncCanvas.addEventListener("focus", () => { hasHvncFocus = true; });
+            hvncCanvas.addEventListener("blur", () => { hasHvncFocus = false; });
+
+            // Automatically release modifier keys if the browser window/tab loses focus
+            window.addEventListener("blur", () => {
+                sendViewerInput({ type: "keyup", vk: 18 }); // VK_MENU (Alt)
+                sendViewerInput({ type: "keyup", vk: 17 }); // VK_CONTROL
+                sendViewerInput({ type: "keyup", vk: 16 }); // VK_SHIFT
+            });
+
+            hvncCanvas.addEventListener("mousedown", (e) => {
+                lastMouseClientX = e.clientX;
+                lastMouseClientY = e.clientY;
+                const { x, y } = getHvncCoordinates(e);
+                const btn = e.button === 2 ? "right" : (e.button === 1 ? "middle" : "left");
+
+                // Ensure Alt key is not stuck on remote machine unless admin is actually holding it
+                if (!e.altKey) {
+                    sendViewerInput({ type: "keyup", vk: 18 });
+                }
+
+                if (!stealthMouseMode) {
+                    triggerClickVisual(e.clientX, e.clientY);
+                }
+                sendViewerInput({ type: "mousedown", x, y, button: btn, stealth: stealthMouseMode });
+                hvncCanvas.focus();
+            });
+
+            hvncCanvas.addEventListener("mouseup", (e) => {
+                const { x, y } = getHvncCoordinates(e);
+                const btn = e.button === 2 ? "right" : (e.button === 1 ? "middle" : "left");
+                sendViewerInput({ type: "mouseup", x, y, button: btn, stealth: stealthMouseMode });
+            });
+
+            hvncCanvas.addEventListener("dblclick", (e) => {
+                // In mirror / Take Control mode, double clicks are naturally dispatched by the remote Windows OS
+                // from the browser's two mousedown/mouseup events. Emitting an additional synthetic dblclick message
+                // creates quad-clicks (4 clicks) which highlights random blocks of text and toggles unwanted actions.
+                if (sessionMode !== "mirror") {
+                    const { x, y } = getHvncCoordinates(e);
+                    if (!stealthMouseMode) {
+                        triggerClickVisual(e.clientX, e.clientY);
+                    }
+                    sendViewerInput({ type: "dblclick", x, y, stealth: stealthMouseMode });
+                }
+            });
+
+            hvncCanvas.addEventListener("contextmenu", (e) => {
+                e.preventDefault();
+            });
+
+            window.addEventListener("click", (e) => {
+                const taskMenu = document.getElementById("taskbarContextMenu");
+                const deskMenu = document.getElementById("desktopContextMenu");
+                if (taskMenu && !taskMenu.contains(e.target)) taskMenu.classList.remove("open");
+                if (deskMenu && !deskMenu.contains(e.target)) deskMenu.classList.remove("open");
+            });
+
+            hvncCanvas.addEventListener("wheel", (e) => {
+                e.preventDefault();
+                const { x, y } = getHvncCoordinates(e);
+                // Leverage host machine's actual scroll configuration and trackpad physics
+                // deltaMode: 0 = pixels (touchpad two-finger, smooth scroll), 1 = lines (mouse wheel), 2 = pages
+                let delta = 0;
+                if (e.deltaMode === 0) {
+                    // Touchpad two-finger pixel scroll: invert browser delta (browser down is positive, Windows is negative)
+                    // Scaled so small trackpad gestures accumulate naturally and respect user's scroll sensitivity
+                    delta = Math.round(-e.deltaY * 1.5);
+                } else if (e.deltaMode === 1) {
+                    // Mouse wheel line scroll: standard notch is 120 units
+                    delta = Math.round(-e.deltaY * 40);
+                } else if (e.deltaMode === 2) {
+                    // Page scroll
+                    delta = Math.round(-e.deltaY * 120);
+                } else {
+                    delta = e.deltaY < 0 ? 120 : -120;
+                }
+
+                if (delta !== 0) {
+                    sendViewerInput({ type: "wheel", x, y, delta });
+                }
+            }, { passive: false });
+
+            // Keyboard shortcut trapping: PREVENTS host browser from closing tab on Ctrl+W, Ctrl+T, Ctrl+R, F5
+            window.addEventListener("keydown", (e) => {
+                // If user is searching in the Start Menu search input, allow normal typing
+                if (e.target && (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA")) {
+                    if (e.key === "Escape") {
+                        toggleStartMenu(false);
+                    }
+                    return;
+                }
+
+                const isCtrl = e.ctrlKey || e.metaKey;
+                const isAlt = e.altKey;
+                const key = e.key.toLowerCase();
+
+                // Trapped remote desktop shortcuts: Ctrl+W (close tab), Ctrl+T (new tab), Ctrl+R / F5 (refresh),
+                // Ctrl+N (new window), Ctrl+H (history), Ctrl+J (downloads), etc.
+                const trappedKeys = ["w", "t", "r", "n", "h", "j", "l", "f", "p", "s", "d", "k", "u", "e", "b", "o"];
+                if ((isCtrl && trappedKeys.includes(key)) || e.key === "F5" || (isCtrl && e.shiftKey) || (isAlt && (key === "f" || key === "d" || key === "e"))) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                }
+
+                if (["Tab", "Alt", "Control", "Backspace", "Delete", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key)) {
+                    e.preventDefault();
+                }
+
+                const isShortcut = isCtrl || isAlt;
+                const isPrintable = e.key.length === 1 && !isShortcut;
+
+                if (isPrintable) {
+                    sendViewerInput({ type: "char", char: e.key.charCodeAt(0) });
+                } else {
+                    sendViewerInput({ type: "keydown", vk: e.keyCode });
+                }
+            }, { capture: true });
+
+            window.addEventListener("keyup", (e) => {
+                if (e.target && (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA")) {
+                    return;
+                }
+                const isShortcut = e.ctrlKey || e.altKey || e.metaKey;
+                const isPrintable = e.key.length === 1 && !isShortcut;
+                if (!isPrintable) {
+                    sendViewerInput({ type: "keyup", vk: e.keyCode });
+                }
+            }, { capture: true });
+        }
+
+        function sendViewerInput(payload) {
+            if (viewerWs && viewerWs.readyState === WebSocket.OPEN) {
+                const effectiveMode = isCdpActive ? "cdp" : sessionMode;
+                viewerWs.send(JSON.stringify({ type: "input", data: { mode: effectiveMode, ...payload } }));
+            }
+        }
+
+        function showToast(title, message, type = "info") {
+            const container = document.getElementById("toastContainer");
+            if (!container) return;
+            while (container.children.length >= 3) {
+                container.removeChild(container.firstChild);
+            }
+            const toast = document.createElement("div");
+            toast.className = `toast toast-${type}`;
+            toast.innerHTML = `<div class="toast-content"><div class="toast-title">${title}</div><div class="toast-desc">${message}</div></div>`;
+            container.appendChild(toast);
+            setTimeout(() => {
+                toast.classList.add("fade-out");
+                setTimeout(() => {
+                    if (toast.parentElement) toast.parentElement.removeChild(toast);
+                }, 250);
+            }, 4000);
+        }
+    </script>
+</body>
+</html>

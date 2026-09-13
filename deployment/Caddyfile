@@ -1,0 +1,5 @@
+rmm.swiftvtu.com {
+    # Automatic SSL and HTTP-to-HTTPS redirect handled by Caddy
+    # WebSockets (Connection: Upgrade) are automatically proxied
+    reverse_proxy 127.0.0.1:8000
+}

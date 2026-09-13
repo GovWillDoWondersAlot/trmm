@@ -1,0 +1,46 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+build/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Secrets, private keys and certificates
+*.pem
+*.key
+*.crt
+*.pfx
+
+# Databases and runtime state
+*.db
+*.sqlite
+*.sqlite3
+generated_agents/
+*.log
+trmm_agent.log
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# IDE files
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Temporary and test artifacts
+scratch/
+*.tmp

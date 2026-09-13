@@ -1,0 +1,566 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tactical RMM — Admin Security Gateway</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css">
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: #030712;
+            background-image: 
+                radial-gradient(at 0% 0%, rgba(37, 99, 235, 0.15) 0px, transparent 50%),
+                radial-gradient(at 100% 100%, rgba(14, 165, 233, 0.12) 0px, transparent 50%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-family: var(--font-ui, 'Plus Jakarta Sans', sans-serif);
+            color: #f8fafc;
+        }
+
+        .auth-container {
+            width: 100%;
+            max-width: 440px;
+            padding: 24px;
+            box-sizing: border-box;
+            z-index: 10;
+        }
+
+        .auth-card {
+            background: rgba(15, 23, 42, 0.85);
+            backdrop-filter: blur(16px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 16px;
+            padding: 36px 32px;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(255, 255, 255, 0.05);
+            animation: fadeIn 0.4s ease-out;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(16px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .auth-header {
+            text-align: center;
+            margin-bottom: 28px;
+        }
+
+        .auth-shield {
+            width: 52px;
+            height: 52px;
+            margin: 0 auto 16px;
+            background: linear-gradient(135deg, #1e3a8a, #0284c7);
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 0 24px rgba(2, 132, 199, 0.35);
+            border: 1px solid rgba(56, 189, 248, 0.3);
+        }
+
+        .auth-title {
+            font-size: 22px;
+            font-weight: 800;
+            letter-spacing: -0.02em;
+            color: #f8fafc;
+            margin: 0 0 6px;
+        }
+
+        .auth-subtitle {
+            font-size: 13px;
+            color: #94a3b8;
+            margin: 0;
+            line-height: 1.4;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-label {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 12px;
+            font-weight: 600;
+            color: #cbd5e1;
+            margin-bottom: 8px;
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
+        }
+
+        .form-input-wrap {
+            position: relative;
+        }
+
+        .form-input {
+            width: 100%;
+            height: 44px;
+            background: #090d16;
+            border: 1px solid #1e293b;
+            border-radius: 8px;
+            padding: 0 14px 0 38px;
+            color: #f8fafc;
+            font-size: 14px;
+            box-sizing: border-box;
+            transition: all 0.2s ease;
+            font-family: inherit;
+        }
+
+        .form-input:focus {
+            outline: none;
+            border-color: #38bdf8;
+            box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.2);
+            background: #0f172a;
+        }
+
+        .input-icon {
+            position: absolute;
+            left: 12px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: #64748b;
+            pointer-events: none;
+        }
+
+        .btn-auth {
+            width: 100%;
+            height: 46px;
+            background: linear-gradient(135deg, #2563eb, #0284c7);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            border-radius: 8px;
+            color: #ffffff;
+            font-size: 14px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            box-shadow: 0 4px 14px rgba(37, 99, 235, 0.3);
+            margin-top: 10px;
+        }
+
+        .btn-auth:hover {
+            filter: brightness(1.1);
+            transform: translateY(-1px);
+            box-shadow: 0 6px 20px rgba(37, 99, 235, 0.45);
+        }
+
+        .btn-auth:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .forgot-pass-link {
+            font-size: 12px;
+            color: #38bdf8;
+            cursor: pointer;
+            text-decoration: none;
+            font-weight: 500;
+            transition: color 0.15s;
+        }
+
+        .forgot-pass-link:hover {
+            color: #7dd3fc;
+            text-decoration: underline;
+        }
+
+        .auth-footer {
+            margin-top: 24px;
+            padding-top: 20px;
+            border-top: 1px solid rgba(255, 255, 255, 0.07);
+            text-align: center;
+            font-size: 12px;
+            color: #64748b;
+        }
+
+        .status-alert {
+            padding: 10px 14px;
+            border-radius: 6px;
+            font-size: 13px;
+            margin-bottom: 18px;
+            display: none;
+            line-height: 1.4;
+        }
+
+        .status-alert.error {
+            background: rgba(239, 68, 68, 0.12);
+            border: 1px solid rgba(239, 68, 68, 0.3);
+            color: #fca5a5;
+        }
+
+        .status-alert.success {
+            background: rgba(16, 185, 129, 0.12);
+            border: 1px solid rgba(16, 185, 129, 0.3);
+            color: #6ee7b7;
+        }
+
+        .status-alert.info {
+            background: rgba(56, 189, 248, 0.12);
+            border: 1px solid rgba(56, 189, 248, 0.3);
+            color: #7dd3fc;
+        }
+
+        /* Modal for Master Access Key info */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background: rgba(0, 0, 0, 0.75);
+            backdrop-filter: blur(6px);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 100;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+
+        .modal-box {
+            background: #0f172a;
+            border: 1px solid #334155;
+            border-radius: 12px;
+            width: 100%;
+            max-width: 420px;
+            padding: 24px;
+            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.7);
+        }
+
+        .modal-title {
+            font-size: 17px;
+            font-weight: 700;
+            color: #f8fafc;
+            margin: 0 0 10px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .modal-desc {
+            font-size: 13px;
+            color: #94a3b8;
+            line-height: 1.5;
+            margin: 0 0 18px;
+        }
+
+        .key-input-box {
+            background: #030712;
+            border: 1px dashed #38bdf8;
+            border-radius: 8px;
+            padding: 12px;
+            margin-bottom: 18px;
+        }
+
+        .badge-pill {
+            display: inline-block;
+            padding: 3px 8px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.05em;
+            text-transform: uppercase;
+        }
+        .badge-pill.setup {
+            background: rgba(245, 158, 11, 0.2);
+            color: #fbbf24;
+            border: 1px solid rgba(245, 158, 11, 0.35);
+        }
+        .badge-pill.login {
+            background: rgba(56, 189, 248, 0.2);
+            color: #38bdf8;
+            border: 1px solid rgba(56, 189, 248, 0.35);
+        }
+    </style>
+</head>
+<body>
+
+    <div class="auth-container">
+        <div class="auth-card">
+            <div class="auth-header">
+                <div class="auth-shield">
+                    <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="#ffffff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                        <path d="m9 12 2 2 4-4"/>
+                    </svg>
+                </div>
+                <div style="margin-bottom: 6px;">
+                    <span id="flowBadge" class="badge-pill login">Admin Portal</span>
+                </div>
+                <h1 class="auth-title" id="authTitle">Admin Access Gateway</h1>
+                <p class="auth-subtitle" id="authSubtitle">Enter your administrative credentials to unlock the command console.</p>
+            </div>
+
+            <div id="statusAlert" class="status-alert"></div>
+
+            <!-- Login / Setup Form -->
+            <form id="authForm" onsubmit="handleAuthSubmit(event)">
+                <div class="form-group">
+                    <label class="form-label" for="usernameInput">
+                        <span>Admin Username</span>
+                    </label>
+                    <div class="form-input-wrap">
+                        <svg class="input-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/>
+                            <circle cx="12" cy="7" r="4"/>
+                        </svg>
+                        <input type="text" id="usernameInput" class="form-input" placeholder="admin" required autocomplete="username">
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <div class="form-label">
+                        <span id="passwordLabel">Login Code / Password</span>
+                        <a href="javascript:void(0)" class="forgot-pass-link" id="forgotLink" onclick="openMasterKeyModal()">Forgot Password?</a>
+                    </div>
+                    <div class="form-input-wrap">
+                        <svg class="input-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect width="18" height="11" x="3" y="11" rx="2" ry="2"/>
+                            <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                        </svg>
+                        <input type="password" id="passwordInput" class="form-input" placeholder="••••••••••••" required autocomplete="current-password">
+                    </div>
+                </div>
+
+                <!-- Confirm password field for Initial Setup Only -->
+                <div class="form-group" id="confirmGroup" style="display: none;">
+                    <label class="form-label" for="confirmPasswordInput">
+                        <span>Confirm Master Password</span>
+                    </label>
+                    <div class="form-input-wrap">
+                        <svg class="input-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                            <path d="m9 12 2 2 4-4"/>
+                        </svg>
+                        <input type="password" id="confirmPasswordInput" class="form-input" placeholder="Confirm password" autocomplete="new-password">
+                    </div>
+                </div>
+
+                <button type="submit" class="btn-auth" id="btnSubmit">
+                    <span id="btnText">Authenticate & Unlock</span>
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5">
+                        <path d="M5 12h14M12 5l7 7-7 7"/>
+                    </svg>
+                </button>
+            </form>
+
+            <div class="auth-footer">
+                <span>Tactical RMM v2.0 Enterprise Hub &bull; Protected by Session Key</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal for Forgot Password / Admin Master Key -->
+    <div id="masterKeyModal" class="modal-overlay">
+        <div class="modal-box">
+            <h3 class="modal-title">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="#38bdf8" stroke-width="2">
+                    <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+                </svg>
+                <span>Password Recovery Notice</span>
+            </h3>
+            <p class="modal-desc">
+                For security reasons, this server has no automated password reset. If you have forgotten your password, please <strong>contact the administrator</strong> for the <strong>Admin All-Access Key</strong>.
+            </p>
+            <div class="key-input-box">
+                <div style="font-size: 11px; font-weight: 700; color: #38bdf8; text-transform: uppercase; margin-bottom: 6px;">
+                    Have the Master All-Access Key?
+                </div>
+                <p style="font-size: 12px; color: #cbd5e1; margin: 0 0 10px;">
+                    Enter the master access code directly below to immediately authorize your session:
+                </p>
+                <div class="form-input-wrap">
+                    <input type="password" id="modalMasterKeyInput" class="form-input" placeholder="Enter Admin Access Key" style="height: 38px; font-family: var(--font-mono, monospace);">
+                </div>
+            </div>
+            <div style="display: flex; gap: 10px; justify-content: flex-end;">
+                <button type="button" class="btn btn-secondary" onclick="closeMasterKeyModal()" style="height: 38px; padding: 0 16px; background: #1e293b; color: #94a3b8; border: 1px solid #334155; border-radius: 6px; cursor: pointer;">Cancel</button>
+                <button type="button" class="btn btn-primary" onclick="submitMasterKey()" style="height: 38px; padding: 0 16px; background: #0284c7; color: #fff; border: none; border-radius: 6px; cursor: pointer; font-weight: 600;">Authorize with Master Key</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let isSetupMode = false;
+
+        async function checkSetupState() {
+            try {
+                const res = await fetch("/api/auth/status");
+                const data = await res.json();
+                if (data.setup_required) {
+                    setSetupMode(true);
+                } else {
+                    setSetupMode(false);
+                }
+            } catch (e) {
+                console.error("Auth status check error:", e);
+            }
+        }
+
+        function setSetupMode(setup) {
+            isSetupMode = setup;
+            const flowBadge = document.getElementById("flowBadge");
+            const authTitle = document.getElementById("authTitle");
+            const authSubtitle = document.getElementById("authSubtitle");
+            const confirmGroup = document.getElementById("confirmGroup");
+            const confirmInput = document.getElementById("confirmPasswordInput");
+            const btnText = document.getElementById("btnText");
+            const forgotLink = document.getElementById("forgotLink");
+            const passwordLabel = document.getElementById("passwordLabel");
+
+            if (setup) {
+                flowBadge.className = "badge-pill setup";
+                flowBadge.innerText = "Initial Live Server Setup";
+                authTitle.innerText = "Create Admin Account";
+                authSubtitle.innerText = "Initialize your primary administrator credentials for this server.";
+                passwordLabel.innerText = "Create Master Password";
+                confirmGroup.style.display = "block";
+                confirmInput.required = true;
+                btnText.innerText = "Create Account & Enter Console";
+                forgotLink.style.display = "none";
+            } else {
+                flowBadge.className = "badge-pill login";
+                flowBadge.innerText = "Admin Portal";
+                authTitle.innerText = "Admin Access Gateway";
+                authSubtitle.innerText = "Enter your administrative credentials to unlock the command console.";
+                passwordLabel.innerText = "Login Code / Password";
+                confirmGroup.style.display = "none";
+                confirmInput.required = false;
+                btnText.innerText = "Authenticate & Unlock";
+                forgotLink.style.display = "inline";
+            }
+        }
+
+        function showAlert(msg, type = "error") {
+            const el = document.getElementById("statusAlert");
+            el.className = `status-alert ${type}`;
+            el.innerText = msg;
+            el.style.display = "block";
+        }
+
+        function hideAlert() {
+            document.getElementById("statusAlert").style.display = "none";
+        }
+
+        async function handleAuthSubmit(e) {
+            e.preventDefault();
+            hideAlert();
+
+            const username = document.getElementById("usernameInput").value.trim();
+            const password = document.getElementById("passwordInput").value;
+            const btn = document.getElementById("btnSubmit");
+
+            if (isSetupMode) {
+                const confirmPass = document.getElementById("confirmPasswordInput").value;
+                if (password !== confirmPass) {
+                    showAlert("Passwords do not match. Please re-enter.");
+                    return;
+                }
+                if (password.length < 6) {
+                    showAlert("Password must be at least 6 characters.");
+                    return;
+                }
+
+                btn.disabled = true;
+                btn.innerHTML = `<span>Initializing Account...</span>`;
+
+                try {
+                    const res = await fetch("/api/auth/setup", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ username, password })
+                    });
+                    const data = await res.json();
+                    if (data.success) {
+                        showAlert("Admin account created successfully! Redirecting...", "success");
+                        setTimeout(() => { window.location.href = "/"; }, 800);
+                    } else {
+                        showAlert(data.error || "Failed to initialize setup.");
+                        btn.disabled = false;
+                        btn.innerHTML = `<span>Create Account & Enter Console</span>`;
+                    }
+                } catch (err) {
+                    showAlert("Network error during setup: " + err.message);
+                    btn.disabled = false;
+                    btn.innerHTML = `<span>Create Account & Enter Console</span>`;
+                }
+            } else {
+                btn.disabled = true;
+                btn.innerHTML = `<span>Verifying Credentials...</span>`;
+
+                try {
+                    const res = await fetch("/api/auth/login", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ username, password })
+                    });
+                    const data = await res.json();
+                    if (data.success) {
+                        showAlert("Access Granted. Redirecting to Command Console...", "success");
+                        setTimeout(() => { window.location.href = "/"; }, 600);
+                    } else {
+                        showAlert(data.error || "Invalid username or password.");
+                        btn.disabled = false;
+                        btn.innerHTML = `<span>Authenticate & Unlock</span>`;
+                    }
+                } catch (err) {
+                    showAlert("Authentication request failed: " + err.message);
+                    btn.disabled = false;
+                    btn.innerHTML = `<span>Authenticate & Unlock</span>`;
+                }
+            }
+        }
+
+        function openMasterKeyModal() {
+            document.getElementById("masterKeyModal").style.display = "flex";
+            document.getElementById("modalMasterKeyInput").value = "";
+            document.getElementById("modalMasterKeyInput").focus();
+        }
+
+        function closeMasterKeyModal() {
+            document.getElementById("masterKeyModal").style.display = "none";
+        }
+
+        async function submitMasterKey() {
+            const key = document.getElementById("modalMasterKeyInput").value.trim();
+            if (!key) {
+                alert("Please enter the Master All-Access Key.");
+                return;
+            }
+
+            try {
+                const res = await fetch("/api/auth/login", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ username: "Admin", password: key })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    closeMasterKeyModal();
+                    showAlert("Master Access Key Accepted. Redirecting...", "success");
+                    setTimeout(() => { window.location.href = "/"; }, 600);
+                } else {
+                    alert("Invalid Master All-Access Key.");
+                }
+            } catch (err) {
+                alert("Authorization error: " + err.message);
+            }
+        }
+
+        document.addEventListener("DOMContentLoaded", () => {
+            checkSetupState();
+        });
+    </script>
+</body>
+</html>

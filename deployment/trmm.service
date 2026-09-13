@@ -1,0 +1,15 @@
+[Unit]
+Description=Tactical RMM Master Hub Server
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/TRMM
+ExecStart=/home/ubuntu/TRMM/venv/bin/uvicorn master_hub.app:app --host 127.0.0.1 --port 8000 --workers 1
+Restart=always
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
