@@ -8,6 +8,9 @@ import sys
 import json
 import uuid
 import logging
+import threading
+from pathlib import Path
+import yaml
 from typing import Dict, Any, Optional
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Response, Request, Cookie
@@ -17,11 +20,30 @@ from pydantic import BaseModel
 
 from .agent_manager import AgentManager
 from .generator import AgentGenerator, OUTPUT_DIR
+from .ip_watcher import watch_ip
 from .ota_manager import OTAManager
 from .auth import AuthManager
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("master_hub.server")
+
+# Load public IP configuration if exists
+CONFIG_PATH = Path(__file__).parent / "config.yaml"
+
+def get_default_server_url() -> str:
+    if CONFIG_PATH.is_file():
+        try:
+            with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+                cfg = yaml.safe_load(f) or {}
+            public_ip = cfg.get("public_ip")
+            if public_ip:
+                return f"ws://{public_ip}:8000"
+        except Exception:
+            pass
+    return "ws://127.0.0.1:8000"
+
+# Start background IP watcher thread
+threading.Thread(target=watch_ip, daemon=True).start()
 
 app = FastAPI(title="Tactical RMM Master Hub", version="2.0.0")
 
@@ -151,7 +173,7 @@ async def broadcast_agent_list():
 class GenerateAgentRequest(BaseModel):
     endpoint_tag: str = "Workstation-01"
     arch: str = "x64"  # x64 or x86
-    server_url: str = "ws://127.0.0.1:8000"
+    server_url: str = get_default_server_url()
     auto_start: bool = True
     hidden_mode: bool = True
     custom_name: Optional[str] = None
