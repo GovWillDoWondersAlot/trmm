@@ -890,7 +890,7 @@ class AgentClient:
                 interval = 1.0 / target_fps
 
                 t0 = time.perf_counter()
-                frame_bytes = await loop.run_in_executor(None, self.compositor.render_frame)
+                frame_bytes = await loop.run_in_executor(None, self.compositor.render_frame, is_active)
                 if frame_bytes:
                     # 0x01 prefix identifies Backstage (HVNC) frames
                     await ws.send(b"\x01" + frame_bytes)
@@ -914,7 +914,7 @@ class AgentClient:
         while self.is_mirroring:
             try:
                 is_active = (time.time() - self.last_input_time) < 2.0
-                target_fps = 22 if is_active else 8
+                target_fps = 30 if is_active else 10
                 interval = 1.0 / target_fps
 
                 t0 = time.perf_counter()

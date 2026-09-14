@@ -4,6 +4,9 @@ Manages connection to local Chromium instances running with --remote-debugging-p
 queries open tabs, subscribes to screencast frames, and dispatches browser input.
 """
 
+import os
+import time
+import subprocess
 import json
 import logging
 import urllib.request
@@ -93,27 +96,31 @@ class CDPController:
     @staticmethod
     def get_cdp_junction_path(browser: str = "chrome") -> str:
         """
-        Returns a discrete junction path pointing to the browser's User Data directory.
-        This satisfies Chromium's requirement that --remote-debugging-port requires
-        a non-default data directory, while sharing 100% of the user's logins, cookies,
-        and profiles without data duplication.
+        Returns an isolated profile directory for CDP debugging sessions.
+        Using an isolated cloned user-data-dir allows Chromium to bind its debugging port
+        and launch concurrently even if the physical user has Chrome/Edge open.
         """
-        import os
-        import subprocess
         if browser == "edge":
             user_data = os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\Edge\User Data")
-            cdp_data = os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\Edge\TRMM_CDP_Data")
+            cdp_data = os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\Edge\TRMM_CDP_Isolated")
         else:
             user_data = os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\User Data")
-            cdp_data = os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\TRMM_CDP_Data")
+            cdp_data = os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\TRMM_CDP_Isolated")
 
-        if os.path.exists(user_data) and not os.path.exists(cdp_data):
-            try:
-                subprocess.run(f'cmd.exe /c mklink /J "{cdp_data}" "{user_data}"', shell=True, capture_output=True)
-            except Exception as e:
-                logger.warning(f"Failed to create CDP directory junction: {e}")
+        os.makedirs(cdp_data, exist_ok=True)
+        # Seed Local State and Default profile if not present
+        if os.path.isdir(user_data):
+            src_state = os.path.join(user_data, "Local State")
+            dst_state = os.path.join(cdp_data, "Local State")
+            if os.path.isfile(src_state) and not os.path.isfile(dst_state):
+                try:
+                    import shutil
+                    shutil.copy2(src_state, dst_state)
+                except Exception:
+                    pass
+            os.makedirs(os.path.join(cdp_data, "Default"), exist_ok=True)
 
-        return cdp_data if os.path.exists(cdp_data) else user_data
+        return cdp_data
 
     @staticmethod
     def get_last_used_profile(browser: str = "chrome") -> str:

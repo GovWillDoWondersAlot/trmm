@@ -407,6 +407,9 @@ class InputHandler:
         self.drag_offset_y = 0
         self.tm_active_tab = 0
         self._minimized_for_show_desktop = set()
+        self.dragged_window_hwnd: Optional[int] = None
+        self.window_drag_offset_x = 0
+        self.window_drag_offset_y = 0
 
     def _handle_task_manager_navigation(self, top_hwnd: int, x: int, y: int, target_hwnd: Optional[int] = None) -> Optional[int]:
         """
@@ -865,10 +868,17 @@ class InputHandler:
         return diag
 
     def handle_mouse_move(self, x: int, y: int):
-        """Sends WM_MOUSEMOVE with WM_SETCURSOR hover tracking, icon dragging, and window drag support."""
+        """Sends WM_MOUSEMOVE with window drag, icon drag, and ultra-fast non-blocking event routing."""
         self.desktop.attach_current_thread()
 
-        # Handle desktop icon dragging
+        # 1. Window move dragging
+        if self.is_lbutton_down and self.dragged_window_hwnd:
+            new_x = x - self.window_drag_offset_x
+            new_y = max(0, y - self.window_drag_offset_y)
+            user32.SetWindowPos(self.dragged_window_hwnd, 0, new_x, new_y, 0, 0, 0x0001 | 0x0004 | 0x0010)
+            return
+
+        # 2. Desktop icon dragging
         if self.is_lbutton_down and self.dragged_icon_idx is not None and self.compositor:
             icons = getattr(self.compositor, "desktop_icons", [])
             idx = self.dragged_icon_idx
@@ -882,22 +892,22 @@ class InputHandler:
                 icons[idx] = tuple(item)
                 return
 
+        # 3. Fast-path in-window drag (scrollbar, text selection, controls)
+        if self.is_lbutton_down and self.drag_target:
+            pt_client = wintypes.POINT(x, y)
+            user32.ScreenToClient(self.drag_target, ctypes.byref(pt_client))
+            l_param = ((pt_client.y & 0xFFFF) << 16) | (pt_client.x & 0xFFFF)
+            user32.PostMessageW(self.drag_target, WM_MOUSEMOVE, MK_LBUTTON, l_param)
+            return
+
+        # 4. Standard hover mouse move
         top_hwnd, hwnd, cx, cy = self._find_target_window(x, y)
-        target = self.drag_target if (self.is_lbutton_down and self.drag_target) else (hwnd or top_hwnd)
+        target = hwnd or top_hwnd
         if target:
             pt_client = wintypes.POINT(x, y)
             user32.ScreenToClient(target, ctypes.byref(pt_client))
             l_param = ((pt_client.y & 0xFFFF) << 16) | (pt_client.x & 0xFFFF)
-            w_param = MK_LBUTTON if self.is_lbutton_down else 0
-
-            # Send WM_SETCURSOR with timeout to trigger File Explorer hover highlights without blocking
-            try:
-                sm_res = ctypes.c_ulong()
-                user32.SendMessageTimeoutW(target, WM_SETCURSOR, target, (WM_MOUSEMOVE << 16) | HTCLIENT, SMTO_ABORTIFHUNG, 15, ctypes.byref(sm_res))
-            except Exception:
-                pass
-
-            user32.PostMessageW(target, WM_MOUSEMOVE, w_param, l_param)
+            user32.PostMessageW(target, WM_MOUSEMOVE, 0, l_param)
 
     def handle_mouse_down(self, x: int, y: int, button: str = "left") -> Dict[str, Any]:
         """Sends mouse down with top-right window buttons (Close, Minimize, Maximize), desktop icon drag, & returns diagnostics."""
@@ -1009,7 +1019,18 @@ class InputHandler:
                     diag["status"] = "window_minimize"
                 return diag
 
-        # 3. Standard Window Client Clicks vs. Popup Menu Clicks
+        # 3. Window titlebar dragging (moving floating windows)
+        rect = wintypes.RECT()
+        user32.GetWindowRect(top_hwnd, ctypes.byref(rect))
+        sw = user32.GetSystemMetrics(0) or 1920
+        is_zoomed = bool(user32.IsZoomed(top_hwnd)) or (rect.left < 0 and rect.top < 0) or (rect.left <= 0 and rect.right >= sw)
+        if button == "left" and not is_zoomed and not is_popup:
+            if rect.top <= y <= rect.top + 38 and rect.left <= x <= rect.right:
+                self.dragged_window_hwnd = top_hwnd
+                self.window_drag_offset_x = x - rect.left
+                self.window_drag_offset_y = y - rect.top
+
+        # 4. Standard Window Client Clicks vs. Popup Menu Clicks
         target = hwnd or top_hwnd
         if button == "left":
             self.drag_target = target
@@ -1140,6 +1161,7 @@ class InputHandler:
         self.desktop.attach_current_thread()
         if button == "left":
             self.dragged_icon_idx = None
+            self.dragged_window_hwnd = None
             self.is_lbutton_down = False
             if self.titlebar_action_down:
                 self.titlebar_action_down = False
@@ -1220,6 +1242,7 @@ class InputHandler:
                     user32.EnumChildWindows(top_hwnd, WNDENUMPROC(_enum_input_ctx_up), 0)
 
         self.drag_target = None
+        self.dragged_window_hwnd = None
 
     def handle_double_click(self, x: int, y: int):
         """Sends WM_LBUTTONDBLCLK to open files/folders or launches desktop icons."""

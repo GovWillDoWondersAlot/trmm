@@ -280,6 +280,8 @@ class WindowCompositor:
         self._desktop_icons_time: float = 0.0
         self.desktop_icons = []
         self._icon_cache = {}
+        self._last_frame_bytes: Optional[bytes] = None
+        self._last_frame_time: float = 0.0
 
     def set_cursor_pos(self, x: int, y: int):
         self.cursor_pos = (max(0, min(self.width, x)), max(0, min(self.height, y)))
@@ -455,7 +457,7 @@ class WindowCompositor:
             logger.debug(f"Image conversion failed for hwnd 0x{hwnd:X}: {e}")
             return None
 
-    def render_frame(self) -> bytes:
+    def render_frame(self, is_active: bool = False) -> bytes:
         """
         Renders the composed desktop with all open windows, corners, and taskbar.
         Returns JPEG encoded bytes.
@@ -600,7 +602,12 @@ class WindowCompositor:
         active_set = {w[0] for w in visible_to_render}
         self._cleanup_stale_buffers(active_set)
 
-        # Encode to JPEG with fast 4:2:0 subsampling (up to 40% faster than standard RGB JPEG)
+        # Adaptive JPEG compression: quality 48 during active motion/drag (~35KB), 65 when idle (~95KB)
+        quality = 48 if is_active else 65
+
         output = io.BytesIO()
-        canvas.save(output, format="JPEG", quality=65, subsampling=2, optimize=False)
-        return output.getvalue()
+        canvas.save(output, format="JPEG", quality=quality, subsampling=2, optimize=False)
+        frame_bytes = output.getvalue()
+        self._last_frame_bytes = frame_bytes
+        self._last_frame_time = time.time()
+        return frame_bytes

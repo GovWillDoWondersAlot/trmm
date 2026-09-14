@@ -257,15 +257,8 @@ class MirrorCapture:
             logger.debug(f"Mirror frame conversion error: {e}")
             img = Image.new("RGB", (w, h), (20, 20, 20))
 
-        # Dynamic downscale during active dragging if resolution > 1280px wide
-        # Reduces pixel buffer by ~60%, ensuring sub-20ms frame delivery over WAN
-        if is_active and w > 1280:
-            scale = 1280.0 / w
-            scaled_w = 1280
-            scaled_h = max(360, int(h * scale))
-            img = img.resize((scaled_w, scaled_h), Image.Resampling.BILINEAR)
-
-        # Adaptive JPEG quality: 48 during active motion/drag (~30KB), 65 when idle (~100KB)
+        # Adaptive JPEG quality: 48 during active motion/drag (~35KB), 65 when idle (~95KB)
+        # Keeps native coordinates 1:1 without downscaling distortion or mouse desync
         quality = 48 if is_active else 65
 
         output = io.BytesIO()

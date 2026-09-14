@@ -67,9 +67,9 @@ class OTAManager:
 
         overall_hash = hasher.hexdigest()
         return {
-            "version": "3.0.0-live",
+            "version": "3.0.1-live",
             "overall_hash": overall_hash,
-            "description": "v3.0.0: Ultra low-latency WAN streaming with adaptive motion JPEG compression, dynamic motion downscaling, dirty-frame duplicate skipping, and unbuffered reverse-proxy TCP transport.",
+            "description": "v3.0.1: Isolated CDP profile fix (zero lock collisions / cdp port offline fix), non-blocking Backstage titlebar window dragging, instant microsecond event routing, and silky smooth 30 FPS active Take Control.",
             "file_count": len(files_manifest),
             "files": files_manifest
         }
