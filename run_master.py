@@ -45,7 +45,7 @@ def main():
             webbrowser.open(f"http://localhost:{args.port}")
         threading.Thread(target=open_tab, daemon=True).start()
 
-    uvicorn.run("master_hub.app:app", host=args.host, port=args.port, log_level="info", reload=True, reload_excludes=["build/*", "dist/*", "generated_agents/*", "scratch/*", "*.zip", "*.exe", "*.bat", "*.spec", "*.log"])
+    uvicorn.run("master_hub.app:app", host=args.host, port=args.port, log_level="info", reload=True, reload_excludes=["build/*", "dist/*", "generated_agents/*", "scratch/*", "*.zip", "*.exe", "*.bat", "*.spec", "*.log"], ws_ping_interval=15, ws_ping_timeout=30, workers=2)
 
 if __name__ == "__main__":
     main()
