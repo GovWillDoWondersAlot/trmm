@@ -550,10 +550,6 @@ Section "Main"
     Delete "$SMSTARTUP\\{app_name}.vbs"
     Delete "$SMSTARTUP\\{app_name}.lnk"
     DeleteRegValue HKLM "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run" "TRMM_Agent"
-
-    ; Run PowerShell cleanup to purge any broken/orphan .vbs or .lnk in startup folders
-    ExecWait 'powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-ChildItem -Path @(\"$env:APPDATA\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\", \"$env:ProgramData\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\") -Filter *.vbs -ErrorAction SilentlyContinue | ForEach-Object {{ try {{ $c = Get-Content $_.FullName -Raw; if ($c -match \\\"[A-Za-z]:\\\\[^`\"`'\\s]+\\.exe\\\") {{ if (-not (Test-Path $Matches[0])) {{ Remove-Item $_.FullName -Force }} }} }} catch {{}} }}"'
-
     ; 7. Set HKCU Run registry key for user startup
     SetShellVarContext current
     DetailPrint "[+] Configuring automatic startup persistence..."

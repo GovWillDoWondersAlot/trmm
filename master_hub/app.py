@@ -32,6 +32,7 @@ CONFIG_PATH = Path(__file__).parent / "config.yaml"
 def get_default_server_url() -> str:
     if CONFIG_PATH.is_file():
         try:
+            import yaml
             with open(CONFIG_PATH, "r", encoding="utf-8") as f:
                 cfg = yaml.safe_load(f) or {}
             public_ip = cfg.get("public_ip")
