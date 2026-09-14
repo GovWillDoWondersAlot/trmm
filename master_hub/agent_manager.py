@@ -118,8 +118,16 @@ class AgentManager:
                 results.append(self.active_agents[aid].to_dict())
             else:
                 data["status"] = "offline"
-                results.append(data)
-        return sorted(results, key=lambda x: (x["status"] != "online", -x.get("last_heartbeat", 0)))
+        # Stable sort: Online first, then by endpoint tag, hostname, and agent_id (prevents shuffling on heartbeats)
+        return sorted(
+            results,
+            key=lambda x: (
+                x.get("status") != "online",
+                (x.get("endpoint_tag") or "").lower(),
+                (x.get("hostname") or "").lower(),
+                x.get("agent_id", "")
+            )
+        )
 
     def attach_viewer(self, agent_id: str, viewer_id: str, viewer_ws: WebSocket, mode: str = "backstage") -> bool:
         agent = self.get_agent(agent_id)

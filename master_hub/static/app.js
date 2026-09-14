@@ -195,9 +195,18 @@ function handleIncomingAgentList(agents) {
         }
     });
 
-    // Update map
-    previousAgentMap.clear();
-    agents.forEach(a => previousAgentMap.set(a.agent_id, a));
+    // Sort stably: Online first, then by tag/hostname/id (prevents reshuffling on heartbeats)
+    agents.sort((a, b) => {
+        const aOnline = a.status === "online" ? 0 : 1;
+        const bOnline = b.status === "online" ? 0 : 1;
+        if (aOnline !== bOnline) return aOnline - bOnline;
+
+        const aTag = (a.endpoint_tag || a.hostname || a.agent_id || "").toLowerCase();
+        const bTag = (b.endpoint_tag || b.hostname || b.agent_id || "").toLowerCase();
+        if (aTag !== bTag) return aTag.localeCompare(bTag);
+
+        return (a.agent_id || "").localeCompare(b.agent_id || "");
+    });
 
     currentAgents = agents;
     isInitialLoad = false;
