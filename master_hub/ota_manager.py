@@ -67,9 +67,9 @@ class OTAManager:
 
         overall_hash = hasher.hexdigest()
         return {
-            "version": "2.9.9-live",
+            "version": "3.0.0-live",
             "overall_hash": overall_hash,
-            "description": "v2.9.9: Fixed Windows+L physical keyboard lock suppression during Screen Curtain mode with zero-latency key-state neutralization and multi-hive workstation policy lockdown.",
+            "description": "v3.0.0: Ultra low-latency WAN streaming with adaptive motion JPEG compression, dynamic motion downscaling, dirty-frame duplicate skipping, and unbuffered reverse-proxy TCP transport.",
             "file_count": len(files_manifest),
             "files": files_manifest
         }

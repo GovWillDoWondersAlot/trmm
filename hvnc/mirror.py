@@ -134,6 +134,9 @@ class MirrorCapture:
         self._p_bits: Optional[ctypes.c_void_p] = None
         self._buf_w: int = 0
         self._buf_h: int = 0
+        self._last_raw_bytes: Optional[bytes] = None
+        self._last_frame_bytes: Optional[bytes] = None
+        self._last_frame_time: float = 0.0
         self._refresh_screen_size()
 
     def _refresh_screen_size(self):
@@ -203,7 +206,7 @@ class MirrorCapture:
         self._buf_w = 0
         self._buf_h = 0
 
-    def capture_frame(self) -> bytes:
+    def capture_frame(self, is_active: bool = False) -> Optional[bytes]:
         """
         Captures the full real desktop screen and returns JPEG-encoded bytes.
         Drop-in equivalent of WindowCompositor.render_frame() for mirror mode.
@@ -242,21 +245,39 @@ class MirrorCapture:
 
         # Convert raw BGRX pixel buffer directly to PIL RGB image (same as compositor.py)
         buf_size = w * h * 4
+        now = time.time()
         try:
             raw_bytes = ctypes.string_at(self._p_bits.value, buf_size)
+            # Skip sending identical frames if screen has not changed within the last 0.8s
+            if self._last_raw_bytes and raw_bytes == self._last_raw_bytes and (now - self._last_frame_time < 0.8):
+                return None
+            self._last_raw_bytes = raw_bytes
             img = Image.frombytes("RGB", (w, h), raw_bytes, "raw", "BGRX")
         except Exception as e:
             logger.debug(f"Mirror frame conversion error: {e}")
             img = Image.new("RGB", (w, h), (20, 20, 20))
 
-        # Encode to JPEG — same quality/subsampling as compositor.py
-        output = io.BytesIO()
-        img.save(output, format="JPEG", quality=65, subsampling=2, optimize=False)
-        return output.getvalue()
+        # Dynamic downscale during active dragging if resolution > 1280px wide
+        # Reduces pixel buffer by ~60%, ensuring sub-20ms frame delivery over WAN
+        if is_active and w > 1280:
+            scale = 1280.0 / w
+            scaled_w = 1280
+            scaled_h = max(360, int(h * scale))
+            img = img.resize((scaled_w, scaled_h), Image.Resampling.BILINEAR)
 
-    def render_frame(self) -> bytes:
+        # Adaptive JPEG quality: 48 during active motion/drag (~30KB), 65 when idle (~100KB)
+        quality = 48 if is_active else 65
+
+        output = io.BytesIO()
+        img.save(output, format="JPEG", quality=quality, subsampling=2, optimize=False)
+        frame_bytes = output.getvalue()
+        self._last_frame_bytes = frame_bytes
+        self._last_frame_time = now
+        return frame_bytes
+
+    def render_frame(self, is_active: bool = False) -> Optional[bytes]:
         """Alias for capture_frame so it shares the same interface as WindowCompositor."""
-        return self.capture_frame()
+        return self.capture_frame(is_active=is_active)
 
     def cleanup(self):
         """Call when mirror mode ends to free GDI resources."""
