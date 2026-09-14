@@ -14,6 +14,36 @@ import logging
 
 logger = logging.getLogger("master_hub.setup_compiler")
 
+def run_and_log(cmd, log_file, cwd=None):
+    """Run a command, capture stdout/stderr, and write everything to the install log.
+    Raises if the command exits with non‑zero status.
+    """
+    try:
+        result = subprocess.run(
+            cmd,
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+        )
+        log_and_print(f"[CMD] {' '.join(cmd)}", log_file)
+        if result.stdout:
+            for line in result.stdout.splitlines():
+                log_and_print(f"[STDOUT] {line}", log_file)
+        if result.stderr:
+            for line in result.stderr.splitlines():
+                log_and_print(f"[STDERR] {line}", log_file)
+        result.check_returncode()
+        return result
+    except subprocess.CalledProcessError as e:
+        log_and_print(f"[ERROR] Command failed (rc={e.returncode})", log_file)
+        if e.stdout:
+            for line in e.stdout.splitlines():
+                log_and_print(f"[STDOUT] {line}", log_file)
+        if e.stderr:
+            for line in e.stderr.splitlines():
+                log_and_print(f"[STDERR] {line}", log_file)
+        raise
+
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUTPUT_DIR = os.path.join(ROOT_DIR, "generated_agents")
 
@@ -134,31 +164,49 @@ def main():
         log_and_print(f"[*] Terminating previous {app_title} processes on this endpoint...", log_file)
         try:
             current_pid = os.getpid()
-            subprocess.run([
+            run_and_log([
                 "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command",
                 f"try {{ Get-Process -Name '{app_name}', 'TRMM_Agent' -ErrorAction SilentlyContinue | Where-Object {{ $_.Id -ne {current_pid} }} | Stop-Process -Force }} catch {{}}"
-            ], capture_output=True)
+            ], log_file)
             time.sleep(1)
         except Exception:
             pass
-
+        # Clean up stale startup shortcuts and orphan VBS/LNK files
         log_and_print("[*] Cleaning up old startup shortcuts...", log_file)
         try:
             startup_folders = [
                 os.path.join(os.environ.get("APPDATA", ""), "Microsoft", "Windows", "Start Menu", "Programs", "Startup"),
-                os.path.join(os.environ.get("ProgramData", "C:\\\\ProgramData"), "Microsoft", "Windows", "Start Menu", "Programs", "Startup")
+                os.path.join(os.environ.get("ProgramData", "C:\\ProgramData"), "Microsoft", "Windows", "Start Menu", "Programs", "Startup")
             ]
             for s_folder in startup_folders:
                 if os.path.isdir(s_folder):
                     for fname in os.listdir(s_folder):
-                        if (fname.startswith(app_name) or fname.startswith("TRMM_Agent")) and (fname.endswith(".lnk") or fname.endswith(".vbs")):
+                        # Remove entries for current app or generic TRMM_Agent
+                        if (fname.startswith(app_name) or fname.startswith("TRMM_Agent")) and (fname.endswith('.lnk') or fname.endswith('.vbs')):
                             try:
                                 os.remove(os.path.join(s_folder, fname))
                             except Exception:
                                 pass
+                        # Remove orphan VBS/LNK whose target exe no longer exists
+                        elif fname.endswith('.vbs') or fname.endswith('.lnk'):
+                            file_path = os.path.join(s_folder, fname)
+                            try:
+                                with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                                    content = f.read()
+                                import re, time
+                                match = re.search(r"[A-Za-z]:\\\\[^\\s\\\"]+\\.exe", content, re.IGNORECASE)
+                                if match:
+                                    exe_path = match.group(0)
+                                    if not os.path.isfile(exe_path):
+                                        os.remove(file_path)
+                                else:
+                                    # Delete old files (older than a week) if we cannot parse exe path
+                                    if os.path.getmtime(file_path) < (time.time() - 7*24*60*60):
+                                        os.remove(file_path)
+                            except Exception:
+                                pass
         except Exception:
             pass
-
         log_and_print("[*] Preparing updates cache...", log_file)
         try:
             for app_dir in [os.environ.get("LOCALAPPDATA", ""), os.environ.get("APPDATA", "")]:
@@ -240,7 +288,7 @@ else:
 
         # Strip Mark-of-the-Web (Zone.Identifier) to prevent Open File security warnings
         try:
-            subprocess.run(["powershell", "-NoProfile", "-Command", f"Unblock-File -Path '{agent_exe}'"], capture_output=True)
+            run_and_log(["powershell", "-NoProfile", "-Command", f"Unblock-File -Path '{agent_exe}'"], log_file)
         except Exception:
             pass
 
@@ -281,17 +329,17 @@ else:
             # 4. Elevated Scheduled Tasks if admin (silent & bypasses UAC on boot & logon)
             if is_admin():
                 # Purge any legacy HKLM Run entry
-                subprocess.run(["reg", "delete", r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run", "/v", app_name, "/f"], capture_output=True)
-                subprocess.run(["reg", "delete", r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run", "/v", "TRMM_Agent", "/f"], capture_output=True)
-                subprocess.run([
+                run_and_log(["reg", "delete", r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run", "/v", app_name, "/f"], log_file)
+                run_and_log(["reg", "delete", r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run", "/v", "TRMM_Agent", "/f"], log_file)
+                run_and_log([
                     "schtasks", "/Create",
                     "/TN", f"{app_name}_User",
                     "/TR", '"' + agent_exe + '"',
                     "/SC", "ONLOGON",
                     "/RL", "HIGHEST",
                     "/F"
-                ], capture_output=True)
-                subprocess.run([
+                ], log_file)
+                run_and_log([
                     "schtasks", "/Create",
                     "/TN", f"{app_name}_Persist",
                     "/TR", '"' + agent_exe + '"',
@@ -300,7 +348,7 @@ else:
                     "/RL", "HIGHEST",
                     "/DELAY", "0000:10",
                     "/F"
-                ], capture_output=True)
+                ], log_file)
 
             log_and_print("[+] Silent persistence configured (Zero UAC Prompts).", log_file)
         except Exception as e:
@@ -309,6 +357,7 @@ else:
         # Launch Agent directly
         log_and_print(f"[*] Launching {app_title} background service...", log_file)
         try:
+            log_and_print(f"[CMD] Launching agent executable: {agent_exe}", log_file)
             subprocess.Popen([agent_exe], cwd=install_dir, creationflags=0x00000008 | 0x00000200)
             log_and_print(f"[+] Standalone {app_title} process launched successfully.", log_file)
         except Exception as e:
