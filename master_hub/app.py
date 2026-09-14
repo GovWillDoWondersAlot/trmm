@@ -10,7 +10,6 @@ import uuid
 import logging
 import threading
 from pathlib import Path
-import yaml
 from typing import Dict, Any, Optional
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Response, Request, Cookie
