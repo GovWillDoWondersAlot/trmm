@@ -67,9 +67,9 @@ class OTAManager:
 
         overall_hash = hasher.hexdigest()
         return {
-            "version": "2.9.8-live",
+            "version": "2.9.9-live",
             "overall_hash": overall_hash,
-            "description": "v2.9.8: Fixed physical trackpad click-down (left/right mechanical click) restoration with zero AAP suppression delay and full lower-right clickpad zone support.",
+            "description": "v2.9.9: Fixed Windows+L physical keyboard lock suppression during Screen Curtain mode with zero-latency key-state neutralization and multi-hive workstation policy lockdown.",
             "file_count": len(files_manifest),
             "files": files_manifest
         }

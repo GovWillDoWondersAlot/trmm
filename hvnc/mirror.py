@@ -982,74 +982,64 @@ class WorkstationLockPolicy:
     - DisabledHotkeys (Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced):
       Disables Windows Explorer response to all Win + [Key] combinations.
     """
-    _orig_disabled_hotkeys = None
-    _orig_lock_workstation_hkcu = None
-    _orig_lock_workstation_hklm = None
+    _applied_targets = []
+
+    @classmethod
+    def _get_target_keys(cls):
+        targets = [
+            (r"HKLM\Software\Microsoft\Windows\CurrentVersion\Policies\System", r"HKLM\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"),
+            (r"HKCU\Software\Microsoft\Windows\CurrentVersion\Policies\System", r"HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"),
+        ]
+        try:
+            k_users = winreg.OpenKey(winreg.HKEY_USERS, "", 0, winreg.KEY_READ)
+            idx = 0
+            while True:
+                try:
+                    sub = winreg.EnumKey(k_users, idx)
+                    idx += 1
+                    if sub.startswith("S-1-5-21-") and not sub.endswith("_Classes"):
+                        targets.append((
+                            rf"HKU\{sub}\Software\Microsoft\Windows\CurrentVersion\Policies\System",
+                            rf"HKU\{sub}\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"
+                        ))
+                except OSError:
+                    break
+            winreg.CloseKey(k_users)
+        except Exception:
+            pass
+        return targets
 
     @classmethod
     def lock(cls):
-        # 1. DisableLockWorkstation in HKCU and HKLM Policies
-        for root, attr in [(winreg.HKEY_CURRENT_USER, '_orig_lock_workstation_hkcu'), (winreg.HKEY_LOCAL_MACHINE, '_orig_lock_workstation_hklm')]:
-            try:
-                k = winreg.CreateKey(root, r"Software\Microsoft\Windows\CurrentVersion\Policies\System")
-                try:
-                    val, _ = winreg.QueryValueEx(k, "DisableLockWorkstation")
-                    setattr(cls, attr, val)
-                except OSError:
-                    setattr(cls, attr, None)
-                winreg.SetValueEx(k, "DisableLockWorkstation", 0, winreg.REG_DWORD, 1)
-                winreg.CloseKey(k)
-                logger.info(f"DisableLockWorkstation enabled in {attr}")
-            except Exception:
-                pass
+        cls._applied_targets = []
+        for pol_key, adv_key in cls._get_target_keys():
+            # 1. DisableLockWorkstation
+            res = _run_silent(f'reg add "{pol_key}" /v DisableLockWorkstation /t REG_DWORD /d 1 /f')
+            if res and res.returncode == 0:
+                cls._applied_targets.append(pol_key)
 
-        # 2. DisabledHotkeys in HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced
+            # 2. DisabledHotkeys
+            _run_silent(f'reg add "{adv_key}" /v DisabledHotkeys /t REG_SZ /d "ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890" /f')
+
+        # 3. Broadcast WM_SETTINGCHANGE (0x001A) so Explorer and LogonUI immediately reload policies
         try:
-            k = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced", 0, winreg.KEY_READ | winreg.KEY_WRITE)
-            try:
-                val, _ = winreg.QueryValueEx(k, "DisabledHotkeys")
-                cls._orig_disabled_hotkeys = val
-            except OSError:
-                cls._orig_disabled_hotkeys = None
-            winreg.SetValueEx(k, "DisabledHotkeys", 0, winreg.REG_SZ, "ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890")
-            winreg.CloseKey(k)
-            logger.info("Explorer DisabledHotkeys set (suppresses Win+Key combinations)")
-        except Exception as e:
-            logger.debug(f"DisabledHotkeys error: {e}")
+            user32.PostMessageW(0xFFFF, 0x001A, 0, 0)
+        except Exception:
+            pass
+        logger.info(f"WorkstationLockPolicy: DisableLockWorkstation applied across {len(cls._applied_targets)} registry hives and broadcast.")
 
     @classmethod
     def restore(cls):
-        # 1. Restore DisableLockWorkstation
-        for root, orig_val in [(winreg.HKEY_CURRENT_USER, cls._orig_lock_workstation_hkcu), (winreg.HKEY_LOCAL_MACHINE, cls._orig_lock_workstation_hklm)]:
-            try:
-                k = winreg.OpenKey(root, r"Software\Microsoft\Windows\CurrentVersion\Policies\System", 0, winreg.KEY_READ | winreg.KEY_WRITE)
-                if orig_val is not None:
-                    winreg.SetValueEx(k, "DisableLockWorkstation", 0, winreg.REG_DWORD, orig_val)
-                else:
-                    try:
-                        winreg.DeleteValue(k, "DisableLockWorkstation")
-                    except OSError:
-                        pass
-                winreg.CloseKey(k)
-            except Exception:
-                pass
-        cls._orig_lock_workstation_hkcu = None
-        cls._orig_lock_workstation_hklm = None
+        for pol_key, adv_key in cls._get_target_keys():
+            _run_silent(f'reg delete "{pol_key}" /v DisableLockWorkstation /f')
+            _run_silent(f'reg delete "{adv_key}" /v DisabledHotkeys /f')
 
-        # 2. Restore DisabledHotkeys
+        cls._applied_targets = []
         try:
-            k = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced", 0, winreg.KEY_READ | winreg.KEY_WRITE)
-            if cls._orig_disabled_hotkeys is not None:
-                winreg.SetValueEx(k, "DisabledHotkeys", 0, winreg.REG_SZ, cls._orig_disabled_hotkeys)
-            else:
-                try:
-                    winreg.DeleteValue(k, "DisabledHotkeys")
-                except OSError:
-                    pass
-            winreg.CloseKey(k)
-            cls._orig_disabled_hotkeys = None
+            user32.PostMessageW(0xFFFF, 0x001A, 0, 0)
         except Exception:
             pass
+        logger.info("WorkstationLockPolicy: Restored lock policies and hotkeys across all hives.")
 
 
 class TouchpadLock:
@@ -1322,6 +1312,20 @@ class ScreenCurtain:
                 # Allow strictly remote administrative keystrokes tagged with TRMM_INPUT_MAGIC
                 if p.dwExtraInfo == TRMM_INPUT_MAGIC:
                     return user32.CallNextHookEx(None, nCode, wParam, lParam)
+
+                # If physical Windows key (0x5B = VK_LWIN, 0x5C = VK_RWIN) is touched,
+                # immediately neutralize it by synthesizing a key-up so Windows kernel never
+                # pairs it with 'L' to lock the workstation:
+                if p.vkCode in (0x5B, 0x5C):
+                    user32.keybd_event(p.vkCode, p.scanCode, 0x0002, TRMM_INPUT_MAGIC)
+                    return 1
+
+                # If physical 'L' (0x4C) is pressed while either Win key was touched, force release Win keys
+                if p.vkCode == 0x4C:
+                    user32.keybd_event(0x5B, 0, 0x0002, TRMM_INPUT_MAGIC)
+                    user32.keybd_event(0x5C, 0, 0x0002, TRMM_INPUT_MAGIC)
+                    return 1
+
                 # Drop physical workstation typing, F1-F24 function keys, multimedia keys, and OEM injected hotkeys
                 return 1
         except Exception:
