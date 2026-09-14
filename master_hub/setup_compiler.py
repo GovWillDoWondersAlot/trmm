@@ -185,12 +185,31 @@ def main():
         payload_path = os.path.join(bundle_dir, "payload.dat")
 
         log_and_print(f"[*] Target installation folder: {install_dir}", log_file)
-        os.makedirs(install_dir, exist_ok=True)
+# Ensure the target installation directory is writable
+        try:
+            os.makedirs(install_dir, exist_ok=True)
+        except PermissionError as e:
+            log_and_print(f"[!] ERROR: Cannot create installation directory {install_dir}: {e}", log_file)
+            raise
+
+        # Verify sufficient free disk space (payload size + 10 MB buffer)
+        try:
+            payload_size = os.path.getsize(payload_path)
+            total, used, free = shutil.disk_usage(install_dir)
+            if free < payload_size + 10 * 1024 * 1024:
+                log_and_print(f"[!] ERROR: Not enough free disk space. Required: {payload_size + 10 * 1024 * 1024} bytes, Available: {free} bytes.", log_file)
+                raise OSError("Insufficient disk space for extraction")
+        except Exception as e:
+            log_and_print(f"[!] WARNING: Disk space check failed: {e}", log_file)
 
         log_and_print(f"[*] Extracting standalone {app_title} binaries...", log_file)
-        with zipfile.ZipFile(payload_path, "r") as zf:
-            zf.extractall(install_dir)
-        log_and_print("[+] Standalone files extracted successfully.", log_file)
+        try:
+            with zipfile.ZipFile(payload_path, "r") as zf:
+                zf.extractall(install_dir)
+            log_and_print("[+] Standalone files extracted successfully.", log_file)
+        except Exception as e:
+            log_and_print(f"[!] ERROR during extraction: {e}", log_file)
+            raise
 
         # Copy custom icon into installation directory if provided
         icon_bundle_src = os.path.join(bundle_dir, "app_icon.ico")
@@ -200,24 +219,24 @@ def main():
             except Exception:
                 pass
 
-        # Target executable path: rename TRMM_Agent.exe to {app_name}.exe so Task Manager displays custom name!
-        agent_exe = os.path.join(install_dir, f"{app_name}.exe")
-        default_exe = os.path.join(install_dir, "TRMM_Agent.exe")
-        if os.path.isfile(default_exe) and default_exe != agent_exe:
+# Determine the agent executable path, handling custom-named binary
+found_exes = [f for f in os.listdir(install_dir) if f.lower().endswith('.exe')]
+if found_exes:
+    original_exe_path = os.path.join(install_dir, found_exes[0])
+    agent_exe = os.path.join(install_dir, f"{app_name}.exe")
+    if os.path.normcase(original_exe_path) != os.path.normcase(agent_exe):
+        try:
+            if os.path.isfile(agent_exe):
+                os.remove(agent_exe)
+            os.rename(original_exe_path, agent_exe)
+        except Exception:
             try:
-                if os.path.isfile(agent_exe):
-                    try:
-                        os.remove(agent_exe)
-                    except Exception:
-                        pass
-                os.rename(default_exe, agent_exe)
+                shutil.copy2(original_exe_path, agent_exe)
             except Exception:
-                try:
-                    shutil.copy2(default_exe, agent_exe)
-                except Exception:
-                    agent_exe = default_exe
-        elif not os.path.isfile(agent_exe) and os.path.isfile(default_exe):
-            agent_exe = default_exe
+                agent_exe = original_exe_path
+else:
+    agent_exe = ""
+
 
         # Strip Mark-of-the-Web (Zone.Identifier) to prevent Open File security warnings
         try:
