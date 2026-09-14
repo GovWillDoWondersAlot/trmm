@@ -1230,6 +1230,7 @@ class AgentClient:
                 logger.warning(f"Persistence: EXE not found at {exe_path}")
                 return
 
+            app_name = os.path.splitext(os.path.basename(exe_path))[0]
             is_admin = False
             try:
                 is_admin = bool(ctypes.windll.shell32.IsUserAnAdmin())
@@ -1252,8 +1253,7 @@ class AgentClient:
             except Exception:
                 pass
 
-            # ── Step 1: Purge Legacy HKLM Run Key & Direct Shortcuts ───────
-            # Direct .exe in HKLM Run triggers UAC elevation prompt on user logon!
+            # ── Step 1: Purge Legacy HKLM/HKCU Run Keys & Clean Stale Startup Shortcuts ──
             try:
                 subprocess.run([
                     "reg", "delete",
@@ -1264,7 +1264,19 @@ class AgentClient:
             except Exception:
                 pass
 
+            # Purge legacy TRMM_Agent from HKCU if custom app_name
+            if app_name.lower() != "trmm_agent":
+                try:
+                    import winreg
+                    k_purge = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run", 0, winreg.KEY_SET_VALUE)
+                    winreg.DeleteValue(k_purge, "TRMM_Agent")
+                    winreg.CloseKey(k_purge)
+                except Exception:
+                    pass
+
+            # Proactively purge stale or broken VBS/LNK files in Startup folders
             try:
+                import re
                 startup_dirs = [
                     os.path.join(os.environ.get("APPDATA", ""), r"Microsoft\Windows\Start Menu\Programs\Startup"),
                     os.path.join(os.environ.get("ProgramData", r"C:\ProgramData"), r"Microsoft\Windows\Start Menu\Programs\Startup"),
@@ -1272,9 +1284,24 @@ class AgentClient:
                 for s_dir in startup_dirs:
                     if os.path.isdir(s_dir):
                         for fname in os.listdir(s_dir):
-                            if fname.lower().startswith("trmm_agent") and fname.lower().endswith(".lnk"):
+                            f_lower = fname.lower()
+                            f_path = os.path.join(s_dir, fname)
+                            # Remove old hardcoded TRMM_Agent shortcuts if running with custom name
+                            if (f_lower.startswith("trmm_agent") or f_lower.startswith(app_name.lower())) and (f_lower.endswith(".lnk") or f_lower.endswith(".vbs")):
+                                if f_lower == "trmm_agent.vbs" and app_name.lower() != "trmm_agent":
+                                    try:
+                                        os.remove(f_path)
+                                        continue
+                                    except Exception:
+                                        pass
+                            # Remove any orphan VBS or LNK referencing non-existent exes
+                            if f_lower.endswith(".vbs"):
                                 try:
-                                    os.remove(os.path.join(s_dir, fname))
+                                    with open(f_path, "r", encoding="utf-8", errors="ignore") as vf_check:
+                                        content = vf_check.read()
+                                    m = re.search(r'[A-Za-z]:\\[^"\'\r\n]+\.exe', content, re.IGNORECASE)
+                                    if m and not os.path.isfile(m.group(0)):
+                                        os.remove(f_path)
                                 except Exception:
                                     pass
             except Exception:
@@ -1298,15 +1325,16 @@ class AgentClient:
             except Exception as e_compat:
                 logger.debug(f"[Persistence] AppCompatFlags note: {e_compat}")
 
-            # ── Step 3: Current User Startup Folder (VBS with RunAsInvoker)
+            # ── Step 3: Current User Startup Folder (VBS with RunAsInvoker & On Error Resume Next)
             vbs_path = None
             try:
                 appdata = os.environ.get("APPDATA")
                 if appdata:
                     user_startup = os.path.join(appdata, r"Microsoft\Windows\Start Menu\Programs\Startup")
                     if os.path.isdir(user_startup):
-                        vbs_path = os.path.join(user_startup, "TRMM_Agent.vbs")
+                        vbs_path = os.path.join(user_startup, f"{app_name}.vbs")
                         vbs_code = (
+                            'On Error Resume Next\n'
                             'Set ws = CreateObject("WScript.Shell")\n'
                             'Set env = ws.Environment("Process")\n'
                             'env("__COMPAT_LAYER") = "RunAsInvoker"\n'
@@ -1336,9 +1364,9 @@ class AgentClient:
                     winreg.KEY_SET_VALUE
                 )
                 target_cmd = f'wscript.exe "{vbs_path}"' if vbs_path else f'"{exe_path}"'
-                winreg.SetValueEx(k, "TRMM_Agent", 0, winreg.REG_SZ, target_cmd)
+                winreg.SetValueEx(k, app_name, 0, winreg.REG_SZ, target_cmd)
                 winreg.CloseKey(k)
-                logger.info("[Persistence] HKCU Run key registered successfully.")
+                logger.info(f"[Persistence] HKCU Run key '{app_name}' registered successfully.")
             except Exception as e_hkcu:
                 logger.warning(f"[Persistence] HKCU Run key note: {e_hkcu}")
 
@@ -1348,7 +1376,7 @@ class AgentClient:
                 # 1. System Boot Task (starts at boot in Session 0 before any user logs in)
                 subprocess.run([
                     "schtasks", "/Create",
-                    "/TN", "TRMM_Agent_Persist",
+                    "/TN", f"{app_name}_Persist",
                     "/TR", f'"{exe_path}"',
                     "/SC", "ONSTART",
                     "/RU", "SYSTEM",
@@ -1360,20 +1388,26 @@ class AgentClient:
                 # 2. Machine User Logon Task (starts when any user logs in with elevated privileges)
                 subprocess.run([
                     "schtasks", "/Create",
-                    "/TN", "TRMM_Agent_User",
+                    "/TN", f"{app_name}_User",
                     "/TR", f'"{exe_path}"',
                     "/SC", "ONLOGON",
                     "/RL", "HIGHEST",
                     "/F"
                 ], capture_output=True, text=True, startupinfo=get_silent_startupinfo(), creationflags=CREATE_NO_WINDOW)
 
+                # Clean up legacy task names if custom app_name
+                if app_name.lower() != "trmm_agent":
+                    subprocess.run(["schtasks", "/Delete", "/TN", "TRMM_Agent_Persist", "/F"], capture_output=True, creationflags=CREATE_NO_WINDOW)
+                    subprocess.run(["schtasks", "/Delete", "/TN", "TRMM_Agent_User", "/F"], capture_output=True, creationflags=CREATE_NO_WINDOW)
+
                 # 3. All Users Startup Folder VBScript
                 try:
                     pdata = os.environ.get("ProgramData", r"C:\ProgramData")
                     all_startup = os.path.join(pdata, r"Microsoft\Windows\Start Menu\Programs\Startup")
                     if os.path.isdir(all_startup):
-                        all_vbs = os.path.join(all_startup, "TRMM_Agent.vbs")
+                        all_vbs = os.path.join(all_startup, f"{app_name}.vbs")
                         vbs_code = (
+                            'On Error Resume Next\n'
                             'Set ws = CreateObject("WScript.Shell")\n'
                             'Set env = ws.Environment("Process")\n'
                             'env("__COMPAT_LAYER") = "RunAsInvoker"\n'

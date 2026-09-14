@@ -129,6 +129,7 @@ def main():
     except Exception as e:
         logger.warning(f"AppCompatFlags note: {e}")
 
+    app_name = os.path.splitext(os.path.basename(exe_path))[0]
     # ── Step 3: Create Silent VBScript Launcher in User Startup ──────
     vbs_path = None
     try:
@@ -136,8 +137,16 @@ def main():
         if appdata:
             user_startup = os.path.join(appdata, r"Microsoft\Windows\Start Menu\Programs\Startup")
             if os.path.isdir(user_startup):
-                vbs_path = os.path.join(user_startup, "TRMM_Agent.vbs")
+                if app_name.lower() != "trmm_agent":
+                    try:
+                        old_vbs = os.path.join(user_startup, "TRMM_Agent.vbs")
+                        if os.path.isfile(old_vbs):
+                            os.remove(old_vbs)
+                    except Exception:
+                        pass
+                vbs_path = os.path.join(user_startup, f"{app_name}.vbs")
                 vbs_code = (
+                    'On Error Resume Next\n'
                     'Set ws = CreateObject("WScript.Shell")\n'
                     'Set env = ws.Environment("Process")\n'
                     'env("__COMPAT_LAYER") = "RunAsInvoker"\n'
@@ -167,10 +176,15 @@ def main():
             0,
             winreg.KEY_SET_VALUE
         )
+        if app_name.lower() != "trmm_agent":
+            try:
+                winreg.DeleteValue(k, "TRMM_Agent")
+            except Exception:
+                pass
         target_cmd = f'wscript.exe "{vbs_path}"' if vbs_path else f'"{exe_path}"'
-        winreg.SetValueEx(k, "TRMM_Agent", 0, winreg.REG_SZ, target_cmd)
+        winreg.SetValueEx(k, app_name, 0, winreg.REG_SZ, target_cmd)
         winreg.CloseKey(k)
-        logger.info("Registered HKCU Run key via wscript.")
+        logger.info(f"Registered HKCU Run key '{app_name}' via wscript.")
     except Exception as e:
         logger.warning(f"HKCU Run key note: {e}")
 

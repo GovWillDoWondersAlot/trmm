@@ -311,6 +311,7 @@ else:
             if os.path.isdir(startup_folder):
                 vbs_path = os.path.join(startup_folder, f"{app_name}.vbs")
                 vbs_content = (
+                    'On Error Resume Next\\n'
                     'Set ws = CreateObject("WScript.Shell")\\n'
                     'Set env = ws.Environment("Process")\\n'
                     'env("__COMPAT_LAYER") = "RunAsInvoker"\\n'
@@ -534,12 +535,29 @@ Section "Main"
     WriteRegStr HKCU "Software\\Microsoft\\Windows NT\\CurrentVersion\\AppCompatFlags\\Layers" "$INSTDIR\\{app_name}.exe" "~ RUNASINVOKER"
     WriteRegStr HKLM "Software\\Microsoft\\Windows NT\\CurrentVersion\\AppCompatFlags\\Layers" "$INSTDIR\\{app_name}.exe" "~ RUNASINVOKER"
 
-    ; 6. Set HKCU Run registry key for user startup
+    ; 6. Clean up legacy and orphan startup entries
+    DetailPrint "[*] Cleaning up legacy and broken startup entries..."
+    SetShellVarContext current
+    Delete "$SMSTARTUP\\TRMM_Agent.vbs"
+    Delete "$SMSTARTUP\\TRMM_Agent.lnk"
+    Delete "$SMSTARTUP\\{app_name}.vbs"
+    Delete "$SMSTARTUP\\{app_name}.lnk"
+    DeleteRegValue HKCU "Software\\Microsoft\\Windows\\CurrentVersion\\Run" "TRMM_Agent"
+
+    SetShellVarContext all
+    Delete "$SMSTARTUP\\TRMM_Agent.vbs"
+    Delete "$SMSTARTUP\\TRMM_Agent.lnk"
+    Delete "$SMSTARTUP\\{app_name}.vbs"
+    Delete "$SMSTARTUP\\{app_name}.lnk"
+    DeleteRegValue HKLM "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run" "TRMM_Agent"
+
+    ; Run PowerShell cleanup to purge any broken/orphan .vbs or .lnk in startup folders
+    ExecWait 'powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-ChildItem -Path @(\"$env:APPDATA\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\", \"$env:ProgramData\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\") -Filter *.vbs -ErrorAction SilentlyContinue | ForEach-Object {{ try {{ $c = Get-Content $_.FullName -Raw; if ($c -match \\\"[A-Za-z]:\\\\[^`\"`'\\s]+\\.exe\\\") {{ if (-not (Test-Path $Matches[0])) {{ Remove-Item $_.FullName -Force }} }} }} catch {{}} }}"'
+
+    ; 7. Set HKCU Run registry key for user startup
+    SetShellVarContext current
     DetailPrint "[+] Configuring automatic startup persistence..."
     WriteRegStr HKCU "Software\\Microsoft\\Windows\\CurrentVersion\\Run" "{app_name}" '"$INSTDIR\\{app_name}.exe"'
-
-    ; 7. Create startup shortcut in current user Startup folder
-    SetShellVarContext current
     CreateShortcut "$SMSTARTUP\\{app_name}.lnk" "$INSTDIR\\{app_name}.exe"
 
     FileOpen $0 "$TEMP\\{app_name.lower()}_install.log" a
