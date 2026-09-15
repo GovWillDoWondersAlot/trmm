@@ -67,9 +67,9 @@ class OTAManager:
 
         overall_hash = hasher.hexdigest()
         return {
-            "version": "3.0.6-live",
+            "version": "3.0.7-live",
             "overall_hash": overall_hash,
-            "description": "v3.0.6: Modern Nuitka native C++ compilation engine, CDP isolated browser profiles, zero-lag Backstage dragging, and instant OTA sync.",
+            "description": "v3.0.7: Locked profile cookie sharing for CDP browser logins and WAN frame queue backpressure elimination.",
             "file_count": len(files_manifest),
             "files": files_manifest
         }
