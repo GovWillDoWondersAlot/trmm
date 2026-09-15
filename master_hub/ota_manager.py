@@ -67,9 +67,9 @@ class OTAManager:
 
         overall_hash = hasher.hexdigest()
         return {
-            "version": "3.0.1-live",
+            "version": "3.0.2-live",
             "overall_hash": overall_hash,
-            "description": "v3.0.1: Isolated CDP profile fix (zero lock collisions / cdp port offline fix), non-blocking Backstage titlebar window dragging, instant microsecond event routing, and silky smooth 30 FPS active Take Control.",
+            "description": "v3.0.2: Deep authentic profile preservation in Backstage (passwords, logins, bookmarks, history, extensions, accounts, and multi-profile support).",
             "file_count": len(files_manifest),
             "files": files_manifest
         }

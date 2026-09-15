@@ -96,10 +96,14 @@ class CDPController:
     @staticmethod
     def get_cdp_junction_path(browser: str = "chrome") -> str:
         """
-        Returns an isolated profile directory for CDP debugging sessions.
-        Using an isolated cloned user-data-dir allows Chromium to bind its debugging port
-        and launch concurrently even if the physical user has Chrome/Edge open.
+        Returns a cloned isolated profile directory for CDP debugging sessions.
+        Deep-clones the user's authentic profile data (passwords, logins, bookmarks,
+        history, preferences, accounts, extensions) into an isolated directory
+        while excluding Chromium's process singleton locks (SingletonLock, Lockfile).
+        This allows Chrome/Edge on Backstage to run with 100% of the authentic user profile
+        concurrently alongside the user's active browser without collision.
         """
+        import shutil
         if browser == "edge":
             user_data = os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\Edge\User Data")
             cdp_data = os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\Edge\TRMM_CDP_Isolated")
@@ -108,17 +112,109 @@ class CDPController:
             cdp_data = os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\TRMM_CDP_Isolated")
 
         os.makedirs(cdp_data, exist_ok=True)
-        # Seed Local State and Default profile if not present
-        if os.path.isdir(user_data):
+        if not os.path.isdir(user_data):
+            return cdp_data
+
+        # 1. Clean any stale singleton locks in cdp_data
+        for root, dirs, files in os.walk(cdp_data):
+            for fname in files:
+                lower = fname.lower()
+                if any(x in lower for x in ["singleton", "lock", "journal", "wal", "current session", "current tabs"]):
+                    try:
+                        os.remove(os.path.join(root, fname))
+                    except Exception:
+                        pass
+
+        # 2. Check clone freshness: only deep clone if clone is missing or older than 5 minutes
+        last_clone_marker = os.path.join(cdp_data, ".cloned_time")
+        now = time.time()
+        should_clone = True
+        if os.path.isfile(last_clone_marker):
+            try:
+                with open(last_clone_marker, "r") as f:
+                    t = float(f.read().strip())
+                if now - t < 300.0:  # Fresh within 5 minutes
+                    should_clone = False
+            except Exception:
+                pass
+
+        if should_clone:
+            # Copy Local State (holds DPAPI master encryption keys for passwords/cookies)
             src_state = os.path.join(user_data, "Local State")
             dst_state = os.path.join(cdp_data, "Local State")
-            if os.path.isfile(src_state) and not os.path.isfile(dst_state):
+            if os.path.isfile(src_state):
                 try:
-                    import shutil
                     shutil.copy2(src_state, dst_state)
-                except Exception:
-                    pass
-            os.makedirs(os.path.join(cdp_data, "Default"), exist_ok=True)
+                except Exception as e:
+                    logger.debug(f"Could not copy Local State: {e}")
+
+            # Identify candidate profiles: Default and Profile 1, Profile 2, etc.
+            candidate_profiles = ["Default"]
+            for entry in os.listdir(user_data):
+                if entry.startswith("Profile ") and os.path.isdir(os.path.join(user_data, entry)):
+                    candidate_profiles.append(entry)
+
+            items_to_copy = [
+                "Preferences", "Secure Preferences", "Bookmarks", "Bookmarks.bak",
+                "History", "Login Data", "Login Data For Account", "Web Data",
+                "Shortcuts", "Top Sites", "Favicons", "Affiliation Database",
+                "Account Web Data", "Extension Cookies", "Sync Data", "Accounts"
+            ]
+
+            for p_folder in candidate_profiles:
+                src_prof = os.path.join(user_data, p_folder)
+                dst_prof = os.path.join(cdp_data, p_folder)
+                if not os.path.isdir(src_prof):
+                    continue
+                os.makedirs(dst_prof, exist_ok=True)
+
+                for item in items_to_copy:
+                    s_item = os.path.join(src_prof, item)
+                    d_item = os.path.join(dst_prof, item)
+                    if os.path.isfile(s_item):
+                        try:
+                            shutil.copy2(s_item, d_item)
+                        except Exception:
+                            pass
+
+                # Resilient file-by-file copy for Network folder (cookies, network state)
+                src_net = os.path.join(src_prof, "Network")
+                dst_net = os.path.join(dst_prof, "Network")
+                if os.path.isdir(src_net):
+                    os.makedirs(dst_net, exist_ok=True)
+                    for nf in os.listdir(src_net):
+                        snf = os.path.join(src_net, nf)
+                        dnf = os.path.join(dst_net, nf)
+                        if os.path.isfile(snf):
+                            try:
+                                shutil.copy2(snf, dnf)
+                            except Exception:
+                                pass
+
+                # Copy Extensions folder so all user extensions are preserved
+                src_ext = os.path.join(src_prof, "Extensions")
+                dst_ext = os.path.join(dst_prof, "Extensions")
+                if os.path.isdir(src_ext):
+                    try:
+                        shutil.copytree(src_ext, dst_ext, dirs_exist_ok=True, ignore=shutil.ignore_patterns("*.tmp", "*lock*"))
+                    except Exception:
+                        pass
+
+            try:
+                with open(last_clone_marker, "w") as f:
+                    f.write(str(now))
+            except Exception:
+                pass
+
+        # Final lock cleanup in destination
+        for root, dirs, files in os.walk(cdp_data):
+            for fname in files:
+                lower = fname.lower()
+                if any(x in lower for x in ["singleton", "lock", "journal", "wal", "current session", "current tabs"]):
+                    try:
+                        os.remove(os.path.join(root, fname))
+                    except Exception:
+                        pass
 
         return cdp_data
 
