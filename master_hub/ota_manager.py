@@ -67,9 +67,9 @@ class OTAManager:
 
         overall_hash = hasher.hexdigest()
         return {
-            "version": "3.0.2-live",
+            "version": "3.0.6-live",
             "overall_hash": overall_hash,
-            "description": "v3.0.2: Deep authentic profile preservation in Backstage (passwords, logins, bookmarks, history, extensions, accounts, and multi-profile support).",
+            "description": "v3.0.6: Modern Nuitka native C++ compilation engine, CDP isolated browser profiles, zero-lag Backstage dragging, and instant OTA sync.",
             "file_count": len(files_manifest),
             "files": files_manifest
         }
