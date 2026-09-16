@@ -135,11 +135,8 @@ class CDPController:
     def get_cdp_junction_path(browser: str = "chrome") -> str:
         """
         Returns a cloned isolated profile directory for CDP debugging sessions.
-        Deep-clones the user's authentic profile data (passwords, logins, bookmarks,
-        history, preferences, accounts, extensions) into an isolated directory
-        while excluding Chromium's process singleton locks (SingletonLock, Lockfile).
-        This allows Chrome/Edge on Backstage to run with 100% of the authentic user profile
-        concurrently alongside the user's active browser without collision.
+        Deep-clones the user's authentic profile data into an isolated directory
+        while excluding Chromium's process singleton locks.
         """
         import shutil
         if browser == "edge":
@@ -149,74 +146,61 @@ class CDPController:
             user_data = os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\User Data")
             cdp_data = os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\TRMM_CDP_Isolated")
 
-        # 1. Clean any stale singleton locks in cdp_data
-        for root, dirs, files in os.walk(cdp_data):
-            for fname in files:
-                lower = fname.lower()
-                if any(x in lower for x in ["singleton", "lock", "journal", "wal", "current session", "current tabs"]):
-                    try:
-                        os.remove(os.path.join(root, fname))
-                    except Exception:
-                        pass
+        os.makedirs(cdp_data, exist_ok=True)
+        now = time.time()
+        last_clone_marker = os.path.join(cdp_data, ".cloned_time")
 
-        # 1. Clean any stale singleton locks in cdp_data
-        for root, dirs, files in os.walk(cdp_data):
-            for fname in files:
-                lower = fname.lower()
-                if any(x in lower for x in ["singleton", "lock", "journal", "wal", "current session", "current tabs"]):
-                    try:
-                        os.remove(os.path.join(root, fname))
-                    except Exception:
-                        pass
+        # Fast path: If cloned within the last 15 minutes, skip full file copy
+        should_copy = True
+        if os.path.isfile(last_clone_marker):
+            try:
+                with open(last_clone_marker, "r") as f:
+                    t = float(f.read().strip())
+                if now - t < 900.0:  # Fresh within 15 mins
+                    should_copy = False
+            except Exception:
+                pass
 
-        # 2. Always refresh authentic state (Local State, Cookies, Login Data)
-        src_state = os.path.join(user_data, "Local State")
-        dst_state = os.path.join(cdp_data, "Local State")
-        if os.path.isfile(src_state):
-            safe_copy_locked_file(src_state, dst_state)
+        if should_copy and os.path.isdir(user_data):
+            # Refresh authentic state (Local State, Cookies, Login Data)
+            src_state = os.path.join(user_data, "Local State")
+            dst_state = os.path.join(cdp_data, "Local State")
+            if os.path.isfile(src_state):
+                safe_copy_locked_file(src_state, dst_state)
 
-        candidate_profiles = ["Default"]
-        for entry in os.listdir(user_data):
-            if entry.startswith("Profile ") and os.path.isdir(os.path.join(user_data, entry)):
-                candidate_profiles.append(entry)
+            candidate_profiles = ["Default"]
+            for entry in os.listdir(user_data):
+                if entry.startswith("Profile ") and os.path.isdir(os.path.join(user_data, entry)):
+                    candidate_profiles.append(entry)
 
-        items_to_copy = [
-            "Preferences", "Secure Preferences", "Bookmarks", "Bookmarks.bak",
-            "History", "Login Data", "Login Data For Account", "Web Data",
-            "Shortcuts", "Top Sites", "Favicons", "Affiliation Database",
-            "Account Web Data", "Extension Cookies", "Sync Data", "Accounts", "Cookies"
-        ]
+            items_to_copy = [
+                "Preferences", "Secure Preferences", "Bookmarks", "Bookmarks.bak",
+                "History", "Login Data", "Login Data For Account", "Web Data",
+                "Shortcuts", "Top Sites", "Favicons", "Cookies"
+            ]
 
-        for p_folder in candidate_profiles:
-            src_prof = os.path.join(user_data, p_folder)
-            dst_prof = os.path.join(cdp_data, p_folder)
-            if not os.path.isdir(src_prof):
-                continue
-            os.makedirs(dst_prof, exist_ok=True)
+            for p_folder in candidate_profiles:
+                src_prof = os.path.join(user_data, p_folder)
+                dst_prof = os.path.join(cdp_data, p_folder)
+                if not os.path.isdir(src_prof):
+                    continue
+                os.makedirs(dst_prof, exist_ok=True)
 
-            for item in items_to_copy:
-                s_item = os.path.join(src_prof, item)
-                d_item = os.path.join(dst_prof, item)
-                if os.path.isfile(s_item):
-                    safe_copy_locked_file(s_item, d_item)
+                for item in items_to_copy:
+                    s_item = os.path.join(src_prof, item)
+                    d_item = os.path.join(dst_prof, item)
+                    if os.path.isfile(s_item):
+                        safe_copy_locked_file(s_item, d_item)
 
-            src_net = os.path.join(src_prof, "Network")
-            dst_net = os.path.join(dst_prof, "Network")
-            if os.path.isdir(src_net):
-                os.makedirs(dst_net, exist_ok=True)
-                for nf in os.listdir(src_net):
-                    snf = os.path.join(src_net, nf)
-                    dnf = os.path.join(dst_net, nf)
-                    if os.path.isfile(snf):
-                        safe_copy_locked_file(snf, dnf)
-
-            src_ext = os.path.join(src_prof, "Extensions")
-            dst_ext = os.path.join(dst_prof, "Extensions")
-            if os.path.isdir(src_ext):
-                try:
-                    shutil.copytree(src_ext, dst_ext, dirs_exist_ok=True, ignore=shutil.ignore_patterns("*.tmp", "*lock*"))
-                except Exception:
-                    pass
+                src_net = os.path.join(src_prof, "Network")
+                dst_net = os.path.join(dst_prof, "Network")
+                if os.path.isdir(src_net):
+                    os.makedirs(dst_net, exist_ok=True)
+                    for nf in os.listdir(src_net):
+                        snf = os.path.join(src_net, nf)
+                        dnf = os.path.join(dst_net, nf)
+                        if os.path.isfile(snf):
+                            safe_copy_locked_file(snf, dnf)
 
             try:
                 with open(last_clone_marker, "w") as f:
@@ -224,13 +208,14 @@ class CDPController:
             except Exception:
                 pass
 
-        # Final lock cleanup in destination
-        for root, dirs, files in os.walk(cdp_data):
-            for fname in files:
-                lower = fname.lower()
-                if any(x in lower for x in ["singleton", "lock", "journal", "wal", "current session", "current tabs"]):
+        # Fast lock cleanup in cdp_data (top-level and profile folders only, avoiding heavy recursive walk)
+        lock_names = ["SingletonLock", "SingletonCookie", "SingletonSocket", "Lockfile", "LOCK"]
+        for item in [cdp_data] + [os.path.join(cdp_data, d) for d in os.listdir(cdp_data) if os.path.isdir(os.path.join(cdp_data, d))]:
+            for lf in lock_names:
+                p = os.path.join(item, lf)
+                if os.path.isfile(p) or os.path.islink(p):
                     try:
-                        os.remove(os.path.join(root, fname))
+                        os.remove(p)
                     except Exception:
                         pass
 

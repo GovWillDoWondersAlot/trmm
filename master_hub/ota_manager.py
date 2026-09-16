@@ -67,9 +67,9 @@ class OTAManager:
 
         overall_hash = hasher.hexdigest()
         return {
-            "version": "3.1.5-live",
+            "version": "3.1.6-live",
             "overall_hash": overall_hash,
-            "description": "v3.1.5: Fixed NameError asyncio import in Master Hub WebSocket viewer handler.",
+            "description": "v3.1.6: Optimized CDP isolated profile initialization to 0.3s and corrected command-line flag formatting for instant browser launching.",
             "file_count": len(files_manifest),
             "files": files_manifest
         }

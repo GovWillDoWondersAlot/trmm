@@ -280,8 +280,8 @@ class AppSpawner:
             '--remote-debugging-port=9222',
             '--remote-debugging-address=127.0.0.1',
             '--remote-allow-origins=*',
-            f'--user-data-dir="{profile_dir}"',
-            f'--profile-directory="{last_prof}"',
+            f'--user-data-dir={profile_dir}',
+            f'--profile-directory={last_prof}',
             "--no-profile-picker",
             "--disable-gpu",
             "--no-first-run",
@@ -291,7 +291,7 @@ class AppSpawner:
             "--hide-crash-restore-bubble",
             "--disable-session-crashed-bubble",
             "--start-maximized",
-            f'"{start_url}"',
+            start_url,
         ]
         cmd = f'"{binary}" ' + " ".join(flags)
         pid, err = self.spawn_raw(None, cmd)
@@ -319,21 +319,18 @@ class AppSpawner:
             '--remote-debugging-port=9223',
             '--remote-debugging-address=127.0.0.1',
             '--remote-allow-origins=*',
-            f'--user-data-dir="{profile_dir}"',
-            f'--profile-directory="{last_prof}"',
+            f'--user-data-dir={profile_dir}',
+            f'--profile-directory={last_prof}',
             "--no-profile-picker",
-            "--do-not-de-elevate",
-            "--disable-breakpad",
-            "--disable-crash-reporter",
             "--disable-gpu",
             "--no-first-run",
             "--no-default-browser-check",
+            "--disable-breakpad",
+            "--disable-crash-reporter",
             "--hide-crash-restore-bubble",
             "--disable-session-crashed-bubble",
-            "--disable-features=RendererCodeIntegrity,CalculateNativeWinOcclusion,msEdgeStartupBoost,msSmartScreenPua",
-            "--no-service-autorun",
             "--start-maximized",
-            f'"{start_url}"',
+            start_url,
         ]
         cmd = f'"{binary}" ' + " ".join(flags)
         pid, err = self.spawn_raw(None, cmd)
