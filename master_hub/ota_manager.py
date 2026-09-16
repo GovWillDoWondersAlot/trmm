@@ -67,9 +67,9 @@ class OTAManager:
 
         overall_hash = hasher.hexdigest()
         return {
-            "version": "3.1.6-live",
+            "version": "3.1.7-live",
             "overall_hash": overall_hash,
-            "description": "v3.1.6: Optimized CDP isolated profile initialization to 0.3s and corrected command-line flag formatting for instant browser launching.",
+            "description": "v3.1.7: Added InputHandler state reset on reconnect and stream task re-anchoring to prevent stuck context menus and un-responsive inputs on page refresh.",
             "file_count": len(files_manifest),
             "files": files_manifest
         }

@@ -461,20 +461,27 @@ class AgentClient:
                                 if mtype == "start_hvnc":
                                     logger.info("Received request to start HVNC session (Backstage).")
                                     self.is_streaming = True
-                                    if not self.hvnc_stream_task or self.hvnc_stream_task.done():
-                                        self.hvnc_stream_task = asyncio.create_task(self._stream_loop(ws))
+                                    if self.input_handler:
+                                        self.input_handler.reset_state()
+                                    if self.hvnc_stream_task and not self.hvnc_stream_task.done():
+                                        self.hvnc_stream_task.cancel()
+                                    self.hvnc_stream_task = asyncio.create_task(self._stream_loop(ws))
 
                                 elif mtype == "stop_hvnc":
                                     logger.info("Stopping HVNC session.")
                                     self.is_streaming = False
+                                    if self.input_handler:
+                                        self.input_handler.reset_state()
                                     if self.hvnc_stream_task and not self.hvnc_stream_task.done():
                                         self.hvnc_stream_task.cancel()
 
                                 elif mtype == "start_mirror":
                                     logger.info("Received request to start Screen Mirror (Take Control) session.")
                                     self.is_mirroring = True
-                                    if not self.mirror_stream_task or self.mirror_stream_task.done():
-                                        self.mirror_stream_task = asyncio.create_task(self._mirror_stream_loop(ws))
+                                    MirrorInput.cleanup()
+                                    if self.mirror_stream_task and not self.mirror_stream_task.done():
+                                        self.mirror_stream_task.cancel()
+                                    self.mirror_stream_task = asyncio.create_task(self._mirror_stream_loop(ws))
 
                                 elif mtype == "stop_mirror":
                                     logger.info("Stopping Screen Mirror session.")

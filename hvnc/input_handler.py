@@ -406,10 +406,20 @@ class InputHandler:
         self.drag_offset_x = 0
         self.drag_offset_y = 0
         self.tm_active_tab = 0
-        self._minimized_for_show_desktop = set()
         self.dragged_window_hwnd: Optional[int] = None
         self.window_drag_offset_x = 0
         self.window_drag_offset_y = 0
+
+    def reset_state(self):
+        """Resets all transient mouse/drag/keyboard state when a session reconnects."""
+        self.is_lbutton_down = False
+        self.is_rbutton_down = False
+        self.drag_target = None
+        self.titlebar_action_down = False
+        self.dragged_icon_idx = None
+        self.dragged_window_hwnd = None
+        self._cached_windows = []
+        self._last_enum_time = 0.0
 
     def _handle_task_manager_navigation(self, top_hwnd: int, x: int, y: int, target_hwnd: Optional[int] = None) -> Optional[int]:
         """
