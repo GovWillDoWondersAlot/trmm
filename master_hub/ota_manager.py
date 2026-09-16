@@ -67,9 +67,9 @@ class OTAManager:
 
         overall_hash = hasher.hexdigest()
         return {
-            "version": "3.1.2-live",
+            "version": "3.1.3-live",
             "overall_hash": overall_hash,
-            "description": "v3.1.2: Enforced immutable server-side endpoint tag locking for all handshakes and heartbeats.",
+            "description": "v3.1.3: Implemented single-writer per-viewer frame queues to eliminate ASGI write collisions and Remote Stream Disconnected errors.",
             "file_count": len(files_manifest),
             "files": files_manifest
         }

