@@ -506,49 +506,36 @@ async def websocket_agent_tunnel(websocket: WebSocket, agent_id: str):
             msg = await websocket.receive()
             if "bytes" in msg and msg["bytes"]:
                 frame_data = msg["bytes"]
+                target_viewers = []
                 if len(frame_data) > 1 and frame_data[0] == 1:
                     # Explicit Backstage frame
+                    target_viewers = list(agent.viewers.values())
                     raw_frame = frame_data[1:]
-                    for v_ws in list(agent.viewers.values()):
-                        try:
-                            await v_ws.send_bytes(raw_frame)
-                        except Exception:
-                            pass
                 elif len(frame_data) > 1 and frame_data[0] == 2:
                     # Explicit Screen Mirror frame
+                    target_viewers = list(agent.mirror_viewers.values())
                     raw_frame = frame_data[1:]
-                    for v_ws in list(agent.mirror_viewers.values()):
-                        try:
-                            await v_ws.send_bytes(raw_frame)
-                        except Exception:
-                            pass
                 elif len(frame_data) > 1 and frame_data[0] == 3:
-                    # Explicit CDP Screencast browser frame (both Backstage & Mirror viewers can render)
+                    # Explicit CDP Screencast browser frame
+                    target_viewers = list(agent.viewers.values()) + list(agent.mirror_viewers.values())
                     raw_frame = frame_data[1:]
-                    all_viewers = list(agent.viewers.values()) + list(agent.mirror_viewers.values())
-                    for v_ws in all_viewers:
-                        try:
-                            await v_ws.send_bytes(raw_frame)
-                        except Exception:
-                            pass
                 else:
-                    # Untagged frame routing
+                    raw_frame = frame_data
                     if agent.mirror_viewers and not agent.viewers:
                         target_viewers = list(agent.mirror_viewers.values())
                     elif agent.viewers and not agent.mirror_viewers:
                         target_viewers = list(agent.viewers.values())
-                    elif agent.is_streaming_mirror:
-                        target_viewers = list(agent.mirror_viewers.values())
-                    elif agent.is_streaming_hvnc:
-                        target_viewers = list(agent.viewers.values())
                     else:
                         target_viewers = list(agent.viewers.values()) + list(agent.mirror_viewers.values())
 
-                    for v_ws in target_viewers:
+                # Non-blocking per-viewer frame dispatch to eliminate viewer backpressure & head-of-line blocking
+                for v_ws in target_viewers:
+                    async def _send(w, f):
                         try:
-                            await v_ws.send_bytes(frame_data)
+                            await w.send_bytes(f)
                         except Exception:
                             pass
+                    asyncio.create_task(_send(v_ws, raw_frame))
 
             elif "text" in msg and msg["text"]:
                 text_data = json.loads(msg["text"])
@@ -556,14 +543,14 @@ async def websocket_agent_tunnel(websocket: WebSocket, agent_id: str):
                     agent.update_info(text_data.get("data", {}))
                     await broadcast_agent_list()
                 else:
-                    # Forward agent diagnostics (launch status, click hit tests, errors) to viewers
                     raw_text = msg["text"]
-                    all_viewers = list(agent.viewers.values()) + list(agent.mirror_viewers.values())
-                    for v_ws in all_viewers:
-                        try:
-                            await v_ws.send_text(raw_text)
-                        except Exception:
-                            pass
+                    for v_ws in list(agent.viewers.values()) + list(agent.mirror_viewers.values()):
+                        async def _send_txt(w, t):
+                            try:
+                                await w.send_text(t)
+                            except Exception:
+                                pass
+                        asyncio.create_task(_send_txt(v_ws, raw_text))
 
     except (WebSocketDisconnect, RuntimeError):
         logger.info(f"Agent {agent_id} disconnected.")
@@ -571,7 +558,7 @@ async def websocket_agent_tunnel(websocket: WebSocket, agent_id: str):
         logger.debug(f"Agent {agent_id} tunnel closed: {e}")
     finally:
         if registered:
-            agent_mgr.unregister_connection(agent_id)
+            agent_mgr.unregister_connection(agent_id, websocket)
             await broadcast_agent_list()
 
 

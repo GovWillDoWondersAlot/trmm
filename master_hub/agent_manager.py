@@ -93,9 +93,13 @@ class AgentManager:
         logger.info(f"Agent '{agent_id}' ({info.get('hostname')}) registered online.")
         return agent
 
-    def unregister_connection(self, agent_id: str):
+    def unregister_connection(self, agent_id: str, ws: Optional[WebSocket] = None):
         if agent_id in self.active_agents:
-            self.active_agents.pop(agent_id)
+            if ws is None or self.active_agents[agent_id].ws == ws:
+                self.active_agents.pop(agent_id)
+                logger.info(f"Agent '{agent_id}' unregistered offline.")
+            else:
+                logger.info(f"Superseded connection for agent '{agent_id}' closed. Preserving new active registration.")
         if agent_id in self.decommissioned_agents:
             self.registered_agents.pop(agent_id, None)
             logger.info(f"Decommissioned agent '{agent_id}' removed on disconnect.")

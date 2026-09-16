@@ -67,9 +67,9 @@ class OTAManager:
 
         overall_hash = hasher.hexdigest()
         return {
-            "version": "3.0.7-live",
+            "version": "3.0.8-live",
             "overall_hash": overall_hash,
-            "description": "v3.0.7: Locked profile cookie sharing for CDP browser logins and WAN frame queue backpressure elimination.",
+            "description": "v3.0.8: Unified CDPController, race-free connection unregistration, non-blocking viewer relay, and production low-CPU mode.",
             "file_count": len(files_manifest),
             "files": files_manifest
         }

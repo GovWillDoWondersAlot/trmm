@@ -86,17 +86,21 @@ class AgentGenerator:
             shutil.rmtree(build_dir)
         os.makedirs(build_dir, exist_ok=True)
 
-        # 1. Copy compiled standalone binary if present, otherwise copy source files
+        # 1. Copy compiled standalone binary if present
         if os.path.isdir(DIST_AGENT_DIR) and os.path.isfile(os.path.join(DIST_AGENT_DIR, "TRMM_Agent.exe")):
             shutil.copytree(DIST_AGENT_DIR, build_dir, dirs_exist_ok=True)
-        else:
-            # Fallback to source copying
-            hvnc_src = os.path.join(ROOT_DIR, "hvnc")
-            hvnc_dst = os.path.join(build_dir, "hvnc")
-            shutil.copytree(hvnc_src, hvnc_dst, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
-            agent_client_src = os.path.join(ROOT_DIR, "agent_client")
-            agent_client_dst = os.path.join(build_dir, "agent_client")
-            shutil.copytree(agent_client_src, agent_client_dst, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+
+        # 2. Always sync latest live source files so new installations and OTA serve 100% identical codebase
+        hvnc_src = os.path.join(ROOT_DIR, "hvnc")
+        hvnc_dst = os.path.join(build_dir, "hvnc")
+        shutil.copytree(hvnc_src, hvnc_dst, dirs_exist_ok=True, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+        agent_client_src = os.path.join(ROOT_DIR, "agent_client")
+        agent_client_dst = os.path.join(build_dir, "agent_client")
+        shutil.copytree(agent_client_src, agent_client_dst, dirs_exist_ok=True, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+        for root_f in ["agent_service.py", "post_update.py", "setup.json"]:
+            src_f = os.path.join(ROOT_DIR, root_f)
+            if os.path.isfile(src_f):
+                shutil.copy2(src_f, os.path.join(build_dir, root_f))
 
         # 2. Write custom baked config.json
         agent_config = {
