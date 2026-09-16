@@ -1168,6 +1168,10 @@ class AgentClient:
                 return None
             return None
 
+        # Backstage (HVNC) Desktop routing: explicitly re-attach calling thread to hidden desktop
+        if self.desktop:
+            self.desktop.attach_current_thread()
+
         if itype == "mousemove":
             self.compositor.set_cursor_pos(x, y)
             self.input_handler.handle_mouse_move(x, y)

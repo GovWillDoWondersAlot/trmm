@@ -67,9 +67,9 @@ class OTAManager:
 
         overall_hash = hasher.hexdigest()
         return {
-            "version": "3.1.7-live",
+            "version": "3.1.8-live",
             "overall_hash": overall_hash,
-            "description": "v3.1.7: Added InputHandler state reset on reconnect and stream task re-anchoring to prevent stuck context menus and un-responsive inputs on page refresh.",
+            "description": "v3.1.8: Fixed Take Control mouse movement via tagged mouse_event (TRMM_INPUT_MAGIC), re-anchored thread desktop attachment, and preset canvas dimensions to 1920x1080.",
             "file_count": len(files_manifest),
             "files": files_manifest
         }

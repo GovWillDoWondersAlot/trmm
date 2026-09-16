@@ -470,8 +470,7 @@ class MirrorInput:
     def mouse_move(cls, x: int, y: int, stealth: bool = False):
         if stealth:
             return
-        cls._ensure_default_desktop()
-        user32.SetCursorPos(int(x), int(y))
+        cls._send_mouse_event(x, y, 0x0001)  # MOUSEEVENTF_MOVE with MOUSEEVENTF_ABSOLUTE & TRMM_INPUT_MAGIC
 
     @classmethod
     def mouse_down(cls, x: int, y: int, button: str = "left", stealth: bool = False):

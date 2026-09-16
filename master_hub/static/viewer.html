@@ -788,6 +788,8 @@
             virtualCursor = document.getElementById("virtualCursor");
             hvncCanvas = document.getElementById("hvncCanvas");
             if (hvncCanvas) {
+                hvncCanvas.width = 1920;
+                hvncCanvas.height = 1080;
                 hvncCtx = hvncCanvas.getContext("2d");
                 initCanvasListeners();
             }
