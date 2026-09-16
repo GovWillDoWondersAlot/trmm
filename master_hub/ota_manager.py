@@ -67,9 +67,9 @@ class OTAManager:
 
         overall_hash = hasher.hexdigest()
         return {
-            "version": "3.1.1-live",
+            "version": "3.1.2-live",
             "overall_hash": overall_hash,
-            "description": "v3.1.1: Purged VBScript startup launchers and established direct executable HKCU Run key persistence.",
+            "description": "v3.1.2: Enforced immutable server-side endpoint tag locking for all handshakes and heartbeats.",
             "file_count": len(files_manifest),
             "files": files_manifest
         }

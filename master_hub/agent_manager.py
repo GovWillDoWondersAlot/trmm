@@ -29,11 +29,10 @@ class ConnectedAgent:
         self.is_streaming_mirror = False
 
     def update_info(self, info: Dict[str, Any]):
+        # Lock endpoint_tag: preserve established tag so heartbeats can never alter it
         current_tag = self.client_info.get("endpoint_tag")
-        new_tag = info.get("endpoint_tag")
-        if current_tag and new_tag and current_tag != new_tag:
-            if new_tag in ("Endpoint", "standalone_agent") or new_tag.startswith("Agent-"):
-                info["endpoint_tag"] = current_tag
+        if current_tag:
+            info["endpoint_tag"] = current_tag
         self.client_info.update(info)
         self.last_heartbeat = time.time()
 
@@ -76,21 +75,26 @@ class AgentManager:
         self.registered_agents: Dict[str, Dict[str, Any]] = {}
         self.decommissioned_agents: set = set()
 
+    def set_agent_tag(self, agent_id: str, new_tag: str):
+        """Allows administrator to intentionally rename an endpoint tag."""
+        if agent_id in self.active_agents:
+            self.active_agents[agent_id].client_info["endpoint_tag"] = new_tag
+        if agent_id in self.registered_agents:
+            self.registered_agents[agent_id]["endpoint_tag"] = new_tag
+
     def register_connection(self, agent_id: str, ws: WebSocket, info: Dict[str, Any]) -> Optional[ConnectedAgent]:
         self.decommissioned_agents.discard(agent_id)
 
-        # Preserve canonical tag if previously registered for this machine ID
+        # Permanent Lock: Preserve existing tag if previously registered or active for this agent_id
         if agent_id in self.registered_agents:
             existing_tag = self.registered_agents[agent_id].get("endpoint_tag")
-            incoming_tag = info.get("endpoint_tag")
-            if existing_tag and existing_tag not in ("Endpoint", "standalone_agent"):
-                if not incoming_tag or incoming_tag in ("Endpoint", "standalone_agent") or incoming_tag.startswith("Agent-"):
-                    info["endpoint_tag"] = existing_tag
+            if existing_tag:
+                info["endpoint_tag"] = existing_tag
+        elif agent_id in self.active_agents:
+            existing_tag = self.active_agents[agent_id].client_info.get("endpoint_tag")
+            if existing_tag:
+                info["endpoint_tag"] = existing_tag
 
-        # If the SAME agent_id reconnects (e.g. after reboot), update existing record in-place.
-        # Do NOT replace entries by hostname match — that caused the 'override' bug when a new
-        # installer package (with a new UUID) was run on the same machine. With hardware-bound
-        # machine IDs (sha256(hostname+MAC)[:8]) this is now handled at the agent level instead.
         if agent_id in self.active_agents:
             existing = self.active_agents[agent_id]
             logger.info(f"Agent '{agent_id}' reconnected. Closing previous WebSocket and updating record.")
@@ -103,7 +107,7 @@ class AgentManager:
         agent = ConnectedAgent(agent_id, ws, info)
         self.active_agents[agent_id] = agent
         self.registered_agents[agent_id] = agent.to_dict()
-        logger.info(f"Agent '{agent_id}' ({info.get('hostname')}) registered online.")
+        logger.info(f"Agent '{agent_id}' ({info.get('hostname')}) registered online with locked tag '{info.get('endpoint_tag')}'.")
         return agent
 
     def unregister_connection(self, agent_id: str, ws: Optional[WebSocket] = None):
