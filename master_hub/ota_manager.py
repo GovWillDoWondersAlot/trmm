@@ -67,9 +67,9 @@ class OTAManager:
 
         overall_hash = hasher.hexdigest()
         return {
-            "version": "3.0.9-live",
+            "version": "3.1.0-live",
             "overall_hash": overall_hash,
-            "description": "v3.0.9: Session 0 vs Session 1 WebSocket competition elimination and ProgramData canonical configuration persistence.",
+            "description": "v3.1.0: Multi-installer competing agent process termination and Master Hub endpoint tag locking.",
             "file_count": len(files_manifest),
             "files": files_manifest
         }

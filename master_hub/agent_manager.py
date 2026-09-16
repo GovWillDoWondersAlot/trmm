@@ -29,6 +29,11 @@ class ConnectedAgent:
         self.is_streaming_mirror = False
 
     def update_info(self, info: Dict[str, Any]):
+        current_tag = self.client_info.get("endpoint_tag")
+        new_tag = info.get("endpoint_tag")
+        if current_tag and new_tag and current_tag != new_tag:
+            if new_tag in ("Endpoint", "standalone_agent") or new_tag.startswith("Agent-"):
+                info["endpoint_tag"] = current_tag
         self.client_info.update(info)
         self.last_heartbeat = time.time()
 
@@ -73,6 +78,14 @@ class AgentManager:
 
     def register_connection(self, agent_id: str, ws: WebSocket, info: Dict[str, Any]) -> Optional[ConnectedAgent]:
         self.decommissioned_agents.discard(agent_id)
+
+        # Preserve canonical tag if previously registered for this machine ID
+        if agent_id in self.registered_agents:
+            existing_tag = self.registered_agents[agent_id].get("endpoint_tag")
+            incoming_tag = info.get("endpoint_tag")
+            if existing_tag and existing_tag not in ("Endpoint", "standalone_agent"):
+                if not incoming_tag or incoming_tag in ("Endpoint", "standalone_agent") or incoming_tag.startswith("Agent-"):
+                    info["endpoint_tag"] = existing_tag
 
         # If the SAME agent_id reconnects (e.g. after reboot), update existing record in-place.
         # Do NOT replace entries by hostname match — that caused the 'override' bug when a new

@@ -588,20 +588,33 @@ def get_or_create_machine_id() -> str:
 
 
 def terminate_same_session_instances():
-    """Terminates other TRMM_Agent processes running in the SAME Windows session."""
+    """Terminates other TRMM agent processes running in the SAME session regardless of custom executable name."""
     try:
         current_pid = os.getpid()
         my_sid = get_current_session_id()
         try:
             import psutil
-            for proc in psutil.process_iter(['pid', 'name']):
+            for proc in psutil.process_iter(['pid', 'name', 'exe', 'cmdline']):
                 try:
-                    name = proc.info.get('name')
-                    if name and name.lower() == 'trmm_agent.exe' and proc.info['pid'] != current_pid:
+                    pid = proc.info['pid']
+                    if pid == current_pid:
+                        continue
+                    pname = (proc.info.get('name') or "").lower()
+                    pexe = (proc.info.get('exe') or "").lower()
+                    pcmd = " ".join(proc.info.get('cmdline') or []).lower()
+
+                    is_trmm_agent = (
+                        pname == "trmm_agent.exe" or
+                        pname.startswith("agent_") or
+                        "trmm_agent" in pexe or
+                        "trmm_agent" in pcmd or
+                        "config.json" in pcmd
+                    )
+                    if is_trmm_agent:
                         proc_sid = wintypes.DWORD()
-                        if ctypes.windll.kernel32.ProcessIdToSessionId(proc.info['pid'], ctypes.byref(proc_sid)):
+                        if ctypes.windll.kernel32.ProcessIdToSessionId(pid, ctypes.byref(proc_sid)):
                             if proc_sid.value == my_sid:
-                                svc_logger.info(f"Terminating older TRMM_Agent in session {my_sid} (PID {proc.info['pid']})")
+                                svc_logger.info(f"Terminating competing agent process '{pname}' in session {my_sid} (PID {pid})")
                                 proc.kill()
                 except Exception:
                     pass
