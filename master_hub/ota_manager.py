@@ -67,9 +67,9 @@ class OTAManager:
 
         overall_hash = hasher.hexdigest()
         return {
-            "version": "3.1.4-live",
+            "version": "3.1.5-live",
             "overall_hash": overall_hash,
-            "description": "v3.1.4: Protected viewer WebSockets with safe forwarding and case-insensitive agent lookup to eliminate instant stream disconnections.",
+            "description": "v3.1.5: Fixed NameError asyncio import in Master Hub WebSocket viewer handler.",
             "file_count": len(files_manifest),
             "files": files_manifest
         }
