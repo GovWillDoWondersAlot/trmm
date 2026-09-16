@@ -61,6 +61,16 @@ class ConnectedAgent:
         self.mirror_viewers: Dict[str, ViewerSession] = {}
         self.is_streaming_mirror = False
 
+    async def send_text_safe(self, text_data: str) -> bool:
+        """Safely forwards text data to agent WebSocket without raising unhandled exceptions."""
+        try:
+            if self.ws:
+                await self.ws.send_text(text_data)
+                return True
+        except Exception as e:
+            logger.warning(f"Failed to forward message to agent '{self.agent_id}': {e}")
+        return False
+
     def update_info(self, info: Dict[str, Any]):
         # Lock endpoint_tag: preserve established tag so heartbeats can never alter it
         current_tag = self.client_info.get("endpoint_tag")
@@ -160,7 +170,15 @@ class AgentManager:
         logger.info(f"Agent '{agent_id}' disconnected.")
 
     def get_agent(self, agent_id: str) -> Optional[ConnectedAgent]:
-        return self.active_agents.get(agent_id)
+        if not agent_id:
+            return None
+        aid = str(agent_id).strip()
+        if aid in self.active_agents:
+            return self.active_agents[aid]
+        for k, v in self.active_agents.items():
+            if k.lower() == aid.lower():
+                return v
+        return None
 
     def list_all_agents(self) -> list:
         # Returns list of all agents (online and offline, excluding decommissioned)

