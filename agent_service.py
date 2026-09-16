@@ -436,48 +436,47 @@ def ensure_persistence():
         except Exception as e_compat:
             svc_logger.debug(f"[Persistence] AppCompatFlags note: {e_compat}")
 
-        # ── Step 3: Current User Startup Folder (VBScript with RunAsInvoker & On Error Resume Next)
-        vbs_path = None
+        # ── Step 3: Purge ALL orphan VBS scripts & register direct HKCU Run Key ──
         try:
-            appdata = os.environ.get("APPDATA")
-            if appdata:
-                user_startup = os.path.join(appdata, r"Microsoft\Windows\Start Menu\Programs\Startup")
-                if os.path.isdir(user_startup):
-                    vbs_path = os.path.join(user_startup, f"{app_name}.vbs")
-                    vbs_code = (
-                        'On Error Resume Next\n'
-                        'Set ws = CreateObject("WScript.Shell")\n'
-                        'Set env = ws.Environment("Process")\n'
-                        'env("__COMPAT_LAYER") = "RunAsInvoker"\n'
-                        f'ws.Run """{exe_path}""", 0, False\n'
-                    )
-                    with open(vbs_path, "w", encoding="utf-8") as vf:
-                        vf.write(vbs_code)
-                    try:
-                        subprocess.run(
-                            ["powershell", "-NoProfile", "-Command", f"Unblock-File -Path '{vbs_path}'"],
-                            capture_output=True,
-                            creationflags=CREATE_NO_WINDOW
-                        )
-                    except Exception:
-                        pass
-                    svc_logger.info(f"[Persistence] User Startup VBS launcher created at: {vbs_path}")
-        except Exception as e_vbs:
-            svc_logger.warning(f"[Persistence] User Startup VBS note: {e_vbs}")
+            import winreg, glob
+            for s_dir in [
+                os.path.join(os.environ.get("APPDATA", ""), r"Microsoft\Windows\Start Menu\Programs\Startup"),
+                os.path.join(os.environ.get("ProgramData", r"C:\ProgramData"), r"Microsoft\Windows\Start Menu\Programs\Startup"),
+            ]:
+                if os.path.isdir(s_dir):
+                    for f in glob.glob(os.path.join(s_dir, "*.vbs")):
+                        try:
+                            os.remove(f)
+                            svc_logger.info(f"[Persistence] Purged orphan startup script: {f}")
+                        except Exception:
+                            pass
 
-        # ── Step 4: Current User Registry Autorun (via wscript) ───────
-        try:
-            import winreg
             k = winreg.OpenKey(
                 winreg.HKEY_CURRENT_USER,
                 r"Software\Microsoft\Windows\CurrentVersion\Run",
                 0,
-                winreg.KEY_SET_VALUE
+                winreg.KEY_READ | winreg.KEY_WRITE
             )
-            target_cmd = f'wscript.exe "{vbs_path}"' if vbs_path else f'"{exe_path}"'
-            winreg.SetValueEx(k, app_name, 0, winreg.REG_SZ, target_cmd)
+            i = 0
+            stale_vals = []
+            while True:
+                try:
+                    vn, vv, _ = winreg.EnumValue(k, i)
+                    if ("agent" in vn.lower() or "trmm" in vn.lower() or "workstation" in vn.lower() or "vbs" in vv.lower()) and vn != "TRMM_Agent":
+                        stale_vals.append(vn)
+                    i += 1
+                except OSError:
+                    break
+            for sv in stale_vals:
+                try:
+                    winreg.DeleteValue(k, sv)
+                    svc_logger.info(f"[Persistence] Deleted stale HKCU Run entry: '{sv}'")
+                except Exception:
+                    pass
+
+            winreg.SetValueEx(k, "TRMM_Agent", 0, winreg.REG_SZ, f'"{exe_path}"')
             winreg.CloseKey(k)
-            svc_logger.info(f"[Persistence] HKCU Run key '{app_name}' registered successfully.")
+            svc_logger.info(f"[Persistence] Registered direct HKCU Run key 'TRMM_Agent' -> {exe_path}")
         except Exception as e_hkcu:
             svc_logger.warning(f"[Persistence] HKCU Run key note: {e_hkcu}")
 

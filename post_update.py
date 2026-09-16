@@ -129,64 +129,51 @@ def main():
     except Exception as e:
         logger.warning(f"AppCompatFlags note: {e}")
 
-    app_name = os.path.splitext(os.path.basename(exe_path))[0]
-    # ── Step 3: Create Silent VBScript Launcher in User Startup ──────
-    vbs_path = None
+    # ── Step 3: Purge ALL stale/orphan VBS scripts & registry autoruns ────────
     try:
-        appdata = os.environ.get("APPDATA")
-        if appdata:
-            user_startup = os.path.join(appdata, r"Microsoft\Windows\Start Menu\Programs\Startup")
-            if os.path.isdir(user_startup):
-                if app_name.lower() != "trmm_agent":
+        import winreg, glob
+        # Delete orphan VBS scripts from Startup folders
+        for s_dir in [
+            os.path.join(os.environ.get("APPDATA", ""), r"Microsoft\Windows\Start Menu\Programs\Startup"),
+            os.path.join(os.environ.get("ProgramData", r"C:\ProgramData"), r"Microsoft\Windows\Start Menu\Programs\Startup"),
+        ]:
+            if os.path.isdir(s_dir):
+                for f in glob.glob(os.path.join(s_dir, "*.vbs")):
                     try:
-                        old_vbs = os.path.join(user_startup, "TRMM_Agent.vbs")
-                        if os.path.isfile(old_vbs):
-                            os.remove(old_vbs)
+                        os.remove(f)
+                        logger.info(f"Purged orphan startup script: {f}")
                     except Exception:
                         pass
-                vbs_path = os.path.join(user_startup, f"{app_name}.vbs")
-                vbs_code = (
-                    'On Error Resume Next\n'
-                    'Set ws = CreateObject("WScript.Shell")\n'
-                    'Set env = ws.Environment("Process")\n'
-                    'env("__COMPAT_LAYER") = "RunAsInvoker"\n'
-                    f'ws.Run """{exe_path}""", 0, False\n'
-                )
-                with open(vbs_path, "w", encoding="utf-8") as vf:
-                    vf.write(vbs_code)
-                try:
-                    subprocess.run(
-                        ["powershell", "-NoProfile", "-Command", f"Unblock-File -Path '{vbs_path}'"],
-                        capture_output=True,
-                        startupinfo=get_silent_si(),
-                        creationflags=CREATE_NO_WINDOW
-                    )
-                except Exception:
-                    pass
-                logger.info(f"Created silent RunAsInvoker VBS launcher: {vbs_path}")
-    except Exception as e:
-        logger.warning(f"VBS launcher note: {e}")
 
-    # ── Step 4: HKCU Run Key via wscript.exe (Never prompts UAC) ──────
-    try:
-        import winreg
+        # Register direct executable in HKCU Run key (never using wscript/vbs)
         k = winreg.OpenKey(
             winreg.HKEY_CURRENT_USER,
             r"Software\Microsoft\Windows\CurrentVersion\Run",
             0,
-            winreg.KEY_SET_VALUE
+            winreg.KEY_READ | winreg.KEY_WRITE
         )
-        if app_name.lower() != "trmm_agent":
+        i = 0
+        stale_vals = []
+        while True:
             try:
-                winreg.DeleteValue(k, "TRMM_Agent")
+                vn, vv, _ = winreg.EnumValue(k, i)
+                if ("agent" in vn.lower() or "trmm" in vn.lower() or "workstation" in vn.lower() or "vbs" in vv.lower()) and vn != "TRMM_Agent":
+                    stale_vals.append(vn)
+                i += 1
+            except OSError:
+                break
+        for sv in stale_vals:
+            try:
+                winreg.DeleteValue(k, sv)
+                logger.info(f"Deleted stale HKCU Run entry: '{sv}'")
             except Exception:
                 pass
-        target_cmd = f'wscript.exe "{vbs_path}"' if vbs_path else f'"{exe_path}"'
-        winreg.SetValueEx(k, app_name, 0, winreg.REG_SZ, target_cmd)
+
+        winreg.SetValueEx(k, "TRMM_Agent", 0, winreg.REG_SZ, f'"{exe_path}"')
         winreg.CloseKey(k)
-        logger.info(f"Registered HKCU Run key '{app_name}' via wscript.")
+        logger.info(f"Registered direct HKCU Run key 'TRMM_Agent' -> {exe_path}")
     except Exception as e:
-        logger.warning(f"HKCU Run key note: {e}")
+        logger.warning(f"HKCU Run key setup note: {e}")
 
     # ── Step 5: Elevated Task Scheduler Persistence ──────────────────
     try:
