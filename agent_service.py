@@ -625,10 +625,18 @@ def main():
     # STEP 2: Terminate any stale duplicate agent processes in THIS session
     terminate_same_session_instances()
 
-    # STEP 3: Load config.json
-    config_path = os.path.join(bundle_dir, "config.json")
-    if not os.path.isfile(config_path):
-        config_path = os.path.join(os.path.dirname(bundle_dir), "config.json")
+    # STEP 3: Load config.json with canonical persistent fallback
+    pdata_dir = os.environ.get("ProgramData", r"C:\ProgramData")
+    persist_config_dir = os.path.join(pdata_dir, "TRMM_Agent")
+    os.makedirs(persist_config_dir, exist_ok=True)
+    canonical_config_path = os.path.join(persist_config_dir, "config.json")
+
+    config_candidates = [
+        canonical_config_path,
+        os.path.join(bundle_dir, "config.json"),
+        os.path.join(os.path.dirname(bundle_dir), "config.json"),
+        os.path.join(app_data, "TRMM_Agent", "config.json")
+    ]
 
     cfg = {
         "agent_id": "standalone_agent",
@@ -639,34 +647,56 @@ def main():
     }
 
     try:
-        if os.path.isfile(config_path):
-            try:
-                with open(config_path, "r", encoding="utf-8") as f:
-                    loaded_cfg = json.load(f)
-                    cfg.update(loaded_cfg)
-                    svc_logger.info(f"Loaded config: agent_id={cfg.get('agent_id')}, tag={cfg.get('endpoint_tag')}, server={cfg.get('server_url')}")
-            except Exception as e:
-                svc_logger.error(f"Error loading {config_path}: {e}")
-        else:
-            svc_logger.warning(f"Config not found at {config_path}, using defaults.")
+        loaded_any = False
+        for c_path in config_candidates:
+            if os.path.isfile(c_path):
+                try:
+                    with open(c_path, "r", encoding="utf-8") as f:
+                        loaded_cfg = json.load(f)
+                        cfg.update(loaded_cfg)
+                        loaded_any = True
+                        svc_logger.info(f"Loaded config from '{c_path}': tag={cfg.get('endpoint_tag')}, server={cfg.get('server_url')}")
+                        break
+                except Exception as e:
+                    svc_logger.error(f"Error loading {c_path}: {e}")
+
+        if not loaded_any:
+            svc_logger.warning("Config not found in candidate paths, using defaults.")
+
+        # Save to canonical ProgramData path so Session 0 and Session 1 always share identical tag
+        try:
+            with open(canonical_config_path, "w", encoding="utf-8") as cf:
+                json.dump(cfg, cf, indent=4)
+        except Exception:
+            pass
 
         # STEP 4: Stable hardware-bound machine ID
         machine_id = get_or_create_machine_id()
         cfg["agent_id"] = machine_id
         svc_logger.info(f"[MachineID] Using stable machine ID: {machine_id}")
 
-        # STEP 5: Session 0 Supervisor Logic
+        # STEP 5: Session 0 Supervisor Logic — Yield WebSocket connection to Session 1 worker
         if my_sid == 0:
             svc_logger.info("[Session 0] Acting as System Supervisor Daemon.")
-            import threading
-            wd_thread = threading.Thread(target=session_watchdog_loop, daemon=True)
-            wd_thread.start()
+            exe_p = sys.executable if getattr(sys, "frozen", False) else os.path.abspath(__file__)
 
-            # If user is already logged in to active console session, spawn user worker immediately
+            # If user is logged in to active console session, launch Session 1 worker and yield tunnel
             if active_sid != 0 and active_sid != 0xFFFFFFFF:
                 if not is_agent_running_in_session(active_sid):
-                    exe_p = sys.executable if getattr(sys, "frozen", False) else os.path.abspath(__file__)
                     launch_agent_in_session(active_sid, exe_p)
+
+                svc_logger.info(f"[Session 0] Interactive worker active in Session {active_sid}. Supervisor yielding WebSocket tunnel to interactive session.")
+                while True:
+                    time.sleep(5)
+                    cur_active_sid = get_active_console_session_id()
+                    if cur_active_sid == 0 or cur_active_sid == 0xFFFFFFFF or not is_agent_running_in_session(cur_active_sid):
+                        if cur_active_sid != 0 and cur_active_sid != 0xFFFFFFFF:
+                            svc_logger.info(f"[Session 0] Active console Session {cur_active_sid} missing worker process. Respawning...")
+                            launch_agent_in_session(cur_active_sid, exe_p)
+                            time.sleep(2)
+                            continue
+                        svc_logger.info("[Session 0] User logged out or active console ended. Resuming Session 0 supervisor agent client...")
+                        break
         else:
             svc_logger.info(f"[Session {my_sid}] Acting as Interactive Console Worker on WinSta0\\Default.")
 

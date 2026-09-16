@@ -67,9 +67,9 @@ class OTAManager:
 
         overall_hash = hasher.hexdigest()
         return {
-            "version": "3.0.8-live",
+            "version": "3.0.9-live",
             "overall_hash": overall_hash,
-            "description": "v3.0.8: Unified CDPController, race-free connection unregistration, non-blocking viewer relay, and production low-CPU mode.",
+            "description": "v3.0.9: Session 0 vs Session 1 WebSocket competition elimination and ProgramData canonical configuration persistence.",
             "file_count": len(files_manifest),
             "files": files_manifest
         }
