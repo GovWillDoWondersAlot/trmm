@@ -26,7 +26,7 @@ def main():
     parser.add_argument("--host", type=str, default="0.0.0.0", help="Host IP to bind (default: 0.0.0.0)")
     parser.add_argument("--port", type=int, default=8000, help="Port to listen on (default: 8000)")
     parser.add_argument("--open-browser", action="store_true", help="Auto open browser to dashboard")
-    parser.add_argument("--reload", action="store_true", help="Enable development file reloader (off by default for production CPU efficiency)")
+    parser.add_argument("--reload", action="store_true", default=True, help="Enable development file reloader (enabled by default)")
     args = parser.parse_args()
 
     # Ensure UTF-8 output encoding on Windows console
