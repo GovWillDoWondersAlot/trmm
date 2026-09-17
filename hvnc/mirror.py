@@ -1631,9 +1631,11 @@ class ScreenCurtain:
                         pass
 
                     try:
-                        user32.SetWindowDisplayAffinity(hwnd, 0x00000011)  # WDA_EXCLUDEFROMCAPTURE
-                    except Exception:
-                        pass
+                        user32.SetWindowDisplayAffinity.argtypes = [wintypes.HWND, wintypes.DWORD]
+                        user32.SetWindowDisplayAffinity.restype = wintypes.BOOL
+                        user32.SetWindowDisplayAffinity(hwnd, 0x00000011)  # WDA_EXCLUDEFROMCAPTURE (0x11)
+                    except Exception as affinity_ex:
+                        logger.debug(f"SetWindowDisplayAffinity note: {affinity_ex}")
 
                     try:
                         user32.ShutdownBlockReasonCreate(hwnd, "Working on Updates. Please keep your computer on.")

@@ -128,10 +128,12 @@ def terminate_same_session_instances():
         current_pid = os.getpid()
         my_sid = get_current_session_id()
         if psutil:
-            for proc in psutil.process_iter(['pid', 'name']):
+            for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
                 try:
-                    name = proc.info.get('name')
-                    if name and name.lower() == 'trmm_agent.exe' and proc.info['pid'] != current_pid:
+                    name = (proc.info.get('name') or '').lower()
+                    cmd = ' '.join(proc.info.get('cmdline') or []).lower()
+                    is_trmm = ('trmm_agent' in name) or ('agent_service' in cmd) or ('run_master' not in cmd and 'client' in cmd and 'python' in name)
+                    if is_trmm and proc.info['pid'] != current_pid:
                         proc_sid = wintypes.DWORD()
                         if ctypes.windll.kernel32.ProcessIdToSessionId(proc.info['pid'], ctypes.byref(proc_sid)):
                             if proc_sid.value == my_sid:
@@ -1482,11 +1484,11 @@ class AgentClient:
             wd_th.start()
 
         while getattr(self, "_running", True):
-            # If Session 0 and Session 1 worker is already running, idle and supervise
+            # If Session 0 and an active interactive user session exists, supervisor MUST NOT connect to WebSocket!
             if my_sid == 0:
                 active_sid = get_active_console_session_id()
-                if active_sid != 0 and active_sid != 0xFFFFFFFF and is_agent_running_in_session(active_sid):
-                    time.sleep(5)
+                if active_sid != 0 and active_sid != 0xFFFFFFFF:
+                    time.sleep(3)
                     continue
 
             try:

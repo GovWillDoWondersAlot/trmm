@@ -67,9 +67,9 @@ class OTAManager:
 
         overall_hash = hasher.hexdigest()
         return {
-            "version": "3.1.9-live",
+            "version": "3.2.0-live",
             "overall_hash": overall_hash,
-            "description": "v3.1.9: Fixed Take Control screen freeze by ensuring continuous frame streaming and returning cached JPEG bytes when pixels remain idle.",
+            "description": "v3.2.0: Resolved Session 0 WebSocket reconnect loop contention and fixed Win32 SetWindowDisplayAffinity argtypes for Screen Curtain.",
             "file_count": len(files_manifest),
             "files": files_manifest
         }
