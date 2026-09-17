@@ -6,6 +6,7 @@ Tracks online/offline endpoints, system telemetry, and coordinates reverse WebSo
 import time
 import json
 import logging
+import os
 from typing import Dict, Any, Optional
 from fastapi import WebSocket
 
@@ -16,13 +17,17 @@ import asyncio
 
 class ViewerSession:
     """Encapsulates an admin viewer WebSocket with a single-writer frame queue."""
-    def __init__(self, viewer_id: str, ws: WebSocket):
+    def __init__(self, viewer_id: str, ws: WebSocket, mode: str = "backstage"):
         self.viewer_id = viewer_id
         self.ws = ws
         self.queue: asyncio.Queue = asyncio.Queue(maxsize=2)
         self.sender_task: Optional[asyncio.Task] = None
+        self.mirror_diagnostics = mode == "mirror" and os.environ.get("TRMM_MIRROR_DIAG") == "1"
 
     def push_frame(self, frame_bytes: bytes):
+        if self.mirror_diagnostics:
+            logger.info("[MIRROR RELAY QUEUE] t=%.3f viewer=%s bytes=%d queued=%d replacing_oldest=%s",
+                        time.time(), self.viewer_id, len(frame_bytes), self.queue.qsize(), self.queue.full())
         if self.queue.full():
             try:
                 self.queue.get_nowait()
@@ -43,6 +48,79 @@ class ViewerSession:
             self.queue.put_nowait((text_data, False))
         except Exception:
             pass
+
+
+class MirrorViewerSession(ViewerSession):
+    """Negotiated Take Control delivery: one unacknowledged frame, one latest slot."""
+
+    ACK_TIMEOUT = 30.0
+
+    def __init__(self, viewer_id: str, ws: WebSocket):
+        super().__init__(viewer_id, ws, mode="mirror")
+        self.pending_frame = None
+        self.pending_text = asyncio.Queue(maxsize=32)
+        self.wake = asyncio.Event()
+        self.sequence = 0
+        self.inflight = None
+        self.sent_at = 0.0
+        self.last_frame = None
+
+    def push_frame(self, frame_bytes: bytes):
+        self.pending_frame = frame_bytes
+        self.wake.set()
+
+    def push_text(self, text_data: str):
+        if self.pending_text.full():
+            self.pending_text.get_nowait()
+        self.pending_text.put_nowait(text_data)
+        self.wake.set()
+
+    def acknowledge(self, sequence):
+        if type(sequence) is int and sequence == self.inflight:
+            if self.mirror_diagnostics:
+                logger.info("[MIRROR ACK] viewer=%s seq=%d delivery_ms=%.1f",
+                            self.viewer_id, sequence, (time.monotonic() - self.sent_at) * 1000)
+            self.inflight = None
+            self.wake.set()
+
+    async def run_sender(self):
+        try:
+            while True:
+                self.wake.clear()
+                if self.inflight is not None and time.monotonic() - self.sent_at >= self.ACK_TIMEOUT:
+                    await self.ws.close(code=1013, reason="Take Control frame acknowledgement timed out")
+                    return
+                if not self.pending_text.empty():
+                    await self.ws.send_text(self.pending_text.get_nowait())
+                    continue
+                if self.inflight is None and self.pending_frame is not None:
+                    frame = self.pending_frame
+                    self.pending_frame = None
+                    # Also protects viewers while an older agent is awaiting OTA.
+                    if frame == self.last_frame and time.monotonic() - self.sent_at < 1.0:
+                        continue
+                    self.sequence = (self.sequence % 0xffffffff) + 1
+                    self.inflight = self.sequence
+                    self.sent_at = time.monotonic()
+                    self.last_frame = frame
+                    # Only clients requesting mirror_ack=1 receive this envelope.
+                    packet = b"MRR1" + self.sequence.to_bytes(4, "big") + frame
+                    await asyncio.wait_for(self.ws.send_bytes(packet), timeout=self.ACK_TIMEOUT)
+                    if self.mirror_diagnostics:
+                        logger.info("[MIRROR RELAY] t=%.3f viewer=%s seq=%d bytes=%d",
+                                    time.time(), self.viewer_id, self.sequence, len(frame))
+                    continue
+                timeout = None if self.inflight is None else max(
+                    0.001, self.ACK_TIMEOUT - (time.monotonic() - self.sent_at))
+                try:
+                    await asyncio.wait_for(self.wake.wait(), timeout=timeout)
+                except asyncio.TimeoutError:
+                    continue
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Take Control viewer sender failed: %s", self.viewer_id)
+            await self.ws.close(code=1013, reason="Take Control frame delivery failed")
 
 
 class ConnectedAgent:
@@ -207,10 +285,11 @@ class AgentManager:
             )
         )
 
-    def attach_viewer(self, agent_id: str, viewer_id: str, viewer_ws: WebSocket, mode: str = "backstage") -> Optional[ViewerSession]:
+    def attach_viewer(self, agent_id: str, viewer_id: str, viewer_ws: WebSocket, mode: str = "backstage", mirror_ack: bool = False) -> Optional[ViewerSession]:
         agent = self.get_agent(agent_id)
         if agent:
-            session = ViewerSession(viewer_id, viewer_ws)
+            session = (MirrorViewerSession(viewer_id, viewer_ws) if mode == "mirror" and mirror_ack
+                       else ViewerSession(viewer_id, viewer_ws, mode=mode))
             if mode == "mirror":
                 agent.mirror_viewers[viewer_id] = session
             else:

@@ -598,7 +598,8 @@ async def websocket_admin_viewer(websocket: WebSocket, agent_id: str):
         await websocket.close()
         return
 
-    v_session = agent_mgr.attach_viewer(agent_id, viewer_id, websocket, mode=mode)
+    mirror_ack = mode == "mirror" and websocket.query_params.get("mirror_ack") == "1"
+    v_session = agent_mgr.attach_viewer(agent_id, viewer_id, websocket, mode=mode, mirror_ack=mirror_ack)
     if not v_session:
         await websocket.close()
         return
@@ -609,14 +610,22 @@ async def websocket_admin_viewer(websocket: WebSocket, agent_id: str):
             try:
                 item, is_bytes = await v_session.queue.get()
                 if is_bytes:
+                    if v_session.mirror_diagnostics:
+                        mirror_send_started = time.perf_counter()
+                        logger.info("[MIRROR RELAY START] t=%.3f viewer=%s bytes=%d queued=%d",
+                                    time.time(), viewer_id, len(item), v_session.queue.qsize())
                     await websocket.send_bytes(item)
+                    if v_session.mirror_diagnostics:
+                        logger.info("[MIRROR RELAY END] t=%.3f viewer=%s bytes=%d send_ms=%.1f",
+                                    time.time(), viewer_id, len(item),
+                                    (time.perf_counter() - mirror_send_started) * 1000)
                 else:
                     await websocket.send_text(item)
                 v_session.queue.task_done()
             except Exception:
                 break
 
-    v_session.sender_task = asyncio.create_task(_sender_loop())
+    v_session.sender_task = asyncio.create_task(v_session.run_sender() if mirror_ack else _sender_loop())
 
     # Tell the agent to start appropriate stream (Mirror vs HVNC Backstage)
     try:
@@ -636,6 +645,9 @@ async def websocket_admin_viewer(websocket: WebSocket, agent_id: str):
             data = await websocket.receive_text()
             try:
                 msg_obj = json.loads(data)
+                if mirror_ack and isinstance(msg_obj, dict) and msg_obj.get("type") == "mirror_frame_ack":
+                    v_session.acknowledge(msg_obj.get("sequence"))
+                    continue
                 if isinstance(msg_obj, dict) and "mode" not in msg_obj:
                     msg_obj["mode"] = mode
                     if "data" in msg_obj and isinstance(msg_obj["data"], dict) and "mode" not in msg_obj["data"]:

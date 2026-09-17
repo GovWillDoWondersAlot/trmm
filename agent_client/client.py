@@ -913,6 +913,7 @@ class AgentClient:
 
     async def _mirror_stream_loop(self, ws):
         loop = asyncio.get_event_loop()
+        diagnostics = os.environ.get("TRMM_MIRROR_DIAG") == "1"
         consecutive_errors = 0
         last_sent_bytes = None
         last_sent_time = 0
@@ -925,12 +926,18 @@ class AgentClient:
 
                 t0 = time.perf_counter()
                 frame_bytes = await loop.run_in_executor(None, self.mirror_capture.capture_frame, is_active)
+                captured = time.perf_counter()
                 if frame_bytes:
-                    # Dispatch frame if active or if 150ms has elapsed since last dispatch
-                    if is_active or frame_bytes != last_sent_bytes or (now - last_sent_time >= 0.15):
-                        last_sent_bytes = frame_bytes
-                        last_sent_time = now
+                    changed = frame_bytes != last_sent_bytes
+                    # Send changes immediately; avoid flooding a WAN link with identical JPEGs.
+                    if changed or (captured - last_sent_time >= 1.0):
                         await ws.send(b"\x02" + frame_bytes)
+                        last_sent_bytes = frame_bytes
+                        last_sent_time = time.perf_counter()
+                        if diagnostics:
+                            logger.info("[MIRROR SEND] t=%.3f active=%s bytes=%d changed=%s capture_ms=%.1f send_ms=%.1f",
+                                        time.time(), is_active, len(frame_bytes), changed,
+                                        (captured - t0) * 1000, (last_sent_time - captured) * 1000)
                     consecutive_errors = 0
                 elapsed = time.perf_counter() - t0
                 sleep_time = max(0.005, interval - elapsed)

@@ -19,6 +19,7 @@ Capture pipeline (mirrors compositor.py approach):
 import ctypes
 from ctypes import wintypes
 import io
+import os
 import time
 import threading
 import logging
@@ -207,6 +208,16 @@ class MirrorCapture:
         self._buf_h = 0
 
     def capture_frame(self, is_active: bool = False) -> Optional[bytes]:
+        started = time.perf_counter()
+        try:
+            return self._capture_frame(is_active)
+        finally:
+            if os.environ.get("TRMM_MIRROR_DIAG") == "1":
+                logger.info("[MIRROR CAPTURE] t=%.3f total_ms=%.1f size=%sx%s active=%s",
+                            time.time(), (time.perf_counter() - started) * 1000,
+                            self._width, self._height, is_active)
+
+    def _capture_frame(self, is_active: bool = False) -> Optional[bytes]:
         """
         Captures the full real desktop screen and returns JPEG-encoded bytes.
         Drop-in equivalent of WindowCompositor.render_frame() for mirror mode.
@@ -237,32 +248,50 @@ class MirrorCapture:
             img.save(out, format="JPEG", quality=60)
             return out.getvalue()
 
+        copy_started = time.perf_counter()
         try:
             # BitBlt: copy real screen pixels into our off-screen DIB
-            gdi32.BitBlt(self._hdc_mem, 0, 0, w, h, hdc_screen, 0, 0, SRCCOPY)
+            copied = gdi32.BitBlt(self._hdc_mem, 0, 0, w, h, hdc_screen, 0, 0, SRCCOPY)
+            # Finish batched GDI writes before reading the DIB through ctypes.
+            flushed = gdi32.GdiFlush()
+            if not copied or not flushed:
+                logger.warning("Mirror screen copy failed; retrying on next capture")
+                return None
         finally:
             user32.ReleaseDC(None, hdc_screen)
+            if os.environ.get("TRMM_MIRROR_DIAG") == "1":
+                logger.info("[MIRROR COPY] t=%.3f copy_ms=%.1f",
+                            time.time(), (time.perf_counter() - copy_started) * 1000)
 
         # Convert raw BGRX pixel buffer directly to PIL RGB image (same as compositor.py)
         buf_size = w * h * 4
         now = time.time()
         try:
             raw_bytes = ctypes.string_at(self._p_bits.value, buf_size)
-            if self._last_raw_bytes and raw_bytes == self._last_raw_bytes and self._last_frame_bytes:
+            quality = 48 if is_active else 65
+            cache_key = (w, h, quality)
+            if (raw_bytes == self._last_raw_bytes and self._last_frame_bytes
+                    and getattr(self, "_last_frame_key", None) == cache_key):
                 return self._last_frame_bytes
-            self._last_raw_bytes = raw_bytes
             img = Image.frombytes("RGB", (w, h), raw_bytes, "raw", "BGRX")
         except Exception as e:
             logger.debug(f"Mirror frame conversion error: {e}")
-            img = Image.new("RGB", (w, h), (20, 20, 20))
+            return None
 
         # Adaptive JPEG quality: 48 during active motion/drag (~35KB), 65 when idle (~95KB)
         # Keeps native coordinates 1:1 without downscaling distortion or mouse desync
         quality = 48 if is_active else 65
 
+        encode_started = time.perf_counter()
         output = io.BytesIO()
         img.save(output, format="JPEG", quality=quality, subsampling=2, optimize=False)
         frame_bytes = output.getvalue()
+        if os.environ.get("TRMM_MIRROR_DIAG") == "1":
+            logger.info("[MIRROR ENCODE] t=%.3f encode_ms=%.1f bytes=%d quality=%d",
+                        time.time(), (time.perf_counter() - encode_started) * 1000,
+                        len(frame_bytes), quality)
+        self._last_raw_bytes = raw_bytes
+        self._last_frame_key = cache_key
         self._last_frame_bytes = frame_bytes
         self._last_frame_time = now
         return frame_bytes
@@ -2030,7 +2059,5 @@ class ScreenCurtain:
                 cls._ensure_worker()
         except Exception:
             pass
-
-
 
 

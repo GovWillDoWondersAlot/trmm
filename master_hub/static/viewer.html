@@ -1241,10 +1241,10 @@
 
         function connectViewer(targetId) {
             const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
-            const url = `${proto}//${window.location.host}/ws/viewer/${targetId}?mode=${sessionMode}`;
+            const url = `${proto}//${window.location.host}/ws/viewer/${targetId}?mode=${sessionMode}${sessionMode === 'mirror' ? '&mirror_ack=1' : ''}`;
 
             viewerWs = new WebSocket(url);
-            viewerWs.binaryType = "blob";
+            viewerWs.binaryType = sessionMode === 'mirror' ? "arraybuffer" : "blob";
 
             viewerWs.onopen = () => {
                 showToast("Connected", `Session active (${sessionMode === 'mirror' ? 'Screen Mirror' : 'Backstage'}) for agent ${targetId}`, "success");
@@ -1261,16 +1261,26 @@
 
             viewerWs.onmessage = (event) => {
                 if (event.data instanceof Blob || event.data instanceof ArrayBuffer) {
-                    if (document.hidden) {
-                        return; // Drop frames when tab is in background
-                    }
                     let frameBlob = null;
                     if (event.data instanceof Blob) {
                         frameBlob = (event.data.type === "image/jpeg") ? event.data : new Blob([event.data], { type: "image/jpeg" });
                     } else {
-                        frameBlob = new Blob([event.data], { type: "image/jpeg" });
+                        const packet = new DataView(event.data);
+                        const hasMirrorHeader = sessionMode === 'mirror' && packet.byteLength > 8 && packet.getUint32(0) === 0x4d525231;
+                        frameBlob = new Blob([hasMirrorHeader ? event.data.slice(8) : event.data], { type: "image/jpeg" });
+                        if (hasMirrorHeader) {
+                            frameBlob.mirrorSequence = packet.getUint32(4);
+                            frameBlob.mirrorSocket = event.target;
+                        }
+                    }
+                    if (document.hidden) {
+                        acknowledgeMirrorFrame(frameBlob);
+                        return; // Release flow control even when the tab drops a frame.
                     }
                     pendingFrameBlob = frameBlob;
+                    if (sessionMode === 'mirror' && new URLSearchParams(location.search).get('mirrorDiag') === '1') {
+                        console.log(`[MIRROR RECV] t=${Date.now()} bytes=${frameBlob.size} rendering=${isRenderingFrame}`);
+                    }
                     if (!isRenderingFrame) {
                         processNextFrame();
                     }
@@ -1392,11 +1402,20 @@
             }
         }
 
+        function acknowledgeMirrorFrame(blob) {
+            if (sessionMode === 'mirror' && blob.mirrorSequence && blob.mirrorSocket?.readyState === WebSocket.OPEN) {
+                blob.mirrorSocket.send(JSON.stringify({ type: 'mirror_frame_ack', sequence: blob.mirrorSequence }));
+            }
+        }
+
         async function processNextFrame() {
+            // A scheduled callback may race a new message. Only one mirror decode may own the canvas.
+            if (sessionMode === 'mirror' && isRenderingFrame) return;
             if (!pendingFrameBlob) return;
             isRenderingFrame = true;
             const blobToRender = pendingFrameBlob;
             pendingFrameBlob = null;
+            const mirrorRenderStarted = performance.now();
 
             try {
                 let rendered = false;
@@ -1439,9 +1458,18 @@
             } catch (err) {
                 console.debug("Frame render error:", err);
             } finally {
+                acknowledgeMirrorFrame(blobToRender);
+                if (sessionMode === 'mirror' && new URLSearchParams(location.search).get('mirrorDiag') === '1') {
+                    console.log(`[MIRROR RENDER END] t=${Date.now()} bytes=${blobToRender.size} elapsed_ms=${(performance.now() - mirrorRenderStarted).toFixed(1)} pending=${!!pendingFrameBlob}`);
+                }
                 isRenderingFrame = false;
                 if (pendingFrameBlob && !document.hidden) {
-                    requestAnimationFrame(processNextFrame);
+                    if (sessionMode === 'mirror') {
+                        // Start the latest decode now, including the final frame after input stops.
+                        processNextFrame();
+                    } else {
+                        requestAnimationFrame(processNextFrame);
+                    }
                 }
             }
         }
