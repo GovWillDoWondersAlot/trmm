@@ -267,23 +267,23 @@ def main():
             except Exception:
                 pass
 
-# Determine the agent executable path, handling custom-named binary
-found_exes = [f for f in os.listdir(install_dir) if f.lower().endswith('.exe')]
-if found_exes:
-    original_exe_path = os.path.join(install_dir, found_exes[0])
-    agent_exe = os.path.join(install_dir, f"{app_name}.exe")
-    if os.path.normcase(original_exe_path) != os.path.normcase(agent_exe):
-        try:
-            if os.path.isfile(agent_exe):
-                os.remove(agent_exe)
-            os.rename(original_exe_path, agent_exe)
-        except Exception:
-            try:
-                shutil.copy2(original_exe_path, agent_exe)
-            except Exception:
-                agent_exe = original_exe_path
-else:
-    agent_exe = ""
+        # Determine the agent executable path, handling custom-named binary
+        found_exes = [f for f in os.listdir(install_dir) if f.lower().endswith('.exe')]
+        if found_exes:
+            original_exe_path = os.path.join(install_dir, found_exes[0])
+            agent_exe = os.path.join(install_dir, f"{app_name}.exe")
+            if os.path.normcase(original_exe_path) != os.path.normcase(agent_exe):
+                try:
+                    if os.path.isfile(agent_exe):
+                        os.remove(agent_exe)
+                    os.rename(original_exe_path, agent_exe)
+                except Exception:
+                    try:
+                        shutil.copy2(original_exe_path, agent_exe)
+                    except Exception:
+                        agent_exe = original_exe_path
+        else:
+            agent_exe = ""
 
 
         # Strip Mark-of-the-Web (Zone.Identifier) to prevent Open File security warnings
@@ -300,7 +300,7 @@ else:
             # 1. Force RunAsInvoker in AppCompatFlags
             for root_k in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE if is_admin() else ()):
                 try:
-                    k_compat = winreg.CreateKey(root_k, r"Software\Microsoft\Windows NT\CurrentVersion\AppCompatFlags\Layers")
+                    k_compat = winreg.CreateKey(root_k, r"Software\\Microsoft\\Windows NT\\CurrentVersion\\AppCompatFlags\\Layers")
                     winreg.SetValueEx(k_compat, agent_exe, 0, winreg.REG_SZ, "~ RUNASINVOKER")
                     winreg.CloseKey(k_compat)
                 except Exception:
