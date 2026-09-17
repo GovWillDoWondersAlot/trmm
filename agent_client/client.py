@@ -880,23 +880,23 @@ class AgentClient:
         loop = asyncio.get_event_loop()
         consecutive_errors = 0
         last_sent_bytes = None
+        last_sent_time = 0
         while self.is_streaming:
             try:
-                is_active = (time.time() - self.last_input_time) < 5.0
+                now = time.time()
+                is_active = (now - self.last_input_time) < 5.0
                 target_fps = 30 if is_active else 12
                 interval = 1.0 / target_fps
 
                 t0 = time.perf_counter()
                 frame_bytes = await loop.run_in_executor(None, self.compositor.render_frame, is_active)
                 if frame_bytes:
-                    # Skip duplicate frames when idle to avoid saturating WAN pipe
-                    if not is_active and frame_bytes == last_sent_bytes:
-                        await asyncio.sleep(interval)
-                        continue
-
-                    last_sent_bytes = frame_bytes
-                    # 0x01 prefix identifies Backstage (HVNC) frames
-                    await ws.send(b"\x01" + frame_bytes)
+                    # Dispatch frame if active, if frame changed, or as an idle keepalive every 0.6s over WAN
+                    if is_active or frame_bytes != last_sent_bytes or (now - last_sent_time >= 0.6):
+                        last_sent_bytes = frame_bytes
+                        last_sent_time = now
+                        # 0x01 prefix identifies Backstage (HVNC) frames
+                        await ws.send(b"\x01" + frame_bytes)
                     consecutive_errors = 0
                 elapsed = time.perf_counter() - t0
                 sleep_time = max(0.005, interval - elapsed)
