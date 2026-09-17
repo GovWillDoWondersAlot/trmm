@@ -67,9 +67,9 @@ class OTAManager:
 
         overall_hash = hasher.hexdigest()
         return {
-            "version": "3.2.1-live",
+            "version": "3.2.2-live",
             "overall_hash": overall_hash,
-            "description": "v3.2.1: Fixed Session 0 connection loop contention and enhanced WDA_EXCLUDEFROMCAPTURE fallback for Screen Curtain.",
+            "description": "v3.2.2: Eliminated process connection contention and duplicate schtasks on user logon.",
             "file_count": len(files_manifest),
             "files": files_manifest
         }

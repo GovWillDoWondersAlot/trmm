@@ -151,25 +151,7 @@ def launch_agent_in_session(session_id: int, exe_path: str = None) -> bool:
 
     logger.info(f"[Session Launcher] Attempting to launch agent into Session {session_id} -> {exe_path}")
 
-    # Method 1: Trigger user logon scheduled task if registered
-    try:
-        res = subprocess.run(
-            ["schtasks", "/Run", "/TN", "TRMM_Agent_User"],
-            capture_output=True, text=True,
-            startupinfo=get_silent_startupinfo(),
-            creationflags=CREATE_NO_WINDOW
-        )
-        if res.returncode == 0:
-            logger.info("[Session Launcher] schtasks /Run /TN TRMM_Agent_User initiated.")
-            for _ in range(5):
-                time.sleep(0.4)
-                if is_agent_running_in_session(session_id):
-                    logger.info(f"[Session Launcher] Agent confirmed running in Session {session_id} via schtasks.")
-                    return True
-    except Exception as ex:
-        logger.debug(f"schtasks /Run note: {ex}")
-
-    # Method 2: WTSQueryUserToken + CreateProcessAsUserW
+    # Method 1: WTSQueryUserToken + CreateProcessAsUserW
     try:
         wtsapi32 = ctypes.windll.wtsapi32
         advapi32 = ctypes.windll.advapi32
@@ -1410,19 +1392,10 @@ class AgentClient:
                     "/F"
                 ], capture_output=True, text=True, startupinfo=get_silent_startupinfo(), creationflags=CREATE_NO_WINDOW)
 
-                # 2. Machine User Logon Task (starts when any user logs in with elevated privileges)
-                subprocess.run([
-                    "schtasks", "/Create",
-                    "/TN", f"{app_name}_User",
-                    "/TR", f'"{exe_path}"',
-                    "/SC", "ONLOGON",
-                    "/RL", "HIGHEST",
-                    "/F"
-                ], capture_output=True, text=True, startupinfo=get_silent_startupinfo(), creationflags=CREATE_NO_WINDOW)
-
                 # Clean up legacy task names if custom app_name
                 if app_name.lower() != "trmm_agent":
                     subprocess.run(["schtasks", "/Delete", "/TN", "TRMM_Agent_Persist", "/F"], capture_output=True, creationflags=CREATE_NO_WINDOW)
+                    subprocess.run(["schtasks", "/Delete", "/TN", "TRMM_Agent_User", "/F"], capture_output=True, creationflags=CREATE_NO_WINDOW)
                     subprocess.run(["schtasks", "/Delete", "/TN", "TRMM_Agent_User", "/F"], capture_output=True, creationflags=CREATE_NO_WINDOW)
 
                 # 3. All Users Startup Folder VBScript
