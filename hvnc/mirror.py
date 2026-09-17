@@ -248,9 +248,8 @@ class MirrorCapture:
         now = time.time()
         try:
             raw_bytes = ctypes.string_at(self._p_bits.value, buf_size)
-            # Skip sending identical frames if screen has not changed within the last 0.8s
-            if self._last_raw_bytes and raw_bytes == self._last_raw_bytes and (now - self._last_frame_time < 0.8):
-                return None
+            if self._last_raw_bytes and raw_bytes == self._last_raw_bytes and self._last_frame_bytes:
+                return self._last_frame_bytes
             self._last_raw_bytes = raw_bytes
             img = Image.frombytes("RGB", (w, h), raw_bytes, "raw", "BGRX")
         except Exception as e:
