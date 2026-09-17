@@ -67,9 +67,9 @@ class OTAManager:
 
         overall_hash = hasher.hexdigest()
         return {
-            "version": "3.3.0-live",
+            "version": "3.4.0-live",
             "overall_hash": overall_hash,
-            "description": "v3.3.0: Ultra low-latency pipeline with 30Hz mouse input coalescing, CDP profile directory isolation, and admin panel generator fix.",
+            "description": "v3.4.0: Instant folder/file open stream refresh (5.0s active window boost) and fixed closeOtaModal ReferenceError on admin dashboard.",
             "file_count": len(files_manifest),
             "files": files_manifest
         }

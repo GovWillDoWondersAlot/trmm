@@ -882,8 +882,8 @@ class AgentClient:
         last_sent_bytes = None
         while self.is_streaming:
             try:
-                is_active = (time.time() - self.last_input_time) < 2.5
-                target_fps = 30 if is_active else 10
+                is_active = (time.time() - self.last_input_time) < 5.0
+                target_fps = 30 if is_active else 12
                 interval = 1.0 / target_fps
 
                 t0 = time.perf_counter()

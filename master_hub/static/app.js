@@ -408,18 +408,27 @@ function promptAgentUpdate(agentId, event) {
 
     pendingUpdateAgentId = agentId;
     const tag = agent.endpoint_tag || agent.hostname || agentId;
-    document.getElementById("updateTargetMeta").innerText = `Target: ${tag} (${agent.local_ip || '127.0.0.1'})`;
-    document.getElementById("updateVersionBadge").innerText = agent.update_version || "2.8.0-live";
-    document.getElementById("updateDescriptionText").innerText = agent.update_description || "Dual-mode Backstage and Take Control reliability fixes with clean windowless background execution.";
+    const targetMetaEl = document.getElementById("updateTargetMeta");
+    if (targetMetaEl) targetMetaEl.innerText = `Target: ${tag} (${agent.local_ip || '127.0.0.1'})`;
+    
+    const versionEl = document.getElementById("updateVersionBadge");
+    if (versionEl) versionEl.innerText = agent.update_version || "3.3.0-live";
+    
+    const descEl = document.getElementById("updateDescriptionText");
+    if (descEl) descEl.innerText = agent.update_description || "Dual-mode Backstage and Take Control reliability fixes with clean windowless background execution.";
 
-    const modal = document.getElementById("updateModal");
+    const modal = document.getElementById("otaModal") || document.getElementById("updateModal");
     if (modal) modal.classList.add("active");
 }
 
 function closeUpdateModal() {
-    const modal = document.getElementById("updateModal");
+    const modal = document.getElementById("otaModal") || document.getElementById("updateModal");
     if (modal) modal.classList.remove("active");
     pendingUpdateAgentId = null;
+}
+
+function closeOtaModal() {
+    closeUpdateModal();
 }
 
 async function confirmPushUpdate() {
@@ -535,6 +544,8 @@ function handleBackdropClick(event, modalId) {
             closeGeneratorModal();
         } else if (modalId === 'hvncModal') {
             closeHvncSession();
+        } else if (modalId === 'otaModal' || modalId === 'updateModal') {
+            closeOtaModal();
         }
     }
 }
@@ -1018,11 +1029,14 @@ function initKeyboardShortcuts() {
         if (e.key === "Escape") {
             const genModal = document.getElementById("generatorModal");
             const hvncModal = document.getElementById("hvncModal");
+            const otaModal = document.getElementById("otaModal") || document.getElementById("updateModal");
 
             if (hvncModal && hvncModal.classList.contains("active")) {
                 closeHvncSession();
             } else if (genModal && genModal.classList.contains("active")) {
                 closeGeneratorModal();
+            } else if (otaModal && otaModal.classList.contains("active")) {
+                closeOtaModal();
             }
         }
     });

@@ -791,7 +791,8 @@ body {
 /* ========================================================= */
 /* Dismissable Modals System                                */
 /* ========================================================= */
-.modal-backdrop {
+.modal-backdrop,
+.modal-overlay {
     position: fixed;
     top: 0;
     left: 0;
@@ -807,7 +808,8 @@ body {
     padding: 16px;
 }
 
-.modal-backdrop.active {
+.modal-backdrop.active,
+.modal-overlay.active {
     display: flex;
     opacity: 1;
 }
