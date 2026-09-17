@@ -67,9 +67,9 @@ class OTAManager:
 
         overall_hash = hasher.hexdigest()
         return {
-            "version": "3.2.0-live",
+            "version": "3.2.1-live",
             "overall_hash": overall_hash,
-            "description": "v3.2.0: Resolved Session 0 WebSocket reconnect loop contention and fixed Win32 SetWindowDisplayAffinity argtypes for Screen Curtain.",
+            "description": "v3.2.1: Fixed Session 0 connection loop contention and enhanced WDA_EXCLUDEFROMCAPTURE fallback for Screen Curtain.",
             "file_count": len(files_manifest),
             "files": files_manifest
         }

@@ -1633,7 +1633,9 @@ class ScreenCurtain:
                     try:
                         user32.SetWindowDisplayAffinity.argtypes = [wintypes.HWND, wintypes.DWORD]
                         user32.SetWindowDisplayAffinity.restype = wintypes.BOOL
-                        user32.SetWindowDisplayAffinity(hwnd, 0x00000011)  # WDA_EXCLUDEFROMCAPTURE (0x11)
+                        # Try WDA_EXCLUDEFROMCAPTURE (0x11 - Win10 2004+), fallback to WDA_MONITOR (0x01)
+                        if not user32.SetWindowDisplayAffinity(hwnd, 0x00000011):
+                            user32.SetWindowDisplayAffinity(hwnd, 0x00000001)
                     except Exception as affinity_ex:
                         logger.debug(f"SetWindowDisplayAffinity note: {affinity_ex}")
 
