@@ -507,15 +507,20 @@ function clearSearch() {
 // -------------------------------------------------------------
 function openGeneratorModal() {
     const modal = document.getElementById("generatorModal");
-    modal.classList.add("active");
-    document.getElementById("buildResultCard").style.display = "none";
+    if (modal) modal.classList.add("active");
+    
+    const buildCard = document.getElementById("buildResultCard");
+    if (buildCard) buildCard.style.display = "none";
     
     const btn = document.getElementById("btnBuildAgent");
-    btn.disabled = false;
-    btn.innerHTML = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 12 5 5L20 7"/></svg><span>Build & Generate Package</span>`;
+    if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 12 5 5L20 7"/></svg><span>Build & Generate Package</span>`;
+    }
 
-    // Auto-detect server LAN IP for multi-machine deployments
-    detectLanIp();
+    if (typeof detectLanIp === "function") {
+        detectLanIp();
+    }
 }
 
 function closeGeneratorModal() {

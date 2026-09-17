@@ -67,9 +67,9 @@ class OTAManager:
 
         overall_hash = hasher.hexdigest()
         return {
-            "version": "3.2.2-live",
+            "version": "3.3.0-live",
             "overall_hash": overall_hash,
-            "description": "v3.2.2: Eliminated process connection contention and duplicate schtasks on user logon.",
+            "description": "v3.3.0: Ultra low-latency pipeline with 30Hz mouse input coalescing, CDP profile directory isolation, and admin panel generator fix.",
             "file_count": len(files_manifest),
             "files": files_manifest
         }

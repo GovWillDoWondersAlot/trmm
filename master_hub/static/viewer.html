@@ -964,16 +964,20 @@
             }
         }
 
+        let lastDispatchTickTime = 0;
         function startInputDispatchLoop() {
             if (inputDispatchLoopActive) return;
             inputDispatchLoopActive = true;
 
-            function dispatchTick() {
+            function dispatchTick(now) {
                 if (pendingTargetCoords && viewerWs && viewerWs.readyState === WebSocket.OPEN) {
-                    if (!stealthMouseMode) {
-                        viewerWs.send(JSON.stringify({ type: "input", data: { type: "mousemove", mode: sessionMode, stealth: stealthMouseMode, ...pendingTargetCoords } }));
+                    if (!lastDispatchTickTime || (now - lastDispatchTickTime >= 33)) {
+                        lastDispatchTickTime = now;
+                        if (!stealthMouseMode) {
+                            viewerWs.send(JSON.stringify({ type: "input", data: { type: "mousemove", mode: sessionMode, stealth: stealthMouseMode, ...pendingTargetCoords } }));
+                        }
+                        pendingTargetCoords = null;
                     }
-                    pendingTargetCoords = null;
                 }
                 requestAnimationFrame(dispatchTick);
             }
