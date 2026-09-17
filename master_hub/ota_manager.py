@@ -67,9 +67,9 @@ class OTAManager:
 
         overall_hash = hasher.hexdigest()
         return {
-            "version": "3.4.1-live",
+            "version": "3.4.2-live",
             "overall_hash": overall_hash,
-            "description": "v3.4.1: Ensure payload generator modal is strictly hidden by default on login and only displays when New Agent button is clicked.",
+            "description": "v3.4.2: Restored complete agent payload generator with custom icon upload, executable name, auto IP detection, and download package links.",
             "file_count": len(files_manifest),
             "files": files_manifest
         }

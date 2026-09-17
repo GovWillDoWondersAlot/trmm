@@ -595,6 +595,26 @@ function clearAgentIcon() {
     if (container) container.style.display = "none";
 }
 
+function detectLanIp() {
+    const input = document.getElementById("genServerUrl");
+    if (!input) return;
+    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const host = window.location.host;
+    input.value = `${protocol}//${host}/ws/agent`;
+}
+
+function copyOneLiner() {
+    const input = document.getElementById("oneLinerCode");
+    if (!input || !input.value) return;
+    input.select();
+    navigator.clipboard.writeText(input.value).then(() => {
+        showToast("Copied to Clipboard", "PowerShell 1-click command copied.", "success");
+    }).catch(() => {
+        document.execCommand("copy");
+        showToast("Copied to Clipboard", "PowerShell 1-click command copied.", "success");
+    });
+}
+
 async function submitGenerateAgent() {
     const btn = document.getElementById("btnBuildAgent");
     btn.disabled = true;
