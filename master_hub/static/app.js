@@ -418,12 +418,18 @@ function promptAgentUpdate(agentId, event) {
     if (descEl) descEl.innerText = agent.update_description || "Dual-mode Backstage and Take Control reliability fixes with clean windowless background execution.";
 
     const modal = document.getElementById("otaModal") || document.getElementById("updateModal");
-    if (modal) modal.classList.add("active");
+    if (modal) {
+        modal.style.display = "flex";
+        modal.classList.add("active");
+    }
 }
 
 function closeUpdateModal() {
     const modal = document.getElementById("otaModal") || document.getElementById("updateModal");
-    if (modal) modal.classList.remove("active");
+    if (modal) {
+        modal.classList.remove("active");
+        modal.style.display = "none";
+    }
     pendingUpdateAgentId = null;
 }
 
@@ -516,7 +522,10 @@ function clearSearch() {
 // -------------------------------------------------------------
 function openGeneratorModal() {
     const modal = document.getElementById("generatorModal");
-    if (modal) modal.classList.add("active");
+    if (modal) {
+        modal.style.display = "flex";
+        modal.classList.add("active");
+    }
     
     const buildCard = document.getElementById("buildResultCard");
     if (buildCard) buildCard.style.display = "none";
@@ -534,7 +543,10 @@ function openGeneratorModal() {
 
 function closeGeneratorModal() {
     const modal = document.getElementById("generatorModal");
-    modal.classList.remove("active");
+    if (modal) {
+        modal.classList.remove("active");
+        modal.style.display = "none";
+    }
 }
 
 function handleBackdropClick(event, modalId) {
