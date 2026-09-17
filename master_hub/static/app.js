@@ -137,8 +137,13 @@ function initDashboardSocket() {
             }
         };
 
-        dashboardWs.onclose = () => {
+        dashboardWs.onclose = (evt) => {
             setServerStatus(false);
+            if (evt && evt.code === 4001) {
+                // Session unauthorized / logged out
+                window.location.href = "/login";
+                return;
+            }
             // Reconnect after 2 seconds
             setTimeout(initDashboardSocket, 2000);
         };
@@ -1097,9 +1102,17 @@ function escapeHtml(text) {
 
 async function logout() {
     try {
-        await fetch("/api/auth/logout", { credentials: "include" });
+        await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
     } catch (e) {
         console.error("Logout request failed:", e);
+    }
+    // Delete session cookie on client side as well
+    document.cookie = "trmm_session=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;";
+    if (dashboardWs) {
+        try { dashboardWs.close(); } catch (e) {}
+    }
+    if (viewerWs) {
+        try { viewerWs.close(); } catch (e) {}
     }
     window.location.href = "/login";
 }

@@ -61,15 +61,13 @@ dashboard_websockets = set()
 
 def _is_authenticated(request: Request) -> bool:
     """Checks session validity from Cookie or Authorization header."""
-    client_host = request.client.host if request.client else ""
-    if client_host in ("127.0.0.1", "localhost", "::1"):
-        return True
     token = request.cookies.get("trmm_session")
     if not token:
         auth_hdr = request.headers.get("Authorization", "")
         if auth_hdr.startswith("Bearer "):
             token = auth_hdr.split(" ", 1)[1].strip()
     return AuthManager.validate_session(token)
+
 
 
 class AuthLoginRequest(BaseModel):
@@ -152,7 +150,7 @@ async def post_auth_login(req: AuthLoginRequest):
     return response
 
 
-@app.post("/api/auth/logout")
+@app.api_route("/api/auth/logout", methods=["GET", "POST"])
 async def post_auth_logout(request: Request):
     token = request.cookies.get("trmm_session")
     AuthManager.destroy_session(token)
@@ -464,6 +462,10 @@ async def trigger_agent_restart(request: Request, agent_id: str):
 # -------------------------------------------------------------
 @app.websocket("/ws/dashboard")
 async def websocket_dashboard(websocket: WebSocket):
+    token = websocket.cookies.get("trmm_session")
+    if not AuthManager.is_setup_required() and not AuthManager.validate_session(token):
+        await websocket.close(code=4001, reason="Unauthorized")
+        return
     await websocket.accept()
     dashboard_websockets.add(websocket)
     try:
@@ -582,6 +584,10 @@ async def websocket_agent_tunnel(websocket: WebSocket, agent_id: str):
 # -------------------------------------------------------------
 @app.websocket("/ws/viewer/{agent_id}")
 async def websocket_admin_viewer(websocket: WebSocket, agent_id: str):
+    token = websocket.cookies.get("trmm_session") or websocket.query_params.get("token")
+    if not AuthManager.is_setup_required() and not AuthManager.validate_session(token):
+        await websocket.close(code=4001, reason="Unauthorized")
+        return
     await websocket.accept()
     mode = websocket.query_params.get("mode", "backstage").lower()
     viewer_id = str(uuid.uuid4())[:8]
