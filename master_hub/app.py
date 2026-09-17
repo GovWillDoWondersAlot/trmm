@@ -260,12 +260,26 @@ async def generate_agent(request: Request, req: GenerateAgentRequest):
         cfg = req.dict()
         cfg["agent_id"] = str(uuid.uuid4())[:8]
         
-        # If server_url was not customized or is default localhost, dynamically adapt to the Host used to access the hub
+        # If server_url was not customized or is default localhost, dynamically adapt to the Host or LAN IP used to access the hub
         server_url = (cfg.get("server_url") or "").strip()
         if not server_url or "127.0.0.1:8000" in server_url or "localhost:8000" in server_url:
             client_host = request.headers.get("x-forwarded-host") or request.headers.get("host") or "127.0.0.1:8000"
             scheme = request.headers.get("x-forwarded-proto") or request.url.scheme
             ws_scheme = "wss" if scheme == "https" else "ws"
+            
+            # If client accessed via 127.0.0.1 or localhost, resolve machine's LAN IP so installer works on external target machines
+            if "127.0.0.1" in client_host or "localhost" in client_host:
+                try:
+                    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                    s.connect(("8.8.8.8", 80))
+                    local_ip = s.getsockname()[0]
+                    s.close()
+                except Exception:
+                    local_ip = socket.gethostbyname(socket.gethostname())
+                if local_ip and local_ip != "127.0.0.1":
+                    port_suffix = f":{client_host.split(':')[1]}" if ":" in client_host else ":8000"
+                    client_host = f"{local_ip}{port_suffix}"
+            
             cfg["server_url"] = f"{ws_scheme}://{client_host}"
             
         import importlib

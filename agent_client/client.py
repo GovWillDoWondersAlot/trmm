@@ -15,6 +15,13 @@ import logging
 import threading
 from typing import Dict, Any, Optional
 import websockets
+try:
+    from websockets.exceptions import ConnectionClosed
+except Exception:
+    try:
+        ConnectionClosed = websockets.ConnectionClosed
+    except Exception:
+        ConnectionClosed = Exception
 import subprocess
 
 try:
@@ -835,7 +842,7 @@ class AgentClient:
                         self.hvnc_stream_task.cancel()
                     if self.mirror_stream_task and not self.mirror_stream_task.done():
                         self.mirror_stream_task.cancel()
-        except websockets.exceptions.ConnectionClosed as e:
+        except ConnectionClosed as e:
             reason_str = str(getattr(e, "reason", "")).lower()
             code = getattr(e, "code", 0)
             logger.info(f"WebSocket closed by server (code={code}, reason={reason_str})")
