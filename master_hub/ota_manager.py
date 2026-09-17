@@ -67,9 +67,9 @@ class OTAManager:
 
         overall_hash = hasher.hexdigest()
         return {
-            "version": "3.4.2-live",
+            "version": "3.4.3-live",
             "overall_hash": overall_hash,
-            "description": "v3.4.2: Restored complete agent payload generator with custom icon upload, executable name, auto IP detection, and download package links.",
+            "description": "v3.4.3: Fix openGeneratorModal display opacity and z-index to guarantee New Agent popup opens cleanly.",
             "file_count": len(files_manifest),
             "files": files_manifest
         }

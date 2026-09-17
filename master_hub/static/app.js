@@ -521,10 +521,15 @@ function clearSearch() {
 // Generator Modal Management (Dismissable: Backdrop, Esc, X)
 // -------------------------------------------------------------
 function openGeneratorModal() {
+    console.log("[Modal] Opening Agent Generator Modal...");
     const modal = document.getElementById("generatorModal");
     if (modal) {
         modal.style.display = "flex";
+        modal.style.opacity = "1";
+        modal.style.zIndex = "9999";
         modal.classList.add("active");
+    } else {
+        console.error("[Modal] generatorModal element not found in DOM!");
     }
     
     const buildCard = document.getElementById("buildResultCard");
@@ -546,6 +551,7 @@ function closeGeneratorModal() {
     if (modal) {
         modal.classList.remove("active");
         modal.style.display = "none";
+        modal.style.opacity = "0";
     }
 }
 
