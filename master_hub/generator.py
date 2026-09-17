@@ -190,6 +190,14 @@ echo [OK] {app_title} is active!
             icon_path = process_custom_icon(icon_base64, OUTPUT_DIR)
 
         # 6. Compile Standalone Setup Executable (.exe)
+        try:
+            import importlib
+            import master_hub.setup_compiler
+            importlib.reload(master_hub.setup_compiler)
+            from master_hub.setup_compiler import SetupCompiler
+        except Exception:
+            pass
+
         setup_exe_path = SetupCompiler.compile_installer(
             zip_path, agent_id, endpoint_tag, arch,
             custom_name=custom_name, icon_path=icon_path

@@ -268,6 +268,11 @@ async def generate_agent(request: Request, req: GenerateAgentRequest):
             ws_scheme = "wss" if scheme == "https" else "ws"
             cfg["server_url"] = f"{ws_scheme}://{client_host}"
             
+        import importlib
+        import master_hub.generator
+        importlib.reload(master_hub.generator)
+        from master_hub.generator import AgentGenerator
+
         result = AgentGenerator.build_package(cfg)
         return {
             "success": True,
