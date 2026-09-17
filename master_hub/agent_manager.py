@@ -138,14 +138,20 @@ class AgentManager:
             if existing_tag:
                 info["endpoint_tag"] = existing_tag
 
+        now = time.time()
         if agent_id in self.active_agents:
             existing = self.active_agents[agent_id]
-            logger.info(f"Agent '{agent_id}' reconnected. Closing previous WebSocket and updating record.")
-            try:
-                import asyncio
-                asyncio.create_task(existing.ws.close(code=1000, reason="Superseded by reconnect"))
-            except Exception:
-                pass
+            # Protect healthy active connections from being killed by duplicate background processes
+            if (now - existing.last_heartbeat) < 15.0:
+                logger.info(f"Rejecting duplicate connection for agent '{agent_id}' because an active session is already connected and healthy.")
+                return None
+            else:
+                logger.info(f"Agent '{agent_id}' stale connection expired. Closing previous WebSocket and registering new connection.")
+                try:
+                    import asyncio
+                    asyncio.create_task(existing.ws.close(code=1000, reason="Stale connection replaced"))
+                except Exception:
+                    pass
 
         agent = ConnectedAgent(agent_id, ws, info)
         self.active_agents[agent_id] = agent
