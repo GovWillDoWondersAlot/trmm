@@ -29,10 +29,11 @@ class AgentProvisioner:
     """Manages OTA updates and silent endpoint provisioning."""
 
     @staticmethod
-    def get_updates_dir() -> str:
-        """Returns standard writable path for dynamic updates."""
+    def get_updates_dir(agent_id: str = None) -> str:
+        """Returns standard writable path for dynamic updates, isolated per agent_id."""
         app_data = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA") or os.path.expanduser("~")
-        up_dir = os.path.join(app_data, "TRMM_Agent", "updates")
+        folder_name = f"TRMM_Agent_{agent_id}" if agent_id else "TRMM_Agent"
+        up_dir = os.path.join(app_data, folder_name, "updates")
         os.makedirs(up_dir, exist_ok=True)
         return up_dir
 

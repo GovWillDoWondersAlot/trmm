@@ -130,14 +130,13 @@ def terminate_same_session_instances():
         if psutil:
             for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
                 try:
-                    name = (proc.info.get('name') or '').lower()
-                    cmd = ' '.join(proc.info.get('cmdline') or []).lower()
-                    is_trmm = ('trmm_agent' in name) or ('agent_service' in cmd) or ('run_master' not in cmd and 'client' in cmd and 'python' in name)
-                    if is_trmm and proc.info['pid'] != current_pid:
+                    pexe = (proc.info.get('exe') or "").lower()
+                    my_exe = (sys.executable if getattr(sys, "frozen", False) else os.path.abspath(sys.argv[0])).lower()
+                    if pexe and pexe == my_exe and proc.info['pid'] != current_pid:
                         proc_sid = wintypes.DWORD()
                         if ctypes.windll.kernel32.ProcessIdToSessionId(proc.info['pid'], ctypes.byref(proc_sid)):
                             if proc_sid.value == my_sid:
-                                logger.info(f"Terminating older TRMM_Agent in session {my_sid} (PID {proc.info['pid']})")
+                                logger.info(f"Terminating older instance of same executable in session {my_sid} (PID {proc.info['pid']})")
                                 proc.kill()
                 except Exception:
                     pass

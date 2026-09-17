@@ -457,26 +457,9 @@ def ensure_persistence():
                 0,
                 winreg.KEY_READ | winreg.KEY_WRITE
             )
-            i = 0
-            stale_vals = []
-            while True:
-                try:
-                    vn, vv, _ = winreg.EnumValue(k, i)
-                    if ("agent" in vn.lower() or "trmm" in vn.lower() or "workstation" in vn.lower() or "vbs" in vv.lower()) and vn != "TRMM_Agent":
-                        stale_vals.append(vn)
-                    i += 1
-                except OSError:
-                    break
-            for sv in stale_vals:
-                try:
-                    winreg.DeleteValue(k, sv)
-                    svc_logger.info(f"[Persistence] Deleted stale HKCU Run entry: '{sv}'")
-                except Exception:
-                    pass
-
-            winreg.SetValueEx(k, "TRMM_Agent", 0, winreg.REG_SZ, f'"{exe_path}"')
+            winreg.SetValueEx(k, app_name, 0, winreg.REG_SZ, f'"{exe_path}"')
             winreg.CloseKey(k)
-            svc_logger.info(f"[Persistence] Registered direct HKCU Run key 'TRMM_Agent' -> {exe_path}")
+            svc_logger.info(f"[Persistence] Registered direct HKCU Run key '{app_name}' -> {exe_path}")
         except Exception as e_hkcu:
             svc_logger.warning(f"[Persistence] HKCU Run key note: {e_hkcu}")
 
@@ -602,18 +585,13 @@ def terminate_same_session_instances():
                     pexe = (proc.info.get('exe') or "").lower()
                     pcmd = " ".join(proc.info.get('cmdline') or []).lower()
 
-                    is_trmm_agent = (
-                        pname == "trmm_agent.exe" or
-                        pname.startswith("agent_") or
-                        "trmm_agent" in pexe or
-                        "trmm_agent" in pcmd or
-                        "config.json" in pcmd
-                    )
-                    if is_trmm_agent:
+                    my_exe = (sys.executable if getattr(sys, "frozen", False) else os.path.abspath(__file__)).lower()
+                    is_same_executable = (pexe and pexe == my_exe)
+                    if is_same_executable:
                         proc_sid = wintypes.DWORD()
                         if ctypes.windll.kernel32.ProcessIdToSessionId(pid, ctypes.byref(proc_sid)):
                             if proc_sid.value == my_sid:
-                                svc_logger.info(f"Terminating competing agent process '{pname}' in session {my_sid} (PID {pid})")
+                                svc_logger.info(f"Terminating older instance of same executable '{pname}' in session {my_sid} (PID {pid})")
                                 proc.kill()
                 except Exception:
                     pass
@@ -637,21 +615,15 @@ def main():
     # STEP 2: Terminate any stale duplicate agent processes in THIS session
     terminate_same_session_instances()
 
-    # STEP 3: Load config.json with canonical persistent fallback
-    pdata_dir = os.environ.get("ProgramData", r"C:\ProgramData")
-    persist_config_dir = os.path.join(pdata_dir, "TRMM_Agent")
-    os.makedirs(persist_config_dir, exist_ok=True)
-    canonical_config_path = os.path.join(persist_config_dir, "config.json")
-
+    # STEP 3: Load config.json from local bundle folder first
     config_candidates = [
-        canonical_config_path,
         os.path.join(bundle_dir, "config.json"),
         os.path.join(os.path.dirname(bundle_dir), "config.json"),
         os.path.join(app_data, "TRMM_Agent", "config.json")
     ]
 
     cfg = {
-        "agent_id": "standalone_agent",
+        "agent_id": None,
         "endpoint_tag": "Endpoint",
         "server_url": "ws://127.0.0.1:8000",
         "reconnect_interval_sec": 5,
@@ -675,17 +647,13 @@ def main():
         if not loaded_any:
             svc_logger.warning("Config not found in candidate paths, using defaults.")
 
-        # Save to canonical ProgramData path so Session 0 and Session 1 always share identical tag
-        try:
-            with open(canonical_config_path, "w", encoding="utf-8") as cf:
-                json.dump(cfg, cf, indent=4)
-        except Exception:
-            pass
-
-        # STEP 4: Stable hardware-bound machine ID
-        machine_id = get_or_create_machine_id()
-        cfg["agent_id"] = machine_id
-        svc_logger.info(f"[MachineID] Using stable machine ID: {machine_id}")
+        # STEP 4: Determine unique Agent ID (baked config agent_id > hardware machine_id)
+        if not cfg.get("agent_id") or cfg.get("agent_id") in ("standalone_agent", "agent_default"):
+            machine_id = get_or_create_machine_id()
+            cfg["agent_id"] = machine_id
+            svc_logger.info(f"[MachineID] Using fallback hardware machine ID: {machine_id}")
+        else:
+            svc_logger.info(f"[AgentID] Using unique baked agent ID from package config: {cfg['agent_id']}")
 
         # STEP 5: Session 0 Supervisor Logic — Yield WebSocket connection to Session 1 worker
         if my_sid == 0:
