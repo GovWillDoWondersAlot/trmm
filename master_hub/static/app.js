@@ -383,7 +383,7 @@ function renderAgentTable() {
                     `}
                     <button class="btn-action-control btn-action-mirror" ${!isOnline ? 'disabled' : ''} onclick="openViewerTab('${agent.agent_id}', 'mirror')" title="Take Control: Mirror real desktop with physical mouse & keyboard">
                         <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg>
-                        <span>Take Control</span>
+                        <span>Control</span>
                     </button>
                     <button class="btn-action-control btn-action-backstage" ${!isOnline ? 'disabled' : ''} onclick="openViewerTab('${agent.agent_id}', 'backstage')" title="Backstage: Hidden virtual desktop session (invisible to user)">
                         <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"/></svg>

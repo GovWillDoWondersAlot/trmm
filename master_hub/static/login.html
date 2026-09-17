@@ -6,172 +6,133 @@
     <title>Tactical RMM — Sign In</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
         :root {
-            --bg-body: #090d16;
-            --bg-card: #111827;
-            --bg-input: #1f2937;
-            --border-card: #1f2937;
-            --border-input: #374151;
+            --bg-page: #090a0f;
+            --bg-panel: #111319;
+            --bg-input: #181b24;
+            --border: #232734;
             --border-focus: #3b82f6;
-            --text-primary: #f9fafb;
-            --text-secondary: #9ca3af;
-            --text-muted: #6b7280;
+            --text-main: #f3f4f6;
+            --text-sub: #828a9e;
+            --text-muted: #52596d;
             --primary: #2563eb;
             --primary-hover: #1d4ed8;
-            --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            --font-sans: 'Inter', sans-serif;
+            --font-mono: 'JetBrains Mono', monospace;
         }
 
         * {
             box-sizing: border-box;
             margin: 0;
             padding: 0;
+            border-radius: 0 !important; /* Sharp minimalist zero-radius aesthetic */
         }
 
         body {
             font-family: var(--font-sans);
-            background-color: var(--bg-body);
-            color: var(--text-primary);
+            background-color: var(--bg-page);
+            color: var(--text-main);
             min-height: 100vh;
             display: flex;
-            flex-direction: column;
-            justify-content: center;
             align-items: center;
-            padding: 24px;
+            justify-content: center;
+            padding: 20px;
             -webkit-font-smoothing: antialiased;
         }
 
-        .login-wrapper {
+        .login-box {
             width: 100%;
-            max-width: 400px;
+            max-width: 360px;
+            background: var(--bg-panel);
+            border: 1px solid var(--border);
+            padding: 32px 28px;
         }
 
         .brand-header {
-            text-align: center;
-            margin-bottom: 28px;
+            margin-bottom: 24px;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 16px;
         }
 
-        .brand-logo {
-            width: 44px;
-            height: 44px;
-            background: #1e293b;
-            border: 1px solid #334155;
-            border-radius: 10px;
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            margin-bottom: 16px;
-            color: #38bdf8;
-        }
-
-        .brand-name {
-            font-size: 20px;
-            font-weight: 700;
-            color: var(--text-primary);
-            letter-spacing: -0.025em;
-            margin-bottom: 6px;
-        }
-
-        .brand-subtitle {
-            font-size: 13px;
-            color: var(--text-secondary);
-            line-height: 1.4;
-        }
-
-        .badge-pill {
-            display: inline-flex;
-            align-items: center;
-            padding: 2px 8px;
-            border-radius: 4px;
-            font-size: 11px;
+        .brand-title {
+            font-family: var(--font-mono);
+            font-size: 14px;
             font-weight: 600;
-            margin-bottom: 10px;
-            letter-spacing: 0.02em;
-        }
-        .badge-pill.setup {
-            background: rgba(245, 158, 11, 0.12);
-            color: #fbbf24;
-            border: 1px solid rgba(245, 158, 11, 0.25);
-        }
-        .badge-pill.login {
-            background: rgba(37, 99, 235, 0.12);
-            color: #60a5fa;
-            border: 1px solid rgba(37, 99, 235, 0.25);
+            letter-spacing: 0.12em;
+            color: var(--text-main);
+            text-transform: uppercase;
+            display: flex;
+            align-items: center;
+            gap: 8px;
         }
 
-        .login-card {
-            background: var(--bg-card);
-            border: 1px solid var(--border-card);
-            border-radius: 12px;
-            padding: 32px 28px;
-            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
+        .brand-title::before {
+            content: "";
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            background: #2563eb;
         }
 
         .form-group {
-            margin-bottom: 20px;
-        }
-
-        .form-group:last-of-type {
-            margin-bottom: 24px;
+            margin-bottom: 18px;
         }
 
         .form-label-row {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: 8px;
+            margin-bottom: 6px;
         }
 
         .form-label {
-            font-size: 13px;
+            font-size: 12px;
             font-weight: 500;
-            color: #d1d5db;
+            color: var(--text-sub);
+            letter-spacing: 0.02em;
         }
 
         .forgot-link {
-            font-size: 12px;
+            font-size: 11px;
             color: #60a5fa;
             text-decoration: none;
-            font-weight: 500;
             transition: color 0.15s;
         }
 
         .forgot-link:hover {
             color: #93c5fd;
-            text-decoration: underline;
         }
 
-        .input-wrapper {
+        .input-wrap {
             position: relative;
         }
 
         .form-input {
             width: 100%;
-            height: 40px;
+            height: 38px;
             background: var(--bg-input);
-            border: 1px solid var(--border-input);
-            border-radius: 6px;
+            border: 1px solid var(--border);
             padding: 0 12px;
-            color: var(--text-primary);
-            font-size: 14px;
-            font-family: inherit;
-            transition: border-color 0.15s, box-shadow 0.15s;
+            color: var(--text-main);
+            font-size: 13px;
+            font-family: var(--font-sans);
+            transition: border-color 0.15s;
         }
 
         .form-input:focus {
             outline: none;
             border-color: var(--border-focus);
-            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
         }
 
         .form-input::placeholder {
             color: var(--text-muted);
         }
 
-        .toggle-password {
+        .toggle-pwd {
             position: absolute;
-            right: 10px;
+            right: 8px;
             top: 50%;
             transform: translateY(-50%);
             background: none;
@@ -181,77 +142,61 @@
             padding: 4px;
             display: flex;
             align-items: center;
-            justify-content: center;
         }
 
-        .toggle-password:hover {
-            color: var(--text-secondary);
+        .toggle-pwd:hover {
+            color: var(--text-sub);
         }
 
         .btn-submit {
             width: 100%;
-            height: 42px;
+            height: 38px;
             background: var(--primary);
-            border: none;
-            border-radius: 6px;
+            border: 1px solid var(--primary-hover);
             color: #ffffff;
-            font-size: 14px;
+            font-size: 13px;
             font-weight: 600;
+            letter-spacing: 0.03em;
             cursor: pointer;
-            transition: background-color 0.15s, transform 0.05s;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 8px;
+            transition: background-color 0.15s;
+            margin-top: 6px;
         }
 
         .btn-submit:hover {
-            background-color: var(--primary-hover);
-        }
-
-        .btn-submit:active {
-            transform: scale(0.99);
+            background: var(--primary-hover);
         }
 
         .btn-submit:disabled {
-            opacity: 0.6;
+            opacity: 0.5;
             cursor: not-allowed;
-            transform: none;
         }
 
         .status-alert {
-            padding: 10px 14px;
-            border-radius: 6px;
-            font-size: 13px;
-            margin-bottom: 20px;
+            padding: 8px 12px;
+            font-size: 12px;
+            margin-bottom: 16px;
             display: none;
             line-height: 1.4;
+            border-left: 3px solid transparent;
         }
 
         .status-alert.error {
             background: rgba(239, 68, 68, 0.1);
-            border: 1px solid rgba(239, 68, 68, 0.25);
-            color: #f87171;
+            border-left-color: #ef4444;
+            color: #fca5a5;
         }
 
         .status-alert.success {
             background: rgba(16, 185, 129, 0.1);
-            border: 1px solid rgba(16, 185, 129, 0.25);
-            color: #34d399;
-        }
-
-        .login-footer {
-            margin-top: 24px;
-            text-align: center;
-            font-size: 12px;
-            color: var(--text-muted);
+            border-left-color: #10b981;
+            color: #6ee7b7;
         }
 
         /* Modal Overlay */
         .modal-overlay {
             position: fixed;
             inset: 0;
-            background: rgba(0, 0, 0, 0.7);
+            background: rgba(0, 0, 0, 0.85);
             display: none;
             align-items: center;
             justify-content: center;
@@ -260,158 +205,125 @@
         }
 
         .modal-card {
-            background: #111827;
-            border: 1px solid #1f2937;
-            border-radius: 10px;
+            background: var(--bg-panel);
+            border: 1px solid var(--border);
             width: 100%;
-            max-width: 400px;
+            max-width: 360px;
             padding: 24px;
-            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5);
-        }
-
-        .modal-header {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            margin-bottom: 12px;
         }
 
         .modal-title {
-            font-size: 16px;
+            font-family: var(--font-mono);
+            font-size: 13px;
             font-weight: 600;
-            color: var(--text-primary);
+            color: var(--text-main);
+            margin-bottom: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
         }
 
         .modal-body {
-            font-size: 13px;
-            color: var(--text-secondary);
+            font-size: 12px;
+            color: var(--text-sub);
             line-height: 1.5;
-            margin-bottom: 20px;
+            margin-bottom: 18px;
         }
 
         .modal-actions {
             display: flex;
-            gap: 10px;
+            gap: 8px;
             justify-content: flex-end;
         }
 
-        .btn-secondary {
-            height: 36px;
+        .btn-cancel {
+            height: 34px;
             padding: 0 14px;
-            background: #1f2937;
-            color: #d1d5db;
-            border: 1px solid #374151;
-            border-radius: 6px;
-            font-size: 13px;
-            font-weight: 500;
+            background: transparent;
+            color: var(--text-sub);
+            border: 1px solid var(--border);
+            font-size: 12px;
             cursor: pointer;
         }
 
-        .btn-secondary:hover {
-            background: #374151;
+        .btn-cancel:hover {
+            color: var(--text-main);
+            border-color: var(--text-sub);
         }
 
-        .btn-primary-sm {
-            height: 36px;
+        .btn-modal-submit {
+            height: 34px;
             padding: 0 14px;
             background: var(--primary);
             color: #ffffff;
-            border: none;
-            border-radius: 6px;
-            font-size: 13px;
-            font-weight: 500;
+            border: 1px solid var(--primary-hover);
+            font-size: 12px;
+            font-weight: 600;
             cursor: pointer;
-        }
-
-        .btn-primary-sm:hover {
-            background: var(--primary-hover);
         }
     </style>
 </head>
 <body>
 
-    <div class="login-wrapper">
+    <div class="login-box">
         <div class="brand-header">
-            <div class="brand-logo">
-                <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-                </svg>
+            <h1 class="brand-title">Tactical RMM</h1>
+        </div>
+
+        <div id="statusAlert" class="status-alert"></div>
+
+        <form id="authForm" onsubmit="handleAuthSubmit(event)">
+            <div class="form-group">
+                <div class="form-label-row">
+                    <label class="form-label" for="usernameInput">Username</label>
+                </div>
+                <div class="input-wrap">
+                    <input type="text" id="usernameInput" class="form-input" placeholder="admin" required autocomplete="username" autofocus>
+                </div>
             </div>
-            <div>
-                <span id="flowBadge" class="badge-pill login">Admin Portal</span>
+
+            <div class="form-group">
+                <div class="form-label-row">
+                    <label class="form-label" for="passwordInput" id="passwordLabel">Password</label>
+                    <a href="javascript:void(0)" class="forgot-link" id="forgotLink" onclick="openMasterKeyModal()">Forgot password?</a>
+                </div>
+                <div class="input-wrap">
+                    <input type="password" id="passwordInput" class="form-input" placeholder="••••••••" required autocomplete="current-password">
+                    <button type="button" class="toggle-pwd" onclick="togglePasswordVisibility('passwordInput', this)" title="Toggle password">
+                        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
+                        </svg>
+                    </button>
+                </div>
             </div>
-            <h1 class="brand-name" id="authTitle">Sign in to Tactical RMM</h1>
-            <p class="brand-subtitle" id="authSubtitle">Enter your admin credentials to access the console</p>
-        </div>
 
-        <div class="login-card">
-            <div id="statusAlert" class="status-alert"></div>
-
-            <form id="authForm" onsubmit="handleAuthSubmit(event)">
-                <div class="form-group">
-                    <div class="form-label-row">
-                        <label class="form-label" for="usernameInput">Username</label>
-                    </div>
-                    <div class="input-wrapper">
-                        <input type="text" id="usernameInput" class="form-input" placeholder="admin" required autocomplete="username" autofocus>
-                    </div>
+            <div class="form-group" id="confirmGroup" style="display: none;">
+                <div class="form-label-row">
+                    <label class="form-label" for="confirmPasswordInput">Confirm Password</label>
                 </div>
-
-                <div class="form-group">
-                    <div class="form-label-row">
-                        <label class="form-label" for="passwordInput" id="passwordLabel">Password</label>
-                        <a href="javascript:void(0)" class="forgot-link" id="forgotLink" onclick="openMasterKeyModal()">Forgot password?</a>
-                    </div>
-                    <div class="input-wrapper">
-                        <input type="password" id="passwordInput" class="form-input" placeholder="••••••••••••" required autocomplete="current-password">
-                        <button type="button" class="toggle-password" onclick="togglePasswordVisibility('passwordInput', this)" title="Toggle password visibility">
-                            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
-                                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
-                                <circle cx="12" cy="12" r="3"/>
-                            </svg>
-                        </button>
-                    </div>
+                <div class="input-wrap">
+                    <input type="password" id="confirmPasswordInput" class="form-input" placeholder="••••••••" autocomplete="new-password">
                 </div>
+            </div>
 
-                <div class="form-group" id="confirmGroup" style="display: none;">
-                    <div class="form-label-row">
-                        <label class="form-label" for="confirmPasswordInput">Confirm Password</label>
-                    </div>
-                    <div class="input-wrapper">
-                        <input type="password" id="confirmPasswordInput" class="form-input" placeholder="••••••••••••" autocomplete="new-password">
-                    </div>
-                </div>
-
-                <button type="submit" class="btn-submit" id="btnSubmit">
-                    <span id="btnText">Sign In</span>
-                </button>
-            </form>
-        </div>
-
-        <div class="login-footer">
-            <span>Tactical RMM Platform &bull; Enterprise Management Console</span>
-        </div>
+            <button type="submit" class="btn-submit" id="btnSubmit">
+                <span id="btnText">Sign In</span>
+            </button>
+        </form>
     </div>
 
     <!-- Password Reset / Access Key Modal -->
     <div id="masterKeyModal" class="modal-overlay">
         <div class="modal-card">
-            <div class="modal-header">
-                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="#60a5fa" stroke-width="2">
-                    <rect width="18" height="11" x="3" y="11" rx="2" ry="2"/>
-                    <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
-                </svg>
-                <h3 class="modal-title">Admin Access Recovery</h3>
-            </div>
+            <h3 class="modal-title">Master Access Key</h3>
             <div class="modal-body">
-                <p style="margin-bottom: 12px;">If you have forgotten your administrator password, enter the system <strong>Master Access Key</strong> below to authenticate directly:</p>
-                <div class="input-wrapper">
-                    <input type="password" id="modalMasterKeyInput" class="form-input" placeholder="Enter Master Access Key">
+                <p style="margin-bottom: 10px;">Enter your system Master Access Key to authorize session:</p>
+                <div class="input-wrap">
+                    <input type="password" id="modalMasterKeyInput" class="form-input" placeholder="Access Key">
                 </div>
             </div>
             <div class="modal-actions">
-                <button type="button" class="btn-secondary" onclick="closeMasterKeyModal()">Cancel</button>
-                <button type="button" class="btn-primary-sm" onclick="submitMasterKey()">Authenticate</button>
+                <button type="button" class="btn-cancel" onclick="closeMasterKeyModal()">Cancel</button>
+                <button type="button" class="btn-modal-submit" onclick="submitMasterKey()">Authorize</button>
             </div>
         </div>
     </div>
@@ -431,9 +343,6 @@
 
         function setSetupMode(setup) {
             isSetupMode = setup;
-            const flowBadge = document.getElementById("flowBadge");
-            const authTitle = document.getElementById("authTitle");
-            const authSubtitle = document.getElementById("authSubtitle");
             const confirmGroup = document.getElementById("confirmGroup");
             const confirmInput = document.getElementById("confirmPasswordInput");
             const btnText = document.getElementById("btnText");
@@ -441,20 +350,12 @@
             const passwordLabel = document.getElementById("passwordLabel");
 
             if (setup) {
-                flowBadge.className = "badge-pill setup";
-                flowBadge.innerText = "First-time Setup";
-                authTitle.innerText = "Create Admin Account";
-                authSubtitle.innerText = "Set your primary administrator password to begin";
                 passwordLabel.innerText = "Create Password";
                 confirmGroup.style.display = "block";
                 confirmInput.required = true;
                 btnText.innerText = "Create Account & Sign In";
                 forgotLink.style.display = "none";
             } else {
-                flowBadge.className = "badge-pill login";
-                flowBadge.innerText = "Admin Portal";
-                authTitle.innerText = "Sign in to Tactical RMM";
-                authSubtitle.innerText = "Enter your admin credentials to access the console";
                 passwordLabel.innerText = "Password";
                 confirmGroup.style.display = "none";
                 confirmInput.required = false;
@@ -478,10 +379,10 @@
             const input = document.getElementById(inputId);
             if (input.type === "password") {
                 input.type = "text";
-                btn.innerHTML = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>`;
+                btn.innerHTML = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>`;
             } else {
                 input.type = "password";
-                btn.innerHTML = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>`;
+                btn.innerHTML = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>`;
             }
         }
 
@@ -496,7 +397,7 @@
             if (isSetupMode) {
                 const confirmPass = document.getElementById("confirmPasswordInput").value;
                 if (password !== confirmPass) {
-                    showAlert("Passwords do not match. Please re-enter.");
+                    showAlert("Passwords do not match.");
                     return;
                 }
                 if (password.length < 6) {
@@ -515,15 +416,15 @@
                     });
                     const data = await res.json();
                     if (data.success) {
-                        showAlert("Admin account created! Redirecting...", "success");
-                        setTimeout(() => { window.location.href = "/"; }, 600);
+                        showAlert("Account created. Redirecting...", "success");
+                        setTimeout(() => { window.location.href = "/"; }, 500);
                     } else {
-                        showAlert(data.error || "Failed to initialize setup.");
+                        showAlert(data.error || "Setup failed.");
                         btn.disabled = false;
                         btn.innerHTML = `<span>Create Account & Sign In</span>`;
                     }
                 } catch (err) {
-                    showAlert("Network error during setup: " + err.message);
+                    showAlert("Network error during setup.");
                     btn.disabled = false;
                     btn.innerHTML = `<span>Create Account & Sign In</span>`;
                 }
@@ -539,15 +440,15 @@
                     });
                     const data = await res.json();
                     if (data.success) {
-                        showAlert("Sign in successful. Redirecting...", "success");
-                        setTimeout(() => { window.location.href = "/"; }, 500);
+                        showAlert("Authenticated. Redirecting...", "success");
+                        setTimeout(() => { window.location.href = "/"; }, 400);
                     } else {
                         showAlert(data.error || "Invalid username or password.");
                         btn.disabled = false;
                         btn.innerHTML = `<span>Sign In</span>`;
                     }
                 } catch (err) {
-                    showAlert("Authentication request failed: " + err.message);
+                    showAlert("Authentication request failed.");
                     btn.disabled = false;
                     btn.innerHTML = `<span>Sign In</span>`;
                 }
@@ -567,7 +468,7 @@
         async function submitMasterKey() {
             const key = document.getElementById("modalMasterKeyInput").value.trim();
             if (!key) {
-                alert("Please enter the Master Access Key.");
+                alert("Please enter Master Access Key.");
                 return;
             }
 
@@ -580,8 +481,8 @@
                 const data = await res.json();
                 if (data.success) {
                     closeMasterKeyModal();
-                    showAlert("Master Access Key accepted. Redirecting...", "success");
-                    setTimeout(() => { window.location.href = "/"; }, 500);
+                    showAlert("Access Key accepted. Redirecting...", "success");
+                    setTimeout(() => { window.location.href = "/"; }, 400);
                 } else {
                     alert("Invalid Master Access Key.");
                 }
