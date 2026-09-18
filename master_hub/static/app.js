@@ -82,7 +82,7 @@ function initDefaultServerUrl() {
  */
 async function detectLanIp(forceLocal = false) {
     const host = window.location.hostname;
-    const isLocalhost = host === "localhost" || host === "127.0.0.1" || host.startsWith("192.168.") || host.startsWith("10.") || host.startsWith("172.");
+    const isLocalhost = host === "localhost" || host === "127.0.0.1" || host === "[::1]";
 
     // If we are already on a public live server (e.g. rmm.swiftvtu.com), preserve that public host unless forceLocal is requested
     if (!isLocalhost && !forceLocal) {
@@ -92,6 +92,7 @@ async function detectLanIp(forceLocal = false) {
 
     try {
         const res = await fetch("/api/system/info");
+        if (!res.ok) throw new Error('Server address lookup failed');
         const data = await res.json();
         if (data.local_ips && data.local_ips.length > 0) {
             const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
@@ -106,6 +107,8 @@ async function detectLanIp(forceLocal = false) {
             if (forceLocal) {
                 showToast("Network IP Detected", `Set server URL to: ${targetUrl}`, "info");
             }
+        } else {
+            initDefaultServerUrl();
         }
     } catch (e) {
         initDefaultServerUrl();
@@ -601,14 +604,6 @@ function clearAgentIcon() {
     if (container) container.style.display = "none";
 }
 
-function detectLanIp() {
-    const input = document.getElementById("genServerUrl");
-    if (!input) return;
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const host = window.location.host;
-    input.value = `${protocol}//${host}/ws/agent`;
-}
-
 function copyOneLiner() {
     const input = document.getElementById("oneLinerCode");
     if (!input || !input.value) return;
@@ -679,9 +674,14 @@ async function submitGenerateAgent() {
             zipLink.setAttribute("download", data.zip_filename);
 
             document.getElementById("buildResultCard").style.display = "block";
-            btn.innerHTML = `<span>✓ Package Ready</span>`;
-            
-            showToast("Agent Built Successfully", `Download ${data.exe_filename} for 1-click deployment.`, "success");
+            if (data.exe_download_url) {
+                btn.innerHTML = `<span>✓ Installer Ready</span>`;
+                showToast("Installer Built", `Download ${data.exe_filename} for deployment.`, "success");
+            } else {
+                btn.innerHTML = `<span>ZIP Ready — EXE Build Failed</span>`;
+                showToast("Setup EXE Build Failed", data.installer_error || "The ZIP is available, but the Windows setup EXE could not be compiled.", "warning");
+            }
+            btn.disabled = false;
         } else {
             showToast("Build Failed", data.detail || "Unknown error", "error");
             btn.disabled = false;

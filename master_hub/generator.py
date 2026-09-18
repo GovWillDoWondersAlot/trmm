@@ -12,10 +12,12 @@ import zipfile
 import base64
 import io
 import logging
+import threading
 from typing import Dict, Any, Optional
 from PIL import Image
 
 from .setup_compiler import SetupCompiler
+from server_address import normalize_server_url, http_server_url as download_base_url
 
 logger = logging.getLogger("master_hub.generator")
 
@@ -23,6 +25,7 @@ ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DIST_AGENT_DIR = os.path.join(ROOT_DIR, "dist", "TRMM_Agent")
 OUTPUT_DIR = os.path.join(ROOT_DIR, "generated_agents")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
+BUILD_LOCK = threading.Lock()
 
 
 def process_custom_icon(base64_data: str, out_dir: str) -> Optional[str]:
@@ -64,22 +67,27 @@ class AgentGenerator:
 
     @staticmethod
     def build_package(config: Dict[str, Any]) -> Dict[str, Any]:
+        # Builds share the runtime directory, output names and finite disk space.
+        with BUILD_LOCK:
+            return AgentGenerator._build_package(config)
+
+    @staticmethod
+    def _build_package(config: Dict[str, Any]) -> Dict[str, Any]:
         """
         Builds a customized deployment package embedding the standalone native executable.
         """
         agent_id = config.get("agent_id") or str(uuid.uuid4())[:8]
         arch = config.get("arch", "x64")
-        server_url = config.get("server_url", "ws://127.0.0.1:8000")
-        clean_ws_url = server_url.rstrip("/").replace("http://", "ws://").replace("https://", "wss://")
-        while clean_ws_url.endswith("/ws"):
-            clean_ws_url = clean_ws_url[:-3].rstrip("/")
-        server_url = clean_ws_url
+        server_url = normalize_server_url(config.get("server_url", "ws://127.0.0.1:8000"))
 
         auto_start = config.get("auto_start", True)
         endpoint_tag = config.get("endpoint_tag", f"Agent-{agent_id}").replace(" ", "_")
 
         # Derive HTTP URL from server_url for downloads
-        http_server_url = server_url.replace("ws://", "http://").replace("wss://", "https://")
+        http_server_url = download_base_url(server_url)
+
+        if not os.path.isfile(os.path.join(DIST_AGENT_DIR, "TRMM_Agent.exe")):
+            raise ValueError("Native agent runtime is missing; build TRMM_Agent.exe before generating an installer")
 
         build_dir = os.path.join(OUTPUT_DIR, f"build_{agent_id}")
         if os.path.exists(build_dir):
@@ -97,7 +105,7 @@ class AgentGenerator:
         agent_client_src = os.path.join(ROOT_DIR, "agent_client")
         agent_client_dst = os.path.join(build_dir, "agent_client")
         shutil.copytree(agent_client_src, agent_client_dst, dirs_exist_ok=True, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
-        for root_f in ["agent_service.py", "post_update.py", "setup.json"]:
+        for root_f in ["agent_service.py", "post_update.py", "setup.json", "server_address.py"]:
             src_f = os.path.join(ROOT_DIR, root_f)
             if os.path.isfile(src_f):
                 shutil.copy2(src_f, os.path.join(build_dir, root_f))
@@ -190,18 +198,18 @@ echo [OK] {app_title} is active!
             icon_path = process_custom_icon(icon_base64, OUTPUT_DIR)
 
         # 6. Compile Standalone Setup Executable (.exe)
+        installer_error = None
         try:
-            import importlib
-            import master_hub.setup_compiler
-            importlib.reload(master_hub.setup_compiler)
-            from master_hub.setup_compiler import SetupCompiler
-        except Exception:
-            pass
-
-        setup_exe_path = SetupCompiler.compile_installer(
-            zip_path, agent_id, endpoint_tag, arch,
-            custom_name=custom_name, icon_path=icon_path
-        )
+            setup_exe_path = SetupCompiler.compile_installer(
+                zip_path, agent_id, endpoint_tag, arch,
+                custom_name=custom_name, icon_path=icon_path
+            )
+            if not setup_exe_path:
+                installer_error = "Windows setup EXE compilation failed. Check the server compiler log."
+        except RuntimeError as error:
+            setup_exe_path = None
+            installer_error = str(error)
+            logger.error("Setup EXE unavailable: %s", error)
         setup_exe_filename = os.path.basename(setup_exe_path) if setup_exe_path else None
 
         # 7. Create Single-File Bootstrap Installer (.bat)
@@ -261,6 +269,8 @@ echo [OK] {app_title} is active!
         logger.info(f"Generated agent zip: {zip_path}")
 
         return {
+            "installer_error": installer_error,
+            "installer_ready": bool(setup_exe_path),
             "exe_path": setup_exe_path,
             "exe_filename": setup_exe_filename,
             "exe_download_url": f"/api/agents/download/{setup_exe_filename}" if setup_exe_filename else None,
@@ -270,5 +280,5 @@ echo [OK] {app_title} is active!
             "bootstrap_path": bootstrap_path,
             "bootstrap_filename": bootstrap_filename,
             "bootstrap_download_url": f"/api/agents/bootstrap/{bootstrap_filename}",
-            "one_liner": f"powershell -ExecutionPolicy Bypass -Command \"Invoke-WebRequest -Uri '{http_server_url}/api/agents/bootstrap/{bootstrap_filename}' -OutFile '%TEMP%\\install.bat'; & '%TEMP%\\install.bat'\"",
+            "one_liner": f"$installer = Join-Path $env:TEMP 'trmm-install-{agent_id}.bat'; Invoke-WebRequest -Uri '{http_server_url}/api/agents/bootstrap/{bootstrap_filename}' -OutFile $installer -ErrorAction Stop; & $installer",
         }

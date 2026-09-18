@@ -16,7 +16,7 @@ PAYLOADS_DIR = os.path.join(os.path.dirname(__file__), "payloads")
 os.makedirs(PAYLOADS_DIR, exist_ok=True)
 
 SYNC_DIRS = ["hvnc", "agent_client"]
-ROOT_FILES = ["post_update.py", "setup.json", "agent_service.py"]
+ROOT_FILES = ["post_update.py", "setup.json", "agent_service.py", "server_address.py"]
 EXCLUDE_DIRS = {"__pycache__", ".git", ".pytest_cache", ".idea", ".vscode"}
 EXCLUDE_EXTS = {".pyc", ".pyo", ".pyd"}
 

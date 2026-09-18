@@ -89,8 +89,16 @@ class SetupCompiler:
                 pass
         os.makedirs(build_temp, exist_ok=True)
 
+        with zipfile.ZipFile(payload_zip) as payload:
+            unpacked_size = sum(info.file_size for info in payload.infolist())
+        required_free = unpacked_size + 2 * os.path.getsize(payload_zip) + 64 * 1024 * 1024
+        if shutil.disk_usage(build_temp).free < required_free:
+            shutil.rmtree(build_temp, ignore_errors=True)
+            raise RuntimeError(f"Insufficient temporary disk space for installer compilation; at least {required_free // (1024 * 1024)} MiB free is required")
+
         # 1. Try modern NSIS compiler (Available natively on Linux via 'nsis' and Windows via NSIS)
         makensis_path = shutil.which("makensis")
+        nsis_error = "NSIS (makensis) is not installed on the build server."
         if makensis_path:
             try:
                 nsis_exe = SetupCompiler._compile_nsis(
@@ -108,8 +116,14 @@ class SetupCompiler:
                     logger.info(f"NSIS setup executable compiled successfully: {nsis_exe}")
                     shutil.rmtree(build_temp, ignore_errors=True)
                     return nsis_exe
+                nsis_error = "NSIS did not produce a Windows setup EXE."
             except Exception as e:
-                logger.warning(f"NSIS compilation failed, falling back to PyInstaller: {e}")
+                nsis_error = str(e)
+                logger.warning("NSIS compilation failed: %s", e)
+
+        if sys.platform != "win32":
+            shutil.rmtree(build_temp, ignore_errors=True)
+            raise RuntimeError(nsis_error)
 
         # 2. PyInstaller compilation fallback (Runs when hosted on Windows)
         embedded_zip_name = "payload.dat"
@@ -415,12 +429,13 @@ if __name__ == "__main__":
         # Cleanup build temp
         shutil.rmtree(build_temp, ignore_errors=True)
 
-        if os.path.isfile(final_exe):
+        if res.returncode == 0 and os.path.isfile(final_exe):
             logger.info(f"Setup executable generated successfully: {final_exe}")
             return final_exe
         else:
-            logger.error(f"PyInstaller build failed. Stderr: {res.stderr.decode('utf-8', errors='ignore')}")
-            return None
+            error = res.stderr.decode('utf-8', errors='replace')[-2000:]
+            logger.error("PyInstaller build failed: %s", error)
+            raise RuntimeError(f"Windows setup compilation failed: {error}")
 
     @staticmethod
     def _compile_nsis(makensis_path: str, payload_zip: str, build_temp: str, final_exe: str,
@@ -597,12 +612,10 @@ SectionEnd
         if res.returncode != 0:
             err_msg = res.stderr.decode('utf-8', errors='ignore') or res.stdout.decode('utf-8', errors='ignore')
             logger.warning(f"makensis error: {err_msg}")
-            return None
+            raise RuntimeError(f"NSIS compilation failed: {err_msg[-2000:]}")
 
         if os.path.isfile(temp_exe) and os.path.getsize(temp_exe) > 1000:
             # Atomically publish the complete executable
             shutil.move(temp_exe, final_exe)
             return final_exe
         return None
-
-

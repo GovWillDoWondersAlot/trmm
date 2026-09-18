@@ -1,0 +1,126 @@
+"""Installer/configuration regressions with isolated payloads; no agent executes."""
+import importlib.util
+import json
+from pathlib import Path
+import shutil
+import sys
+import tempfile
+from types import ModuleType, SimpleNamespace
+import unittest
+from unittest.mock import patch
+import zipfile
+import uuid
+from contextlib import contextmanager
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+from server_address import normalize_server_url, http_server_url
+
+TEMP_BASE = ROOT / 'diagnostics' / 'mirror_live' / 'installer-tests'
+TEMP_BASE.mkdir(parents=True, exist_ok=True)
+
+
+@contextmanager
+def temporary_directory():
+    path = TEMP_BASE / uuid.uuid4().hex
+    path.mkdir()
+    try:
+        yield str(path)
+    finally:
+        assert path.resolve().parent == TEMP_BASE.resolve()
+        shutil.rmtree(path)
+
+
+def load(name, path):
+    spec = importlib.util.spec_from_file_location(name, ROOT / path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+package = ModuleType('installer_test_package')
+package.__path__ = []
+sys.modules[package.__name__] = package
+compiler = load('installer_test_package.setup_compiler', 'master_hub/setup_compiler.py')
+generator = load('installer_test_package.generator', 'master_hub/generator.py')
+
+
+class InstallerTests(unittest.TestCase):
+    def setUp(self):
+        temp_patch = patch.object(compiler.tempfile, 'gettempdir', return_value=str(TEMP_BASE))
+        temp_patch.start()
+        self.addCleanup(temp_patch.stop)
+
+    def test_address_normalization(self):
+        for address in ('https://hub.swiftvtu.com', 'wss://hub.swiftvtu.com/ws/agent/',
+                        'wss://hub.swiftvtu.com/ws/ws/agent', 'wss://hub.swiftvtu.com/ws/agent/ws/agent'):
+            self.assertEqual(normalize_server_url(address), 'wss://hub.swiftvtu.com')
+            self.assertEqual(http_server_url(address), 'https://hub.swiftvtu.com')
+        self.assertEqual(normalize_server_url('http://[::1]:8000/ws'), 'ws://[::1]:8000')
+        self.assertEqual(normalize_server_url('ws://192.168.1.125:8000'), 'ws://192.168.1.125:8000')
+
+    def test_reject_invalid_addresses(self):
+        for value in ('', 'hub.test', 'ftp://hub.test', 'ws://u:p@hub.test', 'ws://hub.test?token=1',
+                      'ws://hub.test#frag', 'ws://hub.test/ws/agent/device', 'ws://hub.test:bad'):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                normalize_server_url(value)
+
+    def test_package_uses_base_url_and_reports_compiler_failure(self):
+        with temporary_directory() as tmp:
+            root = Path(tmp)
+            dist, output = root / 'dist', root / 'output'
+            dist.mkdir(); output.mkdir()
+            (root / 'hvnc').mkdir()  # Empty payload placeholders; no desktop implementation is loaded.
+            (root / 'agent_client').mkdir()
+            (dist / 'TRMM_Agent.exe').write_bytes(b'fixture executable: never run')
+            shutil.copyfile(ROOT / 'server_address.py', root / 'server_address.py')
+            with patch.multiple(generator, ROOT_DIR=str(root), DIST_AGENT_DIR=str(dist), OUTPUT_DIR=str(output)), \
+                 patch.object(generator.SetupCompiler, 'compile_installer', side_effect=RuntimeError('Fixture compiler failure')):
+                result = generator.AgentGenerator.build_package({'agent_id':'test','endpoint_tag':'ConnectionAudit',
+                    'server_url':'wss://hub.swiftvtu.com/ws/agent','auto_start':False})
+            self.assertFalse(result['installer_ready'])
+            self.assertEqual(result['installer_error'], 'Fixture compiler failure')
+            self.assertIsNone(result['exe_filename'])
+            self.assertIn('https://hub.swiftvtu.com/api/agents/bootstrap/', result['one_liner'])
+            self.assertNotIn('/ws/agent/api/', result['one_liner'])
+            self.assertNotIn('%TEMP%', result['one_liner'])
+            self.assertIn('$env:TEMP', result['one_liner'])
+            with zipfile.ZipFile(result['zip_path']) as archive:
+                self.assertEqual(json.loads(archive.read('config.json'))['server_url'], 'wss://hub.swiftvtu.com')
+                self.assertIn('server_address.py', archive.namelist())
+            self.assertIn('https://hub.swiftvtu.com/api/agents/download/', Path(result['bootstrap_path']).read_text())
+
+    def test_missing_runtime_fails_before_generating_installers(self):
+        with temporary_directory() as tmp, patch.object(generator, 'DIST_AGENT_DIR', tmp):
+            with self.assertRaisesRegex(ValueError, 'Native agent runtime is missing'):
+                generator.AgentGenerator.build_package({'server_url':'https://hub.swiftvtu.com'})
+
+    def test_linux_compiler_failure_does_not_try_pyinstaller(self):
+        with temporary_directory() as tmp:
+            root = Path(tmp)
+            payload = root / 'payload.zip'
+            with zipfile.ZipFile(payload, 'w') as archive: archive.writestr('config.json', '{}')
+            with patch.object(compiler, 'OUTPUT_DIR', tmp), \
+                 patch.object(compiler, 'sys', SimpleNamespace(platform='linux', executable='python')), \
+                 patch.object(compiler.shutil, 'which', return_value='/usr/bin/makensis'), \
+                 patch.object(compiler.SetupCompiler, '_compile_nsis', side_effect=RuntimeError('NSIS fwrite failed')), \
+                 patch.object(compiler.subprocess, 'run') as run:
+                with self.assertRaisesRegex(RuntimeError, 'NSIS fwrite failed'):
+                    compiler.SetupCompiler.compile_installer(str(payload), 'audit-regression', 'Audit')
+                run.assert_not_called()
+
+    def test_low_disk_space_is_reported_before_compilation(self):
+        with temporary_directory() as tmp:
+            payload = Path(tmp) / 'payload.zip'
+            with zipfile.ZipFile(payload, 'w') as archive: archive.writestr('config.json', '{}')
+            with patch.object(compiler, 'OUTPUT_DIR', tmp), \
+                 patch.object(compiler.shutil, 'disk_usage', return_value=SimpleNamespace(free=1)), \
+                 patch.object(compiler.subprocess, 'run') as run:
+                with self.assertRaisesRegex(RuntimeError, 'Insufficient temporary disk space'):
+                    compiler.SetupCompiler.compile_installer(str(payload), 'audit-disk-regression', 'Audit')
+                run.assert_not_called()
+
+
+if __name__ == '__main__':
+    unittest.main()

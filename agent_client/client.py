@@ -278,7 +278,8 @@ class AgentClient:
     def __init__(self, config: Dict[str, Any]):
         self.config = config
         self.agent_id = config.get("agent_id", "agent_default")
-        self.server_url = config.get("server_url", "ws://127.0.0.1:8000")
+        from server_address import normalize_server_url
+        self.server_url = normalize_server_url(config.get("server_url", "ws://127.0.0.1:8000"))
         self.reconnect_interval = config.get("reconnect_interval_sec", 5)
         self.heartbeat_interval = config.get("heartbeat_interval_sec", 10)
 
@@ -422,9 +423,8 @@ class AgentClient:
 
     async def connect_and_serve(self):
         """Connects outbound to the Master Hub."""
-        clean_url = self.server_url.rstrip("/").replace("http://", "ws://").replace("https://", "wss://")
-        while clean_url.endswith("/ws"):
-            clean_url = clean_url[:-3].rstrip("/")
+        from server_address import normalize_server_url
+        clean_url = normalize_server_url(self.server_url)
         ws_endpoint = f"{clean_url}/ws/agent/{self.agent_id}"
         logger.info(f"Dialing Master Hub at: {ws_endpoint}")
 
