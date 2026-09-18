@@ -157,7 +157,7 @@ class MirrorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(calls, ["copy", "flush"])
         self.assertIs(fn(capture, True), first)
         idle = fn(capture, False)
-        self.assertEqual(capture._last_frame_key, (2, 2, 65))
+        self.assertEqual(capture._last_frame_key, (2, 2, 65, 0, 0))
         self.assertIsNot(idle, first)
         gdi.BitBlt = lambda *a: 0
         self.assertIsNone(fn(capture, False))

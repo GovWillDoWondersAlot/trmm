@@ -12,7 +12,7 @@ const acknowledgements = [];
 const socket = { readyState: 1, send(text) { acknowledgements.push(JSON.parse(text)); } };
 const context = vm.createContext({
     sessionMode: 'mirror', pendingFrameBlob: { id: 1, mirrorSequence: 1, mirrorSocket: socket }, isRenderingFrame: false,
-    WebSocket: { OPEN: 1 },
+    WebSocket: { OPEN: 1 }, mirrorGeometry: null, mirrorInputId: 0,
     performance, console, URLSearchParams, location: { search: '' },
     document: { hidden: false }, window: { createImageBitmap: true },
     hvncCanvas: { width: 100, height: 100 }, resizeDisplay() {},
@@ -46,12 +46,12 @@ vm.runInContext(source, context);
         constructor(url) { this.url = url; this.readyState = 1; this.sent = []; }
         send(text) { this.sent.push(JSON.parse(text)); }
     }
-    Object.assign(context, { WebSocket: FakeSocket, Blob, ArrayBuffer, DataView });
+    Object.assign(context, { WebSocket: FakeSocket, Blob, ArrayBuffer, DataView, Uint8Array, TextDecoder });
     context.window.location = { protocol: 'https:', host: 'test.invalid' };
     const connectStart = html.indexOf('        function connectViewer(targetId)');
     vm.runInContext(html.slice(connectStart, html.indexOf('        function handleDiagnosticMessage(', connectStart)), context);
     context.connectViewer('test-agent');
-    assert.ok(context.viewerWs.url.endsWith('?mode=mirror&mirror_ack=1'));
+    assert.ok(context.viewerWs.url.endsWith('?mode=mirror&mirror_ack=2'));
     assert.equal(context.viewerWs.binaryType, 'arraybuffer');
     const packet = new Uint8Array([77, 82, 82, 49, 0, 0, 0, 7, 255, 216, 255, 217]);
     context.document.hidden = true;
@@ -62,5 +62,22 @@ vm.runInContext(source, context);
     context.viewerWs.onmessage({ data: packet.buffer, target: context.viewerWs });
     assert.equal(context.pendingFrameBlob.size, 4, 'envelope was not removed from JPEG');
     assert.equal(context.pendingFrameBlob.mirrorSequence, 7);
+    const metadata = { sequence: 8, native_width: 1920, native_height: 1080 };
+    const header = Buffer.from(JSON.stringify(metadata));
+    const v2 = Buffer.concat([Buffer.from('MRR2'), Buffer.from([0, header.length]), header, Buffer.from([255, 216, 255, 217])]);
+    context.viewerWs.onmessage({ data: Uint8Array.from(v2).buffer, target: context.viewerWs });
+    assert.equal(context.pendingFrameBlob.mirrorMetadata.native_width, 1920);
+    assert.equal(context.viewerWs.sent.at(-1).sequence, 7, 'replaced pending frame must be acknowledged');
+    context.acknowledgeMirrorFrame(context.pendingFrameBlob, false);
+    assert.equal(context.viewerWs.sent.at(-1).decoded, false, 'decode failure must request recovery');
+    const inputStart = html.indexOf('        function sendViewerInput(payload)');
+    vm.runInContext(html.slice(inputStart, html.indexOf('        function showToast(', inputStart)), context);
+    context.mirrorGeometry = metadata;
+    context.hvncCanvas.width = 960;
+    context.hvncCanvas.height = 540;
+    context.sendViewerInput({ type: 'mousedown', x: 959, y: 539 });
+    assert.equal(context.viewerWs.sent.at(-1).data.normalized_x, 1);
+    assert.equal(context.viewerWs.sent.at(-1).data.normalized_y, 1);
+    assert.equal(context.viewerWs.sent.at(-1).data.native_width, 1920);
     console.log('PASS: serialized rendering, final-frame drain, render ACKs, wire envelope, hidden-tab ACK');
 })().catch(error => { console.error(error); process.exitCode = 1; });

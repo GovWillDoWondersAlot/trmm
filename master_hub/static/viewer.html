@@ -845,6 +845,7 @@
         });
 
         function handleVisibilityChange() {
+            if (sessionMode === 'mirror' && pendingFrameBlob) acknowledgeMirrorFrame(pendingFrameBlob);
             if (document.hidden) {
                 // Drop stale frame blobs while tab is not active
                 pendingFrameBlob = null;
@@ -852,6 +853,7 @@
                 // Instantly resume rendering without sending pause to agent
                 pendingFrameBlob = null;
                 resizeDisplay();
+                if (sessionMode === 'mirror') requestMirrorRefresh();
                 if (!isRenderingFrame) {
                     processNextFrame();
                 }
@@ -974,7 +976,11 @@
                     if (!lastDispatchTickTime || (now - lastDispatchTickTime >= 33)) {
                         lastDispatchTickTime = now;
                         if (!stealthMouseMode) {
+                            if (sessionMode === 'mirror') {
+                                sendViewerInput({ type: "mousemove", ...pendingTargetCoords });
+                            } else {
                             viewerWs.send(JSON.stringify({ type: "input", data: { type: "mousemove", mode: sessionMode, stealth: stealthMouseMode, ...pendingTargetCoords } }));
+                            }
                         }
                         pendingTargetCoords = null;
                     }
@@ -1241,12 +1247,13 @@
 
         function connectViewer(targetId) {
             const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
-            const url = `${proto}//${window.location.host}/ws/viewer/${targetId}?mode=${sessionMode}${sessionMode === 'mirror' ? '&mirror_ack=1' : ''}`;
+            const url = `${proto}//${window.location.host}/ws/viewer/${targetId}?mode=${sessionMode}${sessionMode === 'mirror' ? '&mirror_ack=2' : ''}`;
 
             viewerWs = new WebSocket(url);
             viewerWs.binaryType = sessionMode === 'mirror' ? "arraybuffer" : "blob";
 
             viewerWs.onopen = () => {
+                if (sessionMode === 'mirror') { mirrorGeometry = null; requestMirrorRefresh(); }
                 showToast("Connected", `Session active (${sessionMode === 'mirror' ? 'Screen Mirror' : 'Backstage'}) for agent ${targetId}`, "success");
                 setTimeout(resizeDisplay, 50);
                 // Request installed apps immediately
@@ -1266,9 +1273,29 @@
                         frameBlob = (event.data.type === "image/jpeg") ? event.data : new Blob([event.data], { type: "image/jpeg" });
                     } else {
                         const packet = new DataView(event.data);
+                        const hasMirrorV2 = sessionMode === 'mirror' && packet.byteLength > 6 && packet.getUint32(0) === 0x4d525232;
                         const hasMirrorHeader = sessionMode === 'mirror' && packet.byteLength > 8 && packet.getUint32(0) === 0x4d525231;
-                        frameBlob = new Blob([hasMirrorHeader ? event.data.slice(8) : event.data], { type: "image/jpeg" });
-                        if (hasMirrorHeader) {
+                        if (hasMirrorV2) {
+                            try {
+                                const length = packet.getUint16(4);
+                                if (!length || length > 4096 || 6 + length >= packet.byteLength) throw new Error('Invalid mirror header');
+                                const metadata = JSON.parse(new TextDecoder().decode(new Uint8Array(event.data, 6, length)));
+                                if (!Number.isInteger(metadata.sequence) || metadata.sequence < 1 ||
+                                    !Number.isInteger(metadata.native_width) || metadata.native_width < 1 ||
+                                    !Number.isInteger(metadata.native_height) || metadata.native_height < 1) throw new Error('Invalid mirror geometry');
+                                frameBlob = new Blob([event.data.slice(6 + length)], { type: 'image/jpeg' });
+                                frameBlob.mirrorMetadata = metadata;
+                                frameBlob.mirrorSequence = metadata.sequence;
+                                frameBlob.mirrorSocket = event.target;
+                            } catch (error) {
+                                console.warn('Invalid Take Control frame', error);
+                                event.target.close(1002, 'Invalid mirror frame');
+                                return;
+                            }
+                        } else {
+                            frameBlob = new Blob([hasMirrorHeader ? event.data.slice(8) : event.data], { type: "image/jpeg" });
+                        }
+                        if (hasMirrorHeader && !hasMirrorV2) {
                             frameBlob.mirrorSequence = packet.getUint32(4);
                             frameBlob.mirrorSocket = event.target;
                         }
@@ -1277,6 +1304,7 @@
                         acknowledgeMirrorFrame(frameBlob);
                         return; // Release flow control even when the tab drops a frame.
                     }
+                    if (sessionMode === 'mirror' && pendingFrameBlob) acknowledgeMirrorFrame(pendingFrameBlob);
                     pendingFrameBlob = frameBlob;
                     if (sessionMode === 'mirror' && new URLSearchParams(location.search).get('mirrorDiag') === '1') {
                         console.log(`[MIRROR RECV] t=${Date.now()} bytes=${frameBlob.size} rendering=${isRenderingFrame}`);
@@ -1285,6 +1313,11 @@
                         processNextFrame();
                     }
                 } else if (typeof event.data === "string") {
+                    if (sessionMode === 'mirror') {
+                        try {
+                            if (JSON.parse(event.data).type === 'mirror_health') return;
+                        } catch (_) { /* Existing diagnostic handler reports invalid JSON. */ }
+                    }
                     handleDiagnosticMessage(event.data);
                 }
             };
@@ -1402,9 +1435,20 @@
             }
         }
 
-        function acknowledgeMirrorFrame(blob) {
-            if (sessionMode === 'mirror' && blob.mirrorSequence && blob.mirrorSocket?.readyState === WebSocket.OPEN) {
-                blob.mirrorSocket.send(JSON.stringify({ type: 'mirror_frame_ack', sequence: blob.mirrorSequence }));
+        let mirrorGeometry = null;
+        let mirrorInputId = 0;
+
+        function requestMirrorRefresh() {
+            if (viewerWs?.readyState === WebSocket.OPEN) viewerWs.send(JSON.stringify({ type: 'mirror_refresh' }));
+        }
+
+        function acknowledgeMirrorFrame(blob, decoded = true) {
+            if (sessionMode === 'mirror' && blob?.mirrorSequence && blob.mirrorSocket?.readyState === WebSocket.OPEN) {
+                try {
+                    const ack = { type: 'mirror_frame_ack', sequence: blob.mirrorSequence };
+                    if (blob.mirrorMetadata) ack.decoded = decoded;
+                    blob.mirrorSocket.send(JSON.stringify(ack));
+                } catch (error) { console.debug('Mirror acknowledgement failed', error); }
             }
         }
 
@@ -1416,6 +1460,7 @@
             const blobToRender = pendingFrameBlob;
             pendingFrameBlob = null;
             const mirrorRenderStarted = performance.now();
+            let frameDecoded = false;
 
             try {
                 let rendered = false;
@@ -1430,6 +1475,7 @@
                         hvncCtx.drawImage(bitmap, 0, 0);
                         bitmap.close();
                         rendered = true;
+                        frameDecoded = true;
                     } catch (bmErr) {
                         console.warn("createImageBitmap decode failed, falling back to Image element:", bmErr);
                     }
@@ -1445,6 +1491,7 @@
                                 resizeDisplay();
                             }
                             hvncCtx.drawImage(img, 0, 0);
+                            frameDecoded = true;
                             URL.revokeObjectURL(blobUrl);
                             resolve();
                         };
@@ -1458,7 +1505,8 @@
             } catch (err) {
                 console.debug("Frame render error:", err);
             } finally {
-                acknowledgeMirrorFrame(blobToRender);
+                if (sessionMode === 'mirror' && frameDecoded) mirrorGeometry = blobToRender.mirrorMetadata || null;
+                acknowledgeMirrorFrame(blobToRender, frameDecoded);
                 if (sessionMode === 'mirror' && new URLSearchParams(location.search).get('mirrorDiag') === '1') {
                     console.log(`[MIRROR RENDER END] t=${Date.now()} bytes=${blobToRender.size} elapsed_ms=${(performance.now() - mirrorRenderStarted).toFixed(1)} pending=${!!pendingFrameBlob}`);
                 }
@@ -1696,6 +1744,17 @@
 
         function sendViewerInput(payload) {
             if (viewerWs && viewerWs.readyState === WebSocket.OPEN) {
+                if (sessionMode === 'mirror') {
+                    const data = { ...payload, mode: 'mirror', input_id: ++mirrorInputId };
+                    if (mirrorGeometry && Number.isFinite(payload.x) && Number.isFinite(payload.y)) {
+                        data.normalized_x = Math.max(0, Math.min(1, payload.x / Math.max(1, hvncCanvas.width - 1)));
+                        data.normalized_y = Math.max(0, Math.min(1, payload.y / Math.max(1, hvncCanvas.height - 1)));
+                        data.native_width = mirrorGeometry.native_width;
+                        data.native_height = mirrorGeometry.native_height;
+                    }
+                    viewerWs.send(JSON.stringify({ type: 'input', data }));
+                    return;
+                }
                 const effectiveMode = isCdpActive ? "cdp" : sessionMode;
                 viewerWs.send(JSON.stringify({ type: "input", data: { mode: effectiveMode, ...payload } }));
             }

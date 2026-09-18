@@ -7,6 +7,7 @@ import time
 import json
 import logging
 import os
+from .mirror_delivery import LowLatencyMirrorViewerSession
 from typing import Dict, Any, Optional
 from fastapi import WebSocket
 
@@ -285,10 +286,11 @@ class AgentManager:
             )
         )
 
-    def attach_viewer(self, agent_id: str, viewer_id: str, viewer_ws: WebSocket, mode: str = "backstage", mirror_ack: bool = False) -> Optional[ViewerSession]:
+    def attach_viewer(self, agent_id: str, viewer_id: str, viewer_ws: WebSocket, mode: str = "backstage", mirror_ack: int = 0) -> Optional[ViewerSession]:
         agent = self.get_agent(agent_id)
         if agent:
-            session = (MirrorViewerSession(viewer_id, viewer_ws) if mode == "mirror" and mirror_ack
+            session = (LowLatencyMirrorViewerSession(viewer_id, viewer_ws) if mode == "mirror" and mirror_ack == 2
+                       else MirrorViewerSession(viewer_id, viewer_ws) if mode == "mirror" and mirror_ack
                        else ViewerSession(viewer_id, viewer_ws, mode=mode))
             if mode == "mirror":
                 agent.mirror_viewers[viewer_id] = session

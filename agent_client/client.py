@@ -467,12 +467,33 @@ class AgentClient:
 
                                 elif mtype == "start_mirror":
                                     logger.info("Received request to start Screen Mirror (Take Control) session.")
+                                    from agent_client.mirror_transport import MirrorUplink
+                                    protocol = msg.get("transport", 0)
+                                    preview = bool(msg.get("preview", False))
+                                    if (self.is_mirroring and self.mirror_stream_task and not self.mirror_stream_task.done()
+                                            and protocol == getattr(self, "mirror_protocol", 0)):
+                                        if protocol == 2:
+                                            self.mirror_flow.preview = preview
+                                            self.mirror_flow.refresh()
+                                        continue
+                                    self.mirror_protocol = protocol
+                                    if protocol == 2:
+                                        self.mirror_flow = MirrorUplink(self, ws, preview)
                                     self.is_mirroring = True
                                     MirrorInput.cleanup()
                                     if self.mirror_stream_task and not self.mirror_stream_task.done():
                                         self.mirror_stream_task.cancel()
                                     self.mirror_stream_task = asyncio.create_task(self._mirror_stream_loop(ws))
 
+                                elif mtype == "mirror_frame_ack":
+                                    if getattr(self, "mirror_protocol", 0) == 2:
+                                        self.mirror_flow.acknowledge(msg)
+                                elif mtype == "mirror_feedback":
+                                    if getattr(self, "mirror_protocol", 0) == 2:
+                                        self.mirror_flow.feedback(msg.get("delivery_ms"))
+                                elif mtype == "mirror_refresh":
+                                    if getattr(self, "mirror_protocol", 0) == 2:
+                                        self.mirror_flow.refresh()
                                 elif mtype == "stop_mirror":
                                     logger.info("Stopping Screen Mirror session.")
                                     self.is_mirroring = False
@@ -912,6 +933,15 @@ class AgentClient:
                 await asyncio.sleep(0.2)
 
     async def _mirror_stream_loop(self, ws):
+        if getattr(self, "mirror_protocol", 0) == 2:
+            try:
+                await self.mirror_flow.run()
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                logger.exception("Mirror transport failed; reconnecting")
+                await ws.close()
+            return
         loop = asyncio.get_event_loop()
         diagnostics = os.environ.get("TRMM_MIRROR_DIAG") == "1"
         consecutive_errors = 0
@@ -1128,6 +1158,16 @@ class AgentClient:
 
         # Real desktop routing when in Screen Mirror (Take Control) mode
         if use_mirror:
+            if "normalized_x" in data and "normalized_y" in data:
+                if (data.get("native_width"), data.get("native_height")) != (self.mirror_capture._width, self.mirror_capture._height):
+                    if getattr(self, "mirror_protocol", 0) == 2:
+                        self.mirror_flow.refresh()
+                    return None
+                x = round(max(0, min(1, float(data["normalized_x"]))) * (self.mirror_capture._width - 1))
+                y = round(max(0, min(1, float(data["normalized_y"]))) * (self.mirror_capture._height - 1))
+            self.mirror_input_id = data.get("input_id", 0)
+            if getattr(self, "mirror_protocol", 0) == 2:
+                self.mirror_flow.capture_event.set()
             if itype == "stealth_cursor":
                 enabled = bool(data.get("enabled", False))
                 MirrorInput.set_stealth_cursor(enabled)

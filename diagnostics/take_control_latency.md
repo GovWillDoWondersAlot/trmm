@@ -144,3 +144,46 @@ Six isolated Python regressions and the JavaScript checks pass, covering final
 frame delivery, duplicate suppression, relay backpressure, stale/missing ACKs,
 capture cache/flush behavior, render serialization, envelope parsing, and hidden
 tabs. No Backstage behavior was exercised or modified.
+
+## Version 2 latency work
+
+Stockholm (`eu-north-1`) is the production relay region. In the pre-change live
+folder test, the first saved frame visibly showing the folder arrived at 2.736 s.
+A separate comparison measured median dashboard/control RTT of 179 ms before
+adding the test video connection and 247 ms during it, versus 902 ms on the video
+connection. This implicates stream buffering/scheduling; it does not establish
+the exact bottleneck or measure the agent-to-hub leg.
+
+The new mirror-only protocol uses `mirror_ack=2` for viewers and a negotiated
+`transport: 2` for agents. Both legs permit at most two unacknowledged images
+within a 64 KiB JPEG window; one oversized image may pass alone to avoid deadlock.
+Capture continues while a write is blocked, replacing a single pending image.
+Unchanged desktops send small health messages every two seconds instead of JPEG
+heartbeats. A 30-second transport deadline disconnects a stalled stream.
+
+Preview profiles start at width 1280 / JPEG quality 40 and step down through
+960/35 and 768/30 when acknowledgements are slow. Encoding has bounded retries
+toward 48/36/28 KiB budgets; these are targets, not hard byte limits. Native
+desktop geometry accompanies each frame so smaller images retain correct mouse
+coordinates. Legacy viewers request native capture. Fast delivery can step the
+profile back up with hysteresis. This favors response time over fine-text clarity.
+
+Viewer acknowledgements report decode failure; refresh requests recover an
+unchanged screen on tab resume. The source metadata includes capture duration,
+source capture sequence, input receipt ID, pending-queue duration, and recent
+acknowledgement durations. Input receipt IDs do not prove a window has finished
+opening. Only visual inspection or a controlled target marker proves that.
+
+Validation commands:
+
+```powershell
+python diagnostics/mirror_regression.py
+python diagnostics/mirror_transport_regression.py
+node diagnostics/mirror_renderer_regression.js
+python diagnostics/mirror_live_probe.py https://hub.swiftvtu.com --ack-v2
+```
+
+Probe coordinates are native target coordinates. Credentials still arrive on
+stdin and remain in memory. Python/PIL live samples measure decoded-frame arrival,
+not actual browser presentation. A universal one-second maximum cannot be
+guaranteed over arbitrary Internet connections or slow target applications.

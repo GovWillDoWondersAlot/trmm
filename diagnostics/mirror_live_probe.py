@@ -54,7 +54,9 @@ async def main():
                'ngrok-skip-browser-warning': 'true'}
     url = BASE.replace('https://', 'wss://').replace('http://', 'ws://')
     url += f'/ws/viewer/{agent_id}?mode=mirror'
-    if '--ack' in sys.argv[2:]:
+    if '--ack-v2' in sys.argv[2:]:
+        url += '&mirror_ack=2'
+    elif '--ack' in sys.argv[2:]:
         url += '&mirror_ack=1'
     OUTPUT.mkdir(parents=True, exist_ok=True)
     async with websockets.connect(url, additional_headers=headers, proxy=None,
@@ -67,9 +69,10 @@ async def main():
             print('WEBSOCKET PING: no pong within 5 seconds', flush=True)
         records = []
         latest = None
+        geometry = None
 
         async def receive():
-            nonlocal latest
+            nonlocal latest, geometry
             async for message in ws:
                 if not isinstance(message, bytes):
                     try:
@@ -80,7 +83,13 @@ async def main():
                     continue
                 started = time.perf_counter()
                 sequence = None
-                if message.startswith(b'MRR1'):
+                metadata = None
+                if message.startswith(b'MRR2'):
+                    length = int.from_bytes(message[4:6], 'big')
+                    metadata = json.loads(message[6:6 + length])
+                    sequence = metadata['sequence']
+                    message = message[6 + length:]
+                elif message.startswith(b'MRR1'):
                     sequence = int.from_bytes(message[4:8], 'big')
                     message = message[8:]
                 with Image.open(io.BytesIO(message)) as frame:
@@ -89,12 +98,17 @@ async def main():
                 records.append({'t': started, 'bytes': len(message),
                                 'hash': hashlib.sha256(message).hexdigest()[:16],
                                 'decode_ms': (time.perf_counter() - started) * 1000,
-                                'size': size})
+                                'size': size, 'metadata': metadata})
                 latest = message
+                geometry = metadata
                 if sequence is not None:
                     await ws.send(json.dumps({'type': 'mirror_frame_ack', 'sequence': sequence}))
 
         async def send_input(payload):
+            if geometry and 'x' in payload and 'y' in payload:
+                payload.update(normalized_x=payload['x'] / max(1, geometry['native_width'] - 1),
+                               normalized_y=payload['y'] / max(1, geometry['native_height'] - 1),
+                               native_width=geometry['native_width'], native_height=geometry['native_height'])
             await ws.send(json.dumps({'type': 'input', 'mode': 'mirror',
                                       'data': {'mode': 'mirror', 'stealth': False, **payload}}))
 

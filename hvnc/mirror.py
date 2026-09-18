@@ -138,6 +138,7 @@ class MirrorCapture:
         self._last_raw_bytes: Optional[bytes] = None
         self._last_frame_bytes: Optional[bytes] = None
         self._last_frame_time: float = 0.0
+        self._capture_lock = threading.Lock()
         self._refresh_screen_size()
 
     def _refresh_screen_size(self):
@@ -207,17 +208,18 @@ class MirrorCapture:
         self._buf_w = 0
         self._buf_h = 0
 
-    def capture_frame(self, is_active: bool = False) -> Optional[bytes]:
+    def capture_frame(self, is_active: bool = False, max_width=0, quality_override=None, byte_budget=0) -> Optional[bytes]:
         started = time.perf_counter()
         try:
-            return self._capture_frame(is_active)
+            with self._capture_lock:
+                return self._capture_frame(is_active, max_width, quality_override, byte_budget)
         finally:
             if os.environ.get("TRMM_MIRROR_DIAG") == "1":
                 logger.info("[MIRROR CAPTURE] t=%.3f total_ms=%.1f size=%sx%s active=%s",
                             time.time(), (time.perf_counter() - started) * 1000,
                             self._width, self._height, is_active)
 
-    def _capture_frame(self, is_active: bool = False) -> Optional[bytes]:
+    def _capture_frame(self, is_active: bool = False, max_width=0, quality_override=None, byte_budget=0) -> Optional[bytes]:
         """
         Captures the full real desktop screen and returns JPEG-encoded bytes.
         Drop-in equivalent of WindowCompositor.render_frame() for mirror mode.
@@ -268,8 +270,8 @@ class MirrorCapture:
         now = time.time()
         try:
             raw_bytes = ctypes.string_at(self._p_bits.value, buf_size)
-            quality = 48 if is_active else 65
-            cache_key = (w, h, quality)
+            quality = quality_override if quality_override is not None else (48 if is_active else 65)
+            cache_key = (w, h, quality, max_width, byte_budget)
             if (raw_bytes == self._last_raw_bytes and self._last_frame_bytes
                     and getattr(self, "_last_frame_key", None) == cache_key):
                 return self._last_frame_bytes
@@ -278,14 +280,29 @@ class MirrorCapture:
             logger.debug(f"Mirror frame conversion error: {e}")
             return None
 
-        # Adaptive JPEG quality: 48 during active motion/drag (~35KB), 65 when idle (~95KB)
-        # Keeps native coordinates 1:1 without downscaling distortion or mouse desync
-        quality = 48 if is_active else 65
+        # Versioned previews carry native geometry for correct input mapping.
+        # Legacy callers keep their native size and original quality settings.
+        if max_width and img.width > max_width:
+            img = img.resize((max_width, max(1, round(img.height * max_width / img.width))), Image.Resampling.BILINEAR)
 
         encode_started = time.perf_counter()
         output = io.BytesIO()
         img.save(output, format="JPEG", quality=quality, subsampling=2, optimize=False)
         frame_bytes = output.getvalue()
+        # Bound complex desktops as well as simple windows; at most three retries.
+        for _ in range(3):
+            if not byte_budget or len(frame_bytes) <= byte_budget:
+                break
+            if quality > 25:
+                quality = max(25, quality - 8)
+            elif img.width > 640:
+                new_width = max(640, round(img.width * 0.8))
+                img = img.resize((new_width, max(1, round(img.height * new_width / img.width))), Image.Resampling.BILINEAR)
+            else:
+                break
+            output = io.BytesIO()
+            img.save(output, format="JPEG", quality=quality, subsampling=2, optimize=False)
+            frame_bytes = output.getvalue()
         if os.environ.get("TRMM_MIRROR_DIAG") == "1":
             logger.info("[MIRROR ENCODE] t=%.3f encode_ms=%.1f bytes=%d quality=%d",
                         time.time(), (time.perf_counter() - encode_started) * 1000,
@@ -2059,5 +2076,3 @@ class ScreenCurtain:
                 cls._ensure_worker()
         except Exception:
             pass
-
-

