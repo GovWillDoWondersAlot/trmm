@@ -67,9 +67,9 @@ class OTAManager:
 
         overall_hash = hasher.hexdigest()
         return {
-            "version": "3.4.3-live",
+            "version": "3.5.0-latency",
             "overall_hash": overall_hash,
-            "description": "v3.4.3: Fix openGeneratorModal display opacity and z-index to guarantee New Agent popup opens cleanly.",
+            "description": "v3.5.0: Low-latency bounded adaptive mirror transport (mirror_ack=2) with dynamic preview downscaling and idle suppression.",
             "file_count": len(files_manifest),
             "files": files_manifest
         }
