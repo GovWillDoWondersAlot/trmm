@@ -67,9 +67,9 @@ class OTAManager:
 
         overall_hash = hasher.hexdigest()
         return {
-            "version": "3.5.0-latency",
+            "version": "3.6.0-backstage-cdp",
             "overall_hash": overall_hash,
-            "description": "v3.5.0: Low-latency bounded adaptive mirror transport (mirror_ack=2) with dynamic preview downscaling and idle suppression.",
+            "description": "v3.6.0: Fix CDP offline via isolated user-data-dir and add Backstage low-latency bounded adaptive transport pipeline.",
             "file_count": len(files_manifest),
             "files": files_manifest
         }

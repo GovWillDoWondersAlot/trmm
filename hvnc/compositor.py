@@ -457,10 +457,10 @@ class WindowCompositor:
             logger.debug(f"Image conversion failed for hwnd 0x{hwnd:X}: {e}")
             return None
 
-    def render_frame(self, is_active: bool = False) -> bytes:
+    def render_frame(self, is_active: bool = False, target_width: int = 0, quality: Optional[int] = None, byte_budget: int = 0) -> bytes:
         """
         Renders the composed desktop with all open windows, corners, and taskbar.
-        Returns JPEG encoded bytes.
+        Returns JPEG encoded bytes. Supports dynamic resolution downscaling and quality tuning for low-latency streaming.
         """
         all_windows = self.desktop.enumerate_windows(include_minimized=True)
 
@@ -602,11 +602,17 @@ class WindowCompositor:
         active_set = {w[0] for w in visible_to_render}
         self._cleanup_stale_buffers(active_set)
 
+        # Dynamic resolution downscaling if target_width requested and active canvas exceeds it
+        if target_width > 0 and canvas.width > target_width:
+            ratio = target_width / float(canvas.width)
+            target_height = max(100, int(canvas.height * ratio))
+            canvas = canvas.resize((target_width, target_height), Image.Resampling.BILINEAR)
+
         # Adaptive JPEG compression: quality 48 during active motion/drag (~35KB), 65 when idle (~95KB)
-        quality = 48 if is_active else 65
+        final_quality = quality if quality is not None and quality > 0 else (48 if is_active else 65)
 
         output = io.BytesIO()
-        canvas.save(output, format="JPEG", quality=quality, subsampling=2, optimize=False)
+        canvas.save(output, format="JPEG", quality=final_quality, subsampling=2, optimize=False)
         frame_bytes = output.getvalue()
         self._last_frame_bytes = frame_bytes
         self._last_frame_time = time.time()

