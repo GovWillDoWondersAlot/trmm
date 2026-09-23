@@ -21,7 +21,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel
 
 from .agent_manager import AgentManager
-from .generator import AgentGenerator, OUTPUT_DIR
+from .generator import AgentGenerator, BuildStorageError, OUTPUT_DIR
 from .ip_watcher import watch_ip
 from .ota_manager import OTAManager
 from .auth import AuthManager
@@ -301,6 +301,8 @@ async def generate_agent(request: Request, req: GenerateAgentRequest):
             "bootstrap_download_url": result.get("bootstrap_download_url"),
             "one_liner": result.get("one_liner"),
         }
+    except BuildStorageError as e:
+        raise HTTPException(status_code=507, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:

@@ -13,6 +13,7 @@ import base64
 import io
 import logging
 import threading
+import errno
 from typing import Dict, Any, Optional
 from PIL import Image
 
@@ -26,6 +27,22 @@ DIST_AGENT_DIR = os.path.join(ROOT_DIR, "dist", "TRMM_Agent")
 OUTPUT_DIR = os.path.join(ROOT_DIR, "generated_agents")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 BUILD_LOCK = threading.Lock()
+
+
+class BuildStorageError(RuntimeError):
+    """An installer cannot be built safely with the available disk space."""
+
+
+def require_build_space():
+    # Reserve space before copying the runtime, not just before compilation.
+    runtime_bytes = sum(os.path.getsize(os.path.join(root, name))
+                        for root, _, names in os.walk(DIST_AGENT_DIR) for name in names)
+    required = max(256 * 1024 * 1024, 3 * runtime_bytes + 64 * 1024 * 1024)
+    free = shutil.disk_usage(OUTPUT_DIR).free
+    if free < required:
+        raise BuildStorageError(
+            f"Not enough server disk space to build an agent: {free // 1048576} MiB free; "
+            f"at least {required // 1048576} MiB required. Archive old installer downloads or expand the server disk.")
 
 
 def process_custom_icon(base64_data: str, out_dir: str) -> Optional[str]:
@@ -69,7 +86,21 @@ class AgentGenerator:
     def build_package(config: Dict[str, Any]) -> Dict[str, Any]:
         # Builds share the runtime directory, output names and finite disk space.
         with BUILD_LOCK:
-            return AgentGenerator._build_package(config)
+            config = dict(config)
+            config['agent_id'] = config.get('agent_id') or str(uuid.uuid4())[:8]
+            build_dir = os.path.abspath(os.path.join(OUTPUT_DIR, f"build_{config['agent_id']}"))
+            if os.path.dirname(build_dir) != os.path.abspath(OUTPUT_DIR):
+                raise ValueError("Invalid build identifier")
+            try:
+                require_build_space()
+                return AgentGenerator._build_package(config)
+            except OSError as error:
+                if error.errno == errno.ENOSPC:
+                    raise BuildStorageError("The server ran out of disk space during the build. Archive old installer downloads or expand the server disk.") from error
+                raise
+            finally:
+                if os.path.isdir(build_dir):
+                    shutil.rmtree(build_dir)
 
     @staticmethod
     def _build_package(config: Dict[str, Any]) -> Dict[str, Any]:
@@ -179,15 +210,20 @@ echo [OK] {app_title} is active!
         # 4. Compress into zip package
         zip_filename = f"{app_name}_{endpoint_tag}_{arch}.zip"
         zip_path = os.path.join(OUTPUT_DIR, zip_filename)
-        if os.path.exists(zip_path):
-            os.remove(zip_path)
+        partial_zip_path = f"{zip_path}.{agent_id}.partial"
 
-        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
-            for root, _, files in os.walk(build_dir):
-                for file in files:
-                    file_path = os.path.join(root, file)
-                    arcname = os.path.relpath(file_path, build_dir)
-                    zipf.write(file_path, arcname)
+        try:
+            with zipfile.ZipFile(partial_zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
+                for root, _, files in os.walk(build_dir):
+                    for file in files:
+                        file_path = os.path.join(root, file)
+                        arcname = os.path.relpath(file_path, build_dir)
+                        zipf.write(file_path, arcname)
+            os.replace(partial_zip_path, zip_path)
+        except Exception:
+            if os.path.isfile(partial_zip_path):
+                os.remove(partial_zip_path)
+            raise
 
         shutil.rmtree(build_dir)
 

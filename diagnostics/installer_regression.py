@@ -1,6 +1,7 @@
 """Installer/configuration regressions with isolated payloads; no agent executes."""
 import importlib.util
 import json
+import errno
 from pathlib import Path
 import shutil
 import sys
@@ -120,6 +121,59 @@ class InstallerTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, 'Insufficient temporary disk space'):
                     compiler.SetupCompiler.compile_installer(str(payload), 'audit-disk-regression', 'Audit')
                 run.assert_not_called()
+
+    def test_low_disk_space_rejected_before_runtime_copy(self):
+        with temporary_directory() as tmp, patch.object(generator, 'OUTPUT_DIR', tmp), \
+             patch.object(generator.shutil, 'disk_usage', return_value=SimpleNamespace(free=0)), \
+             patch.object(generator.AgentGenerator, '_build_package') as build:
+            with self.assertRaisesRegex(generator.BuildStorageError, 'Not enough server disk space'):
+                generator.AgentGenerator.build_package({'agent_id':'low-space'})
+            build.assert_not_called()
+            self.assertEqual(list(Path(tmp).iterdir()), [])
+
+    def test_copy_failure_cleans_up_abandoned_build(self):
+        with temporary_directory() as tmp:
+            def failing_build(config):
+                build_dir = Path(tmp) / ('build_' + config['agent_id'])
+                build_dir.mkdir()
+                (build_dir / 'partial-runtime').write_bytes(b'partial')
+                raise OSError(errno.ENOSPC, 'No space left on device')
+            with patch.object(generator, 'OUTPUT_DIR', tmp), \
+                 patch.object(generator, 'require_build_space'), \
+                 patch.object(generator.AgentGenerator, '_build_package', side_effect=failing_build):
+                with self.assertRaisesRegex(generator.BuildStorageError, 'ran out of disk space'):
+                    generator.AgentGenerator.build_package({'agent_id':'copy-failure'})
+            self.assertEqual(list(Path(tmp).iterdir()), [])
+
+    def test_zip_failure_removes_partial_download(self):
+        with temporary_directory() as tmp:
+            root = Path(tmp)
+            for name in ('dist', 'output', 'hvnc', 'agent_client'):
+                (root / name).mkdir()
+            (root / 'dist' / 'TRMM_Agent.exe').write_bytes(b'fixture')
+            with patch.multiple(generator, ROOT_DIR=tmp, DIST_AGENT_DIR=str(root/'dist'), OUTPUT_DIR=str(root/'output')), \
+                 patch.object(generator.zipfile.ZipFile, 'write', side_effect=OSError(errno.ENOSPC, 'disk full')):
+                with self.assertRaises(generator.BuildStorageError):
+                    generator.AgentGenerator.build_package({'agent_id':'zip-failure','server_url':'https://hub.swiftvtu.com'})
+            self.assertEqual(list((root/'output').iterdir()), [])
+
+    def test_failed_rebuild_preserves_previous_zip(self):
+        with temporary_directory() as tmp:
+            root = Path(tmp)
+            for name in ('dist', 'output', 'hvnc', 'agent_client'):
+                (root / name).mkdir()
+            (root / 'dist' / 'TRMM_Agent.exe').write_bytes(b'fixture')
+            previous = root / 'output' / 'TestAgent_Fixture_x64.zip'
+            with zipfile.ZipFile(previous, 'w') as archive:
+                archive.writestr('config.json', '{}')
+            saved = previous.read_bytes()
+            with patch.multiple(generator, ROOT_DIR=tmp, DIST_AGENT_DIR=str(root/'dist'), OUTPUT_DIR=str(root/'output')), \
+                 patch.object(generator.zipfile.ZipFile, 'write', side_effect=OSError(errno.ENOSPC, 'disk full')):
+                with self.assertRaises(generator.BuildStorageError):
+                    generator.AgentGenerator.build_package({'agent_id':'rebuild','endpoint_tag':'Fixture',
+                        'custom_name':'TestAgent','server_url':'https://hub.swiftvtu.com'})
+            self.assertEqual(previous.read_bytes(), saved)
+            self.assertEqual(list((root/'output').iterdir()), [previous])
 
 
 if __name__ == '__main__':
