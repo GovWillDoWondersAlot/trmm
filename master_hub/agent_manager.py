@@ -167,6 +167,8 @@ class ConnectedAgent:
 
         return {
             "agent_id": self.agent_id,
+            "device_id": self.client_info.get("device_id", ""),
+            "installation_id": self.client_info.get("installation_id", ""),
             "endpoint_tag": self.client_info.get("endpoint_tag", self.client_info.get("tag", "")),
             "status": "online",
             "hostname": self.client_info.get("hostname", "Unknown"),
@@ -245,6 +247,7 @@ class AgentManager:
                 logger.info(f"Agent '{agent_id}' unregistered offline.")
             else:
                 logger.info(f"Superseded connection for agent '{agent_id}' closed. Preserving new active registration.")
+                return
         if agent_id in self.decommissioned_agents:
             self.registered_agents.pop(agent_id, None)
             logger.info(f"Decommissioned agent '{agent_id}' removed on disconnect.")

@@ -1,14 +1,21 @@
 """Tests for the physical-desktop transport; no Windows agent is imported."""
 import asyncio
+import ast
 import json
 import importlib.util
 from pathlib import Path
 import sys
 import time
-from types import SimpleNamespace
+from types import SimpleNamespace, ModuleType
 import unittest
 
 def load_module(name, relative_path):
+    if relative_path == 'agent_client/mirror_transport.py':
+        tree = ast.parse((Path(__file__).resolve().parents[1] / relative_path).read_text(encoding='utf-8'))
+        tree.body = [node for node in tree.body if not isinstance(node, ast.ClassDef) or node.name == 'MirrorUplink']
+        module = ModuleType(name)
+        exec(compile(tree, relative_path, 'exec'), module.__dict__)
+        return module
     spec = importlib.util.spec_from_file_location(name, Path(__file__).resolve().parents[1] / relative_path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -22,6 +29,30 @@ LowLatencyMirrorViewerSession = delivery.LowLatencyMirrorViewerSession
 
 
 class TransportTests(unittest.IsolatedAsyncioTestCase):
+    def test_quality_modes_preserve_idle_text(self):
+        flow = MirrorUplink(None, None, True)
+        flow.profile = 2
+        self.assertEqual(flow.capture_settings(False), (0, 85, 0))
+        self.assertEqual(flow.capture_settings(True)[:2], (1280, 60))
+        flow.set_quality_mode('sharp')
+        self.assertEqual(flow.capture_settings(True), (0, 85, 0))
+        flow.set_quality_mode('fast')
+        self.assertEqual(flow.capture_settings(False), flow.FAST_PROFILES[2])
+        flow.set_quality_mode('invalid')
+        self.assertEqual(flow.quality_mode, 'fast')
+
+    async def test_idle_refinement_without_more_input(self):
+        owner = SimpleNamespace(is_mirroring=True, last_input_time=time.time())
+        def capture(active, width, quality, budget):
+            return f'{width}:{quality}'.encode()
+        owner.mirror_capture = SimpleNamespace(capture_frame=capture, _width=1920, _height=1080)
+        flow = MirrorUplink(owner, None, True)
+        self.start(flow.capture())
+        await asyncio.sleep(.1)
+        self.assertEqual(flow.pending[0], b'1920:70')
+        await asyncio.sleep(.6)
+        self.assertEqual(flow.pending[0], b'0:85')
+
     async def asyncSetUp(self):
         self.tasks = []
         self.packets = asyncio.Queue()

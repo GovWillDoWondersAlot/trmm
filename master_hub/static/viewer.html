@@ -565,6 +565,11 @@
         </div>
 
         <div class="header-right">
+            <select id="mirrorQuality" class="header-btn" hidden aria-label="Take Control image quality" onchange="setMirrorQuality()" title="Balanced sharpens text when input stops. Sharper text uses more bandwidth.">
+                <option value="balanced">Quality: Balanced</option>
+                <option value="sharp">Quality: Sharper text</option>
+                <option value="fast">Quality: Faster response</option>
+            </select>
             <!-- Stealth Mouse Toggle (Hide Hover Movement) -->
             <button class="header-btn" id="stealthMouseBtn" onclick="toggleStealthMouse()" title="Stealth Mouse: Suppress hover cursor movement on target (cursor moves only on click/drag)">
                 <span id="stealthMouseLabel">🖱️ Mouse: Live</span>
@@ -796,6 +801,7 @@
             resizeDisplay();
 
             const isMirror = (sessionMode === 'mirror');
+            document.getElementById('mirrorQuality').hidden = !isMirror;
             const modeLabel = isMirror ? '🖥 SCREEN MIRROR' : '🎭 BACKSTAGE';
             const modeColor = isMirror ? '#10b981' : '#a855f7';
             const modeBg = isMirror ? 'rgba(16, 185, 129, 0.15)' : 'rgba(168, 85, 247, 0.15)';
@@ -923,7 +929,7 @@
                     toggleStealthMouse(false);
                 }
             }
-            sendViewerInput({ type: "set_curtain", enabled: screenCurtainActive });
+            if (sessionMode !== 'mirror') sendViewerInput({ type: "set_curtain", enabled: screenCurtainActive });
             if (viewerWs && viewerWs.readyState === WebSocket.OPEN) {
                 viewerWs.send(JSON.stringify({ type: "set_curtain", enabled: screenCurtainActive }));
             }
@@ -1253,7 +1259,7 @@
             viewerWs.binaryType = sessionMode === 'mirror' ? "arraybuffer" : "blob";
 
             viewerWs.onopen = () => {
-                if (sessionMode === 'mirror') { mirrorGeometry = null; requestMirrorRefresh(); }
+                if (sessionMode === 'mirror') { mirrorGeometry = null; requestMirrorRefresh(); setMirrorQuality(); }
                 showToast("Connected", `Session active (${sessionMode === 'mirror' ? 'Screen Mirror' : 'Backstage'}) for agent ${targetId}`, "success");
                 setTimeout(resizeDisplay, 50);
                 // Request installed apps immediately
@@ -1440,6 +1446,12 @@
 
         function requestMirrorRefresh() {
             if (viewerWs?.readyState === WebSocket.OPEN) viewerWs.send(JSON.stringify({ type: 'mirror_refresh' }));
+        }
+
+        function setMirrorQuality() {
+            if (sessionMode !== 'mirror' || viewerWs?.readyState !== WebSocket.OPEN) return;
+            const quality = document.getElementById('mirrorQuality')?.value || 'balanced';
+            viewerWs.send(JSON.stringify({ type: 'mirror_quality', quality }));
         }
 
         function acknowledgeMirrorFrame(blob, decoded = true) {

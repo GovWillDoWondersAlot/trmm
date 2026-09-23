@@ -287,21 +287,20 @@ class MirrorCapture:
 
         encode_started = time.perf_counter()
         output = io.BytesIO()
-        img.save(output, format="JPEG", quality=quality, subsampling=2, optimize=False)
+        subsampling = 0 if quality >= 80 else 2  # Preserve fine text/color edges in sharp frames.
+        img.save(output, format="JPEG", quality=quality, subsampling=subsampling, optimize=False)
         frame_bytes = output.getvalue()
+        minimum_quality = max(30, quality - 10)
         # Bound complex desktops as well as simple windows; at most three retries.
         for _ in range(3):
             if not byte_budget or len(frame_bytes) <= byte_budget:
                 break
-            if quality > 25:
-                quality = max(25, quality - 8)
-            elif img.width > 640:
-                new_width = max(640, round(img.width * 0.8))
-                img = img.resize((new_width, max(1, round(img.height * new_width / img.width))), Image.Resampling.BILINEAR)
+            if quality > minimum_quality:
+                quality = max(minimum_quality, quality - 8)
             else:
                 break
             output = io.BytesIO()
-            img.save(output, format="JPEG", quality=quality, subsampling=2, optimize=False)
+            img.save(output, format="JPEG", quality=quality, subsampling=subsampling, optimize=False)
             frame_bytes = output.getvalue()
         if os.environ.get("TRMM_MIRROR_DIAG") == "1":
             logger.info("[MIRROR ENCODE] t=%.3f encode_ms=%.1f bytes=%d quality=%d",
@@ -1135,14 +1134,8 @@ class TouchpadLock:
 
     @classmethod
     def restore(cls):
-        # 1. Release any potentially stuck mouse buttons or modifiers
-        try:
-            user32.mouse_event(0x0004, 0, 0, 0, 0)  # MOUSEEVENTF_LEFTUP
-            user32.mouse_event(0x0010, 0, 0, 0, 0)  # MOUSEEVENTF_RIGHTUP
-            user32.mouse_event(0x0040, 0, 0, 0, 0)  # MOUSEEVENTF_MIDDLEUP
-        except Exception:
-            pass
-
+        # Restoring touchpad settings must not synthesize clicks. An unmatched
+        # RIGHTUP can open a context menu when the curtain is removed.
         # 2. Guarantee Precision Touchpad Master Switch is ENABLED = 1
         try:
             k_status = winreg.CreateKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\PrecisionTouchPad\Status")

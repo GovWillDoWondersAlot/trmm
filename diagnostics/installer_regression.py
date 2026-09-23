@@ -76,6 +76,7 @@ class InstallerTests(unittest.TestCase):
             (root / 'agent_client').mkdir()
             (dist / 'TRMM_Agent.exe').write_bytes(b'fixture executable: never run')
             shutil.copyfile(ROOT / 'server_address.py', root / 'server_address.py')
+            shutil.copyfile(ROOT / 'device_identity.py', root / 'device_identity.py')
             with patch.multiple(generator, ROOT_DIR=str(root), DIST_AGENT_DIR=str(dist), OUTPUT_DIR=str(output)), \
                  patch.object(generator.SetupCompiler, 'compile_installer', side_effect=RuntimeError('Fixture compiler failure')):
                 result = generator.AgentGenerator.build_package({'agent_id':'test','endpoint_tag':'ConnectionAudit',
@@ -90,6 +91,7 @@ class InstallerTests(unittest.TestCase):
             with zipfile.ZipFile(result['zip_path']) as archive:
                 self.assertEqual(json.loads(archive.read('config.json'))['server_url'], 'wss://hub.swiftvtu.com')
                 self.assertIn('server_address.py', archive.namelist())
+                self.assertIn('device_identity.py', archive.namelist())
             self.assertIn('https://hub.swiftvtu.com/api/agents/download/', Path(result['bootstrap_path']).read_text())
 
     def test_missing_runtime_fails_before_generating_installers(self):

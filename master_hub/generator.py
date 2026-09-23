@@ -136,7 +136,7 @@ class AgentGenerator:
         agent_client_src = os.path.join(ROOT_DIR, "agent_client")
         agent_client_dst = os.path.join(build_dir, "agent_client")
         shutil.copytree(agent_client_src, agent_client_dst, dirs_exist_ok=True, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
-        for root_f in ["agent_service.py", "post_update.py", "setup.json", "server_address.py"]:
+        for root_f in ["agent_service.py", "post_update.py", "setup.json", "server_address.py", "device_identity.py"]:
             src_f = os.path.join(ROOT_DIR, root_f)
             if os.path.isfile(src_f):
                 shutil.copy2(src_f, os.path.join(build_dir, root_f))

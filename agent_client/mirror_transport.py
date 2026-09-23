@@ -28,7 +28,8 @@ class MirrorUplink:
     """Capture keeps running while a bounded writer sends only the newest image."""
     BYTE_WINDOW = 64 * 1024
     TIMEOUT = 30.0
-    PROFILES = ((1280, 40, 48 * 1024), (960, 35, 36 * 1024), (768, 30, 28 * 1024))
+    PROFILES = ((1920, 70, 160 * 1024), (1600, 65, 112 * 1024), (1280, 60, 80 * 1024))
+    FAST_PROFILES = ((1280, 45, 64 * 1024), (960, 40, 48 * 1024), (768, 35, 36 * 1024))
 
     def __init__(self, owner, ws, preview):
         self.owner, self.ws, self.preview = owner, ws, preview
@@ -46,6 +47,21 @@ class MirrorUplink:
         self.last_adjustment = 0.0
         self.uplink_ack_ms = 0.0
         self.viewer_ack_ms = 0.0
+
+        self.quality_mode = 'balanced'
+
+    def set_quality_mode(self, mode):
+        if mode in ('balanced', 'sharp', 'fast') and mode != self.quality_mode:
+            self.quality_mode = mode
+            self.refresh()
+
+    def capture_settings(self, active):
+        if not self.preview:
+            return (0, 0, 0)
+        if self.quality_mode == 'sharp' or (self.quality_mode == 'balanced' and not active):
+            return (0, 85, 0)  # One native-resolution refinement after interaction stops.
+        profiles = self.FAST_PROFILES if self.quality_mode == 'fast' else self.PROFILES
+        return profiles[self.profile]
 
     def acknowledge(self, message):
         if message.get("stream_id") == self.stream_id and type(message.get("sequence")) is int:
@@ -86,8 +102,8 @@ class MirrorUplink:
         previous_geometry = None
         while self.owner.is_mirroring:
             self.capture_event.clear()
-            active = time.time() - self.owner.last_input_time < 3
-            width, quality, budget = self.PROFILES[self.profile] if self.preview else (0, 0, 0)
+            active = time.time() - self.owner.last_input_time < 0.4
+            width, quality, budget = self.capture_settings(active)
             started = time.perf_counter()
             input_id = getattr(self.owner, "mirror_input_id", 0)
             force = self.force
@@ -101,6 +117,7 @@ class MirrorUplink:
                 "native_height": self.owner.mirror_capture._height,
                 "input_id": input_id, "capture_ms": round((time.perf_counter() - started) * 1000, 2),
                 "profile": self.profile,
+                "quality_mode": self.quality_mode,
                 "uplink_ack_ms": round(self.uplink_ack_ms, 2),
                 "viewer_ack_ms": round(self.viewer_ack_ms, 2),
             }
