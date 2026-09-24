@@ -1,7 +1,8 @@
-"""Validate a real release artifact; never relabel a Python archive as an EXE."""
+import os
+import sys
+import subprocess
 from pathlib import Path
 import struct
-
 
 def validate_windows_executable(path):
     path = Path(path)
@@ -18,11 +19,36 @@ def validate_windows_executable(path):
         raise ValueError('Downloader exceeds 1,000,000 bytes')
     return len(data)
 
-
 def build_standalone_bootstrapper():
-    raise RuntimeError('NATIVE_BUILD_NOT_IMPLEMENTED: no standalone Windows downloader has been built. '
-                       'The old .pyz artifact is not distributable. Native build and clean-Windows validation are required.')
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    dist_dir = os.path.join(base_dir, "dist")
+    os.makedirs(dist_dir, exist_ok=True)
+    
+    cs_src = os.path.join(base_dir, "trmm_web_installer.cs")
+    out_exe = os.path.join(dist_dir, "trmm_web_installer.exe")
+    csc_path = r"C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
 
+    if not os.path.isfile(csc_path):
+        raise RuntimeError(f"C# Compiler not found at {csc_path}")
 
-if __name__ == '__main__':
-    raise SystemExit(str(RuntimeError('NATIVE_BUILD_NOT_IMPLEMENTED: see diagnostics/INSTALLATION_CORRECTION_STATUS.md')))
+    cmd = [
+        csc_path,
+        "/target:winexe",
+        "/platform:x64",
+        f"/out:{out_exe}",
+        "/r:System.Windows.Forms.dll",
+        "/r:System.dll",
+        "/r:System.Drawing.dll",
+        cs_src
+    ]
+    res = subprocess.run(cmd, capture_output=True, text=True)
+    if res.returncode != 0:
+        raise RuntimeError(f"Native compilation failed: {res.stderr}")
+
+    size = validate_windows_executable(out_exe)
+    print(f"Native Windows Bootstrapper EXE compiled successfully: {out_exe}")
+    print(f"Measured PE size: {size} bytes ({round(size/1024, 2)} KB / {round(size/1048576, 4)} MB)")
+    return out_exe, size
+
+if __name__ == "__main__":
+    build_standalone_bootstrapper()
