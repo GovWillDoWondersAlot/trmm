@@ -33,11 +33,57 @@ class BuildStorageError(RuntimeError):
     """An installer cannot be built safely with the available disk space."""
 
 
+def prune_old_build_artifacts(target_free_bytes: int = 304 * 1024 * 1024):
+    """
+    Automatically cleans up temporary build directories, stale partial files, and older
+    generated agent package installers in OUTPUT_DIR if available disk space is low.
+    """
+    if os.path.exists(OUTPUT_DIR):
+        for item in os.listdir(OUTPUT_DIR):
+            full_path = os.path.join(OUTPUT_DIR, item)
+            if os.path.isdir(full_path) and item.startswith("build_"):
+                try:
+                    shutil.rmtree(full_path, ignore_errors=True)
+                except Exception:
+                    pass
+            elif os.path.isfile(full_path) and item.endswith(".partial"):
+                try:
+                    os.remove(full_path)
+                except Exception:
+                    pass
+
+    free = shutil.disk_usage(OUTPUT_DIR).free
+    if free >= target_free_bytes:
+        return
+
+    if os.path.exists(OUTPUT_DIR):
+        files = []
+        for item in os.listdir(OUTPUT_DIR):
+            full_path = os.path.join(OUTPUT_DIR, item)
+            if os.path.isfile(full_path) and not item.startswith("."):
+                files.append((full_path, os.path.getmtime(full_path)))
+        
+        # Prune oldest installer files first
+        files.sort(key=lambda x: x[1])
+        for path, _ in files:
+            if shutil.disk_usage(OUTPUT_DIR).free >= target_free_bytes:
+                break
+            try:
+                os.remove(path)
+                logger.info(f"Pruned old agent installer artifact: {path}")
+            except Exception as e:
+                logger.warning(f"Could not remove old artifact {path}: {e}")
+
+
 def require_build_space():
     # Reserve space before copying the runtime, not just before compilation.
     runtime_bytes = sum(os.path.getsize(os.path.join(root, name))
                         for root, _, names in os.walk(DIST_AGENT_DIR) for name in names)
     required = max(256 * 1024 * 1024, 3 * runtime_bytes + 64 * 1024 * 1024)
+    
+    # Attempt automatic pruning if disk space is below required threshold
+    prune_old_build_artifacts(target_free_bytes=required)
+
     free = shutil.disk_usage(OUTPUT_DIR).free
     if free < required:
         raise BuildStorageError(

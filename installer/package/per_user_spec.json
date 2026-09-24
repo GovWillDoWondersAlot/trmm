@@ -1,0 +1,15 @@
+{
+  "mode": "per_user",
+  "target_dir": "%LOCALAPPDATA%\\TRMM",
+  "config_dir": "%LOCALAPPDATA%\\TRMM\\config",
+  "log_dir": "%LOCALAPPDATA%\\TRMM\\logs",
+  "registry_startup_key": "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
+  "requires_elevation": false,
+  "admin_required_features": [
+    "system_service",
+    "driver_installation",
+    "all_users_startup",
+    "program_files_write",
+    "secure_desktop_control"
+  ]
+}

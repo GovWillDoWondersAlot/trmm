@@ -43,6 +43,7 @@ document.addEventListener("DOMContentLoaded", () => {
     // Start Live Real-time Detection
     initDashboardSocket();
     startSmartPolling();
+    initInstallationsTab();
 
     // Global Dismiss Handlers (Esc key)
     initKeyboardShortcuts();
@@ -1172,4 +1173,112 @@ async function logout() {
         try { viewerWs.close(); } catch (e) {}
     }
     window.location.href = "/login";
+}
+
+/**
+ * Installation Telemetry Dashboard UI Logic
+ */
+let installationPollTimer = null;
+let installationRequestPending = false;
+
+function installationText(value) {
+    return String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'}[c]));
+}
+
+async function installationRequest(url, options = {}) {
+    const response = await fetch(url, {credentials: 'same-origin', cache: 'no-store', ...options,
+        headers: {'Content-Type': 'application/json', 'X-TRMM-Request': 'installations', ...(options.headers || {})}});
+    const data = await response.json();
+    if (!response.ok) {
+        const detail = data.detail || data.error || `HTTP ${response.status}`;
+        throw new Error(typeof detail === 'string' ? detail : (detail.code || 'Installation request failed'));
+    }
+    return data;
+}
+
+function initInstallationsTab() {
+    fetchInstallationsData();
+    if (!installationPollTimer) {
+        installationPollTimer = setInterval(fetchInstallationsData, 3000);
+    }
+}
+
+async function fetchInstallationsData() {
+    if (installationRequestPending || document.hidden) return;
+    installationRequestPending = true;
+    try {
+        const [availability, attData] = await Promise.all([
+            installationRequest('/api/installations/status'),
+            installationRequest('/api/installations/attempts')
+        ]);
+        document.getElementById('installationAvailability').textContent = availability.ready
+            ? 'Installer available.' : 'Distribution unavailable: ' + (availability.blockers || []).join(' ');
+        document.getElementById('createInstallationInvitationBtn').disabled = !availability.ready;
+        document.getElementById('installationApiError').hidden = true;
+        renderInstallationsDashboard([], attData.attempts || []);
+    } catch (err) {
+        const element = document.getElementById('installationApiError');
+        element.textContent = 'Installation status unavailable: ' + err.message;
+        element.hidden = false;
+        document.getElementById('createInstallationInvitationBtn').disabled = true;
+    } finally {
+        installationRequestPending = false;
+    }
+}
+
+function renderInstallationsDashboard(invitations, attempts) {
+    const tableBody = document.getElementById("installationsTableBody");
+    if (!tableBody) return;
+
+    if (attempts.length === 0) {
+        tableBody.innerHTML = `<tr><td colspan="6" class="text-center text-muted">No active or past installation attempts recorded.</td></tr>`;
+        return;
+    }
+
+    tableBody.innerHTML = attempts.map(att => {
+        let badgeClass = 'bg-secondary';
+        if (att.current_stage === 'INSTALLED' || att.current_stage === 'ONLINE') badgeClass = 'bg-success';
+        else if (att.current_stage === 'FAILED' || att.current_stage === 'ADMIN_REQUIRED') badgeClass = 'bg-danger';
+        else if (att.current_stage === 'DOWNLOADING' || att.current_stage === 'INSTALLING') badgeClass = 'bg-primary';
+
+        let progressPct = 0;
+        if (att.total_bytes > 0) {
+            progressPct = Math.max(0, Math.min(100, Math.round((Number(att.download_bytes) / Number(att.total_bytes)) * 100)));
+            if (!Number.isFinite(progressPct)) progressPct = 0;
+        }
+
+        return `
+            <tr>
+                <td><code>${installationText(String(att.id).substring(0, 8))}...</code></td>
+                <td>${installationText(att.architecture)} (${installationText(att.release_version)})</td>
+                <td><span class="badge ${badgeClass}">${installationText(att.current_stage)}</span><br>${installationText(att.connection_status)}</td>
+                <td>
+                    <div class="progress" style="height: 15px;">
+                        <div class="progress-bar" role="progressbar" style="width: ${progressPct}%;">${progressPct}%</div>
+                    </div>
+                </td>
+                <td>${att.error_code ? `<span class="text-danger">${installationText(att.error_code)}: ${installationText(att.error_detail)}</span>` : '<span class="text-muted">None</span>'}<br>${installationText(new Date(att.updated_at).toLocaleString())}</td>
+                <td><button class="btn btn-outline" data-installation-attempt="${installationText(att.id)}">Timeline</button></td>
+            </tr>
+        `;
+    }).join('');
+    tableBody.querySelectorAll?.('[data-installation-attempt]').forEach(button => {
+        button.addEventListener('click', async () => {
+            const output = document.getElementById('installationEventDetails');
+            try {
+                const data = await installationRequest('/api/installations/attempts/' + encodeURIComponent(button.dataset.installationAttempt) + '/events');
+                output.textContent = data.events.length ? data.events.map(e => `${e.created_at} | ${e.stage}\n${JSON.stringify(e.payload)}`).join('\n') : 'No verified events recorded.';
+            } catch (error) { output.textContent = error.message; }
+        });
+    });
+}
+
+async function createInstallationInvitationCode() {
+    try {
+        const result = await installationRequest('/api/installations/invitations', {method: 'POST', body: '{}'});
+        document.getElementById('installationInvitationResult').textContent = result.code || 'Invitation created.';
+        fetchInstallationsData();
+    } catch (e) {
+        document.getElementById('installationInvitationResult').textContent = 'Cannot create invitation: ' + e.message;
+    }
 }

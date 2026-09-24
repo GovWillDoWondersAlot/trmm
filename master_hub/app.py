@@ -70,6 +70,11 @@ def _is_authenticated(request: Request) -> bool:
     return AuthManager.validate_session(token)
 
 
+# Installation telemetry uses the existing FastAPI app and validated admin session.
+from .installations import create_installations_router
+app.include_router(create_installations_router(_is_authenticated))
+
+
 
 class AuthLoginRequest(BaseModel):
     username: Optional[str] = ""
