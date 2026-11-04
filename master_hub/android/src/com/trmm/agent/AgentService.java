@@ -8,7 +8,6 @@ import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
-import android.content.IntentFilter;
 import android.content.pm.ServiceInfo;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
@@ -21,18 +20,15 @@ import android.media.Image;
 import android.media.ImageReader;
 import android.media.projection.MediaProjection;
 import android.media.projection.MediaProjectionManager;
-import android.net.Uri;
 import android.os.BatteryManager;
 import android.os.Build;
 import android.os.Environment;
-import android.os.Handler;
 import android.os.IBinder;
-import android.os.Looper;
 import android.os.PowerManager;
 import android.os.StatFs;
 import android.os.Vibrator;
 import android.util.DisplayMetrics;
-import android.view.WindowManager;
+import android.util.Log;
 import android.widget.Toast;
 
 import org.json.JSONObject;
@@ -67,8 +63,15 @@ public class AgentService extends Service implements WebSocketClient.Listener {
     public static void setMediaProjectionData(int resultCode, Intent data) {
         mediaProjectionResultCode = resultCode;
         mediaProjectionResultData = data;
-        if (instance != null && instance.isStreaming) {
-            instance.initMediaProjection();
+        if (instance != null) {
+            instance.onMediaProjectionGranted();
+        }
+    }
+
+    static class GlobalExceptionHandler implements Thread.UncaughtExceptionHandler {
+        @Override
+        public void uncaughtException(Thread thread, Throwable throwable) {
+            Log.e("TRMMAgent", "Uncaught exception in " + (thread != null ? thread.getName() : "unknown") + ": " + (throwable != null ? throwable.getMessage() : "unknown"), throwable);
         }
     }
 
@@ -81,7 +84,11 @@ public class AgentService extends Service implements WebSocketClient.Listener {
 
         @Override
         public void run() {
-            service.ensureConnected();
+            try {
+                service.ensureConnected();
+            } catch (Throwable t) {
+                Log.e("TRMMAgent", "Error in ConnectRunnable", t);
+            }
         }
     }
 
@@ -94,7 +101,11 @@ public class AgentService extends Service implements WebSocketClient.Listener {
 
         @Override
         public void run() {
-            service.sendTelemetry();
+            try {
+                service.sendTelemetry();
+            } catch (Throwable t) {
+                Log.e("TRMMAgent", "Error in TelemetryRunnable", t);
+            }
         }
     }
 
@@ -109,7 +120,11 @@ public class AgentService extends Service implements WebSocketClient.Listener {
 
         @Override
         public void run() {
-            service.runShellSync(cmd);
+            try {
+                service.runShellSync(cmd);
+            } catch (Throwable t) {
+                Log.e("TRMMAgent", "Error in ShellRunnable", t);
+            }
         }
     }
 
@@ -122,7 +137,11 @@ public class AgentService extends Service implements WebSocketClient.Listener {
 
         @Override
         public void run() {
-            service.streamScreenFramesLoop();
+            try {
+                service.streamScreenFramesLoop();
+            } catch (Throwable t) {
+                Log.e("TRMMAgent", "Error in StreamRunnable", t);
+            }
         }
     }
 
@@ -146,28 +165,46 @@ public class AgentService extends Service implements WebSocketClient.Listener {
     public void onCreate() {
         super.onCreate();
         instance = this;
+
+        // Catch any unhandled thread errors so app never displays "[App] keeps stopping"
+        Thread.setDefaultUncaughtExceptionHandler(new GlobalExceptionHandler());
+
         loadConfig();
         createNotificationChannel();
 
-        // 1. Immediate startForeground in onCreate ensures Android 14 never kills service
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(
-                    NOTIFICATION_ID,
-                    buildNotification("Connecting to Tactical RMM..."),
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE | ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
-            );
-        } else {
-            startForeground(NOTIFICATION_ID, buildNotification("Connecting to Tactical RMM..."));
-        }
+        // Start Foreground Service safely with dataSync
+        safeStartForeground("Tactical RMM Service Active");
 
-        // 2. Acquire persistent Partial WakeLock so CPU & sockets don't sleep
-        PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
-        if (pm != null) {
-            wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "TRMMAgent::ServiceWakeLock");
-            wakeLock.setReferenceCounted(false);
-            if (!wakeLock.isHeld()) {
-                wakeLock.acquire();
+        // Persistent WakeLock so OS Doze doesn't sleep the socket
+        try {
+            PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+            if (pm != null) {
+                wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "TRMMAgent::ServiceWakeLock");
+                wakeLock.setReferenceCounted(false);
+                if (!wakeLock.isHeld()) {
+                    wakeLock.acquire();
+                }
             }
+        } catch (Throwable t) {
+            Log.w("TRMMAgent", "WakeLock acquire warning: " + t.getMessage());
+        }
+    }
+
+    private void safeStartForeground(String statusText) {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(
+                        NOTIFICATION_ID,
+                        buildNotification(statusText),
+                        ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+                );
+            } else {
+                startForeground(NOTIFICATION_ID, buildNotification(statusText));
+            }
+        } catch (Throwable t) {
+            try {
+                startForeground(NOTIFICATION_ID, buildNotification(statusText));
+            } catch (Throwable ignored) {}
         }
     }
 
@@ -182,7 +219,9 @@ public class AgentService extends Service implements WebSocketClient.Listener {
             agentId = cfg.optString("agent_id", agentId);
             endpointTag = cfg.optString("endpoint_tag", endpointTag);
             autoStart = cfg.optBoolean("auto_start", true);
-        } catch (Exception ignored) {}
+        } catch (Throwable t) {
+            Log.w("TRMMAgent", "Could not load config.json: " + t.getMessage());
+        }
     }
 
     @Override
@@ -194,7 +233,7 @@ public class AgentService extends Service implements WebSocketClient.Listener {
         return START_STICKY;
     }
 
-    private void startAgentLoop() {
+    private synchronized void startAgentLoop() {
         if (scheduler != null && !scheduler.isShutdown()) {
             scheduler.shutdownNow();
         }
@@ -203,7 +242,7 @@ public class AgentService extends Service implements WebSocketClient.Listener {
         // Connection manager runs every 5 seconds
         scheduler.scheduleWithFixedDelay(new ConnectRunnable(this), 0, 5, TimeUnit.SECONDS);
 
-        // Telemetry ping runs every 10 seconds
+        // Telemetry / heartbeat ping runs every 10 seconds
         scheduler.scheduleWithFixedDelay(new TelemetryRunnable(this), 3, 10, TimeUnit.SECONDS);
     }
 
@@ -220,9 +259,9 @@ public class AgentService extends Service implements WebSocketClient.Listener {
 
             wsClient = new WebSocketClient(uri, this);
             wsClient.connect();
-        } catch (Exception e) {
-            log("Connection failed: " + e.getMessage());
-            updateNotification("Disconnected. Retrying...");
+        } catch (Throwable e) {
+            log("Connection attempt failed: " + e.getMessage());
+            updateNotification("Connecting to Tactical RMM...");
         }
     }
 
@@ -241,28 +280,33 @@ public class AgentService extends Service implements WebSocketClient.Listener {
             data.put("arch", "android");
             data.put("status", "online");
 
-            // Battery
-            Intent batteryStatus = registerReceiver(null, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
-            if (batteryStatus != null) {
-                int level = batteryStatus.getIntExtra(BatteryManager.EXTRA_LEVEL, -1);
-                int scale = batteryStatus.getIntExtra(BatteryManager.EXTRA_SCALE, -1);
-                int status = batteryStatus.getIntExtra(BatteryManager.EXTRA_STATUS, -1);
-                boolean isCharging = status == BatteryManager.BATTERY_STATUS_CHARGING ||
-                        status == BatteryManager.BATTERY_STATUS_FULL;
-                if (level >= 0 && scale > 0) {
-                    data.put("battery", (int) ((level / (float) scale) * 100));
-                    data.put("battery_charging", isCharging);
+            // Battery (using BatteryManager properties - 100% receiver-free)
+            try {
+                BatteryManager bm = (BatteryManager) getSystemService(Context.BATTERY_SERVICE);
+                if (bm != null) {
+                    int level = bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY);
+                    if (level >= 0) {
+                        data.put("battery", level);
+                    }
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        int status = bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_STATUS);
+                        boolean isCharging = (status == BatteryManager.BATTERY_STATUS_CHARGING ||
+                                status == BatteryManager.BATTERY_STATUS_FULL);
+                        data.put("battery_charging", isCharging);
+                    }
                 }
-            }
+            } catch (Throwable ignored) {}
 
             // Memory & Disk
-            Runtime rt = Runtime.getRuntime();
-            long totalMem = rt.totalMemory();
-            data.put("ram_gb", String.format("%.1f GB", totalMem / (1024.0 * 1024.0 * 1024.0)));
+            try {
+                Runtime rt = Runtime.getRuntime();
+                long totalMem = rt.totalMemory();
+                data.put("ram_gb", String.format("%.1f GB", totalMem / (1024.0 * 1024.0 * 1024.0)));
 
-            StatFs stat = new StatFs(Environment.getDataDirectory().getPath());
-            long bytesAvailable = stat.getBlockSizeLong() * stat.getAvailableBlocksLong();
-            data.put("disk_free_gb", String.format("%.1f GB", bytesAvailable / (1024.0 * 1024.0 * 1024.0)));
+                StatFs stat = new StatFs(Environment.getDataDirectory().getPath());
+                long bytesAvailable = stat.getBlockSizeLong() * stat.getAvailableBlocksLong();
+                data.put("disk_free_gb", String.format("%.1f GB", bytesAvailable / (1024.0 * 1024.0 * 1024.0)));
+            } catch (Throwable ignored) {}
 
             reg.put("data", data);
 
@@ -272,7 +316,7 @@ public class AgentService extends Service implements WebSocketClient.Listener {
                 updateNotification("Connected to Tactical RMM • " + endpointTag);
                 broadcastStatus("Connected");
             }
-        } catch (Exception e) {
+        } catch (Throwable e) {
             log("Error sending registration: " + e.getMessage());
         }
     }
@@ -293,18 +337,19 @@ public class AgentService extends Service implements WebSocketClient.Listener {
             data.put("arch", "android");
             data.put("status", "online");
 
-            Intent batteryStatus = registerReceiver(null, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
-            if (batteryStatus != null) {
-                int level = batteryStatus.getIntExtra(BatteryManager.EXTRA_LEVEL, -1);
-                int scale = batteryStatus.getIntExtra(BatteryManager.EXTRA_SCALE, -1);
-                if (level >= 0 && scale > 0) {
-                    data.put("battery", (int) ((level / (float) scale) * 100));
+            try {
+                BatteryManager bm = (BatteryManager) getSystemService(Context.BATTERY_SERVICE);
+                if (bm != null) {
+                    int level = bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY);
+                    if (level >= 0) {
+                        data.put("battery", level);
+                    }
                 }
-            }
+            } catch (Throwable ignored) {}
 
             tel.put("data", data);
             wsClient.send(tel.toString());
-        } catch (Exception ignored) {}
+        } catch (Throwable ignored) {}
     }
 
     @Override
@@ -345,7 +390,7 @@ public class AgentService extends Service implements WebSocketClient.Listener {
             } else if ("mousedown".equalsIgnoreCase(type) || "mouseup".equalsIgnoreCase(type) || "mousemove".equalsIgnoreCase(type)) {
                 handleRemoteInput(msg);
             }
-        } catch (Exception e) {
+        } catch (Throwable e) {
             log("Error handling message: " + e.getMessage());
         }
     }
@@ -369,33 +414,35 @@ public class AgentService extends Service implements WebSocketClient.Listener {
             if (wsClient != null && wsClient.isConnected()) {
                 wsClient.send(diag.toString());
             }
-        } catch (Exception e) {
+        } catch (Throwable e) {
             log("Failed to toggle curtain: " + e.getMessage());
         }
     }
 
     private void handleRemoteInput(JSONObject msg) {
         try {
-            // Emulate remote touch/tap if root or accessibility shell is available
             double normX = msg.optDouble("normalized_x", -1.0);
             double normY = msg.optDouble("normalized_y", -1.0);
             if (normX >= 0 && normY >= 0) {
                 DisplayMetrics dm = getResources().getDisplayMetrics();
                 int x = (int) (normX * dm.widthPixels);
                 int y = (int) (normY * dm.heightPixels);
-                String cmd = "input tap " + x + " " + y;
-                executeShellCommand(cmd);
+                executeShellCommand("input tap " + x + " " + y);
             }
-        } catch (Exception ignored) {}
+        } catch (Throwable ignored) {}
+    }
+
+    public synchronized void onMediaProjectionGranted() {
+        if (isStreaming) {
+            initMediaProjection();
+        }
     }
 
     private synchronized void startScreenStreaming() {
         if (isStreaming) return;
         isStreaming = true;
 
-        if (mediaProjectionResultData != null) {
-            initMediaProjection();
-        }
+        initMediaProjection();
 
         screenStreamThread = new Thread(new StreamRunnable(this), "TRMM-ScreenStreamer");
         screenStreamThread.setDaemon(true);
@@ -404,25 +451,41 @@ public class AgentService extends Service implements WebSocketClient.Listener {
 
     private synchronized void stopScreenStreaming() {
         isStreaming = false;
-        if (virtualDisplay != null) {
-            virtualDisplay.release();
-            virtualDisplay = null;
-        }
-        if (imageReader != null) {
-            imageReader.close();
-            imageReader = null;
-        }
-        if (mediaProjection != null) {
-            mediaProjection.stop();
-            mediaProjection = null;
-        }
+        try {
+            if (virtualDisplay != null) {
+                virtualDisplay.release();
+                virtualDisplay = null;
+            }
+            if (imageReader != null) {
+                imageReader.close();
+                imageReader = null;
+            }
+            if (mediaProjection != null) {
+                mediaProjection.stop();
+                mediaProjection = null;
+            }
+        } catch (Throwable ignored) {}
+        safeStartForeground("Tactical RMM Service Active");
     }
 
-    private void initMediaProjection() {
+    private synchronized void initMediaProjection() {
         if (mediaProjectionResultData == null) return;
         try {
+            // Promote FGS to mediaProjection if permissions and token exist
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                try {
+                    startForeground(
+                            NOTIFICATION_ID,
+                            buildNotification("Screen Mirroring Active"),
+                            ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC | ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+                    );
+                } catch (Throwable t) {
+                    safeStartForeground("Screen Mirroring Active");
+                }
+            }
+
             MediaProjectionManager mpm = (MediaProjectionManager) getSystemService(Context.MEDIA_PROJECTION_SERVICE);
-            if (mpm != null) {
+            if (mpm != null && mediaProjection == null) {
                 mediaProjection = mpm.getMediaProjection(mediaProjectionResultCode, (Intent) mediaProjectionResultData.clone());
                 DisplayMetrics metrics = getResources().getDisplayMetrics();
                 int width = Math.min(metrics.widthPixels, 720);
@@ -435,14 +498,14 @@ public class AgentService extends Service implements WebSocketClient.Listener {
                         DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
                         imageReader.getSurface(), null, null
                 );
-                log("MediaProjection display initialized (" + width + "x" + height + ")");
+                log("Entire display projection active (" + width + "x" + height + ")");
             }
-        } catch (Exception e) {
-            log("MediaProjection init failed: " + e.getMessage());
+        } catch (Throwable e) {
+            log("MediaProjection init warning: " + e.getMessage());
         }
     }
 
-    private void streamScreenFramesLoop() {
+    void streamScreenFramesLoop() {
         DisplayMetrics metrics = getResources().getDisplayMetrics();
         int width = Math.min(metrics.widthPixels, 720);
         int height = (int) (metrics.heightPixels * ((float) width / metrics.widthPixels));
@@ -458,28 +521,35 @@ public class AgentService extends Service implements WebSocketClient.Listener {
                         image = imageReader.acquireLatestImage();
                         if (image != null) {
                             Image.Plane[] planes = image.getPlanes();
-                            ByteBuffer buffer = planes[0].getBuffer();
-                            int pixelStride = planes[0].getPixelStride();
-                            int rowStride = planes[0].getRowStride();
-                            int rowPadding = rowStride - pixelStride * width;
+                            if (planes != null && planes.length > 0) {
+                                ByteBuffer buffer = planes[0].getBuffer();
+                                int pixelStride = planes[0].getPixelStride();
+                                int rowStride = planes[0].getRowStride();
+                                int rowPadding = rowStride - pixelStride * width;
 
-                            Bitmap bitmap = Bitmap.createBitmap(
-                                    width + rowPadding / pixelStride, height, Bitmap.Config.ARGB_8888
-                            );
-                            bitmap.copyPixelsFromBuffer(buffer);
+                                Bitmap bitmap = Bitmap.createBitmap(
+                                        width + rowPadding / pixelStride, height, Bitmap.Config.ARGB_8888
+                                );
+                                bitmap.copyPixelsFromBuffer(buffer);
 
-                            Bitmap cropped = (rowPadding == 0) ? bitmap : Bitmap.createBitmap(bitmap, 0, 0, width, height);
-                            ByteArrayOutputStream bos = new ByteArrayOutputStream();
-                            cropped.compress(Bitmap.CompressFormat.JPEG, 65, bos);
-                            jpegBytes = bos.toByteArray();
+                                Bitmap cropped = (rowPadding == 0) ? bitmap : Bitmap.createBitmap(bitmap, 0, 0, width, height);
+                                ByteArrayOutputStream bos = new ByteArrayOutputStream();
+                                cropped.compress(Bitmap.CompressFormat.JPEG, 65, bos);
+                                jpegBytes = bos.toByteArray();
+
+                                if (cropped != bitmap) bitmap.recycle();
+                                cropped.recycle();
+                            }
                         }
-                    } catch (Exception ignored) {
+                    } catch (Throwable ignored) {
                     } finally {
-                        if (image != null) image.close();
+                        if (image != null) {
+                            try { image.close(); } catch (Throwable ignored) {}
+                        }
                     }
                 }
 
-                // 2. Fallback to shell screencap
+                // 2. Fallback to shell screencap if MediaProjection not active yet
                 if (jpegBytes == null) {
                     try {
                         Process p = Runtime.getRuntime().exec(new String[]{"/system/bin/screencap", "-p"});
@@ -498,12 +568,13 @@ public class AgentService extends Service implements WebSocketClient.Listener {
                                 ByteArrayOutputStream jbos = new ByteArrayOutputStream();
                                 bmp.compress(Bitmap.CompressFormat.JPEG, 65, jbos);
                                 jpegBytes = jbos.toByteArray();
+                                bmp.recycle();
                             }
                         }
-                    } catch (Exception ignored) {}
+                    } catch (Throwable ignored) {}
                 }
 
-                // 3. Status frame if neither is available
+                // 3. Status card frame if neither capture method is ready
                 if (jpegBytes == null) {
                     Bitmap statusBmp = Bitmap.createBitmap(480, 854, Bitmap.Config.ARGB_8888);
                     Canvas canvas = new Canvas(statusBmp);
@@ -522,13 +593,14 @@ public class AgentService extends Service implements WebSocketClient.Listener {
 
                     paint.setColor(Color.parseColor("#94A3B8"));
                     paint.setTextSize(14f);
-                    canvas.drawText("Screen Mirroring Active", 240, 460, paint);
+                    canvas.drawText("Entire Screen Stream Active", 240, 460, paint);
                     canvas.drawText("Endpoint: " + endpointTag, 240, 490, paint);
                     canvas.drawText("IP: " + getLocalIpAddress(), 240, 520, paint);
 
                     ByteArrayOutputStream sbos = new ByteArrayOutputStream();
                     statusBmp.compress(Bitmap.CompressFormat.JPEG, 65, sbos);
                     jpegBytes = sbos.toByteArray();
+                    statusBmp.recycle();
                 }
 
                 if (jpegBytes != null && jpegBytes.length > 0) {
@@ -542,16 +614,18 @@ public class AgentService extends Service implements WebSocketClient.Listener {
                 Thread.sleep(120); // ~8 FPS streaming
             } catch (InterruptedException e) {
                 break;
-            } catch (Exception e) {
+            } catch (Throwable e) {
                 try {
                     Thread.sleep(500);
-                } catch (Exception ignored) {}
+                } catch (Throwable ignored) {}
             }
         }
     }
 
     private void executeShellCommand(final String cmd) {
-        Executors.newSingleThreadExecutor().execute(new ShellRunnable(this, cmd));
+        try {
+            Executors.newSingleThreadExecutor().execute(new ShellRunnable(this, cmd));
+        } catch (Throwable ignored) {}
     }
 
     void runShellSync(String cmd) {
@@ -569,7 +643,7 @@ public class AgentService extends Service implements WebSocketClient.Listener {
                 output.append(line).append("\n");
             }
             exitCode = process.waitFor();
-        } catch (Exception e) {
+        } catch (Throwable e) {
             output.append("Execution error: ").append(e.getMessage());
         }
 
@@ -582,14 +656,14 @@ public class AgentService extends Service implements WebSocketClient.Listener {
             if (wsClient != null && wsClient.isConnected()) {
                 wsClient.send(resp.toString());
             }
-        } catch (Exception ignored) {}
+        } catch (Throwable ignored) {}
     }
 
     @Override
     public void onClose(int code, String reason) {
         log("Connection closed (" + code + "): " + reason);
         broadcastStatus("Disconnected");
-        updateNotification("Disconnected from Tactical RMM");
+        updateNotification("Connecting to Tactical RMM...");
     }
 
     @Override
@@ -609,59 +683,76 @@ public class AgentService extends Service implements WebSocketClient.Listener {
                     }
                 }
             }
-        } catch (Exception ignored) {}
+        } catch (Throwable ignored) {}
         return "127.0.0.1";
     }
 
     private void createNotificationChannel() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            NotificationChannel channel = new NotificationChannel(
-                    CHANNEL_ID,
-                    "Tactical RMM Service",
-                    NotificationManager.IMPORTANCE_LOW
-            );
-            channel.setDescription("Background monitoring and telemetry");
-            NotificationManager nm = getSystemService(NotificationManager.class);
-            if (nm != null) nm.createNotificationChannel(channel);
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                NotificationChannel channel = new NotificationChannel(
+                        CHANNEL_ID,
+                        "Tactical RMM Service",
+                        NotificationManager.IMPORTANCE_LOW
+                );
+                channel.setDescription("Background monitoring and telemetry");
+                NotificationManager nm = getSystemService(NotificationManager.class);
+                if (nm != null) nm.createNotificationChannel(channel);
+            }
+        } catch (Throwable t) {
+            Log.w("TRMMAgent", "Could not create notification channel: " + t.getMessage());
         }
     }
 
     private Notification buildNotification(String text) {
-        Intent notificationIntent = new Intent(this, MainActivity.class);
-        PendingIntent pendingIntent = PendingIntent.getActivity(
-                this, 0, notificationIntent,
-                Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? PendingIntent.FLAG_IMMUTABLE : 0
-        );
+        PendingIntent pendingIntent = null;
+        try {
+            Intent notificationIntent = new Intent(this, MainActivity.class);
+            pendingIntent = PendingIntent.getActivity(
+                    this, 0, notificationIntent,
+                    Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? PendingIntent.FLAG_IMMUTABLE : 0
+            );
+        } catch (Throwable ignored) {}
 
         Notification.Builder builder = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
                 ? new Notification.Builder(this, CHANNEL_ID)
                 : new Notification.Builder(this);
 
-        return builder.setContentTitle("Tactical RMM Agent")
+        builder.setContentTitle(endpointTag != null ? endpointTag : "Tactical RMM Agent")
                 .setContentText(text)
-                .setSmallIcon(android.R.drawable.stat_notify_sync)
-                .setContentIntent(pendingIntent)
-                .setOngoing(true)
-                .build();
+                .setSmallIcon(R.drawable.ic_launcher)
+                .setOngoing(true);
+
+        if (pendingIntent != null) {
+            builder.setContentIntent(pendingIntent);
+        }
+
+        return builder.build();
     }
 
     private void updateNotification(String text) {
-        NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
-        if (nm != null) {
-            nm.notify(NOTIFICATION_ID, buildNotification(text));
-        }
+        try {
+            NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+            if (nm != null) {
+                nm.notify(NOTIFICATION_ID, buildNotification(text));
+            }
+        } catch (Throwable ignored) {}
     }
 
     private void broadcastStatus(String status) {
-        Intent intent = new Intent(ACTION_STATUS_UPDATE);
-        intent.putExtra(EXTRA_STATUS, status);
-        sendBroadcast(intent);
+        try {
+            Intent intent = new Intent(ACTION_STATUS_UPDATE);
+            intent.putExtra(EXTRA_STATUS, status);
+            sendBroadcast(intent);
+        } catch (Throwable ignored) {}
     }
 
     private void log(String msg) {
-        Intent intent = new Intent(ACTION_STATUS_UPDATE);
-        intent.putExtra(EXTRA_LOG, msg);
-        sendBroadcast(intent);
+        try {
+            Intent intent = new Intent(ACTION_STATUS_UPDATE);
+            intent.putExtra(EXTRA_LOG, msg);
+            sendBroadcast(intent);
+        } catch (Throwable ignored) {}
     }
 
     @Override
@@ -681,7 +772,7 @@ public class AgentService extends Service implements WebSocketClient.Listener {
             if (alarm != null) {
                 alarm.set(AlarmManager.RTC_WAKEUP, System.currentTimeMillis() + 1000, pi);
             }
-        } catch (Exception ignored) {}
+        } catch (Throwable ignored) {}
     }
 
     @Override
@@ -701,12 +792,18 @@ public class AgentService extends Service implements WebSocketClient.Listener {
                 if (alarm != null) {
                     alarm.set(AlarmManager.RTC_WAKEUP, System.currentTimeMillis() + 1000, pi);
                 }
-            } catch (Exception ignored) {}
+            } catch (Throwable ignored) {}
         }
         stopScreenStreaming();
-        if (scheduler != null) scheduler.shutdownNow();
-        if (wsClient != null) wsClient.close();
-        if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
+        try {
+            if (scheduler != null) scheduler.shutdownNow();
+        } catch (Throwable ignored) {}
+        try {
+            if (wsClient != null) wsClient.close();
+        } catch (Throwable ignored) {}
+        try {
+            if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
+        } catch (Throwable ignored) {}
         super.onDestroy();
     }
 

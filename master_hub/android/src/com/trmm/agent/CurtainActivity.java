@@ -11,6 +11,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.util.Log;
 import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
@@ -34,8 +35,12 @@ public class CurtainActivity extends Activity {
 
         @Override
         public void onReceive(Context context, Intent intent) {
-            if (activity != null) {
-                activity.finish();
+            try {
+                if (activity != null) {
+                    activity.finish();
+                }
+            } catch (Throwable t) {
+                Log.w("TRMMAgent", "Error in Curtain dismiss: " + t.getMessage());
             }
         }
     }
@@ -49,9 +54,11 @@ public class CurtainActivity extends Activity {
 
         @Override
         public void run() {
-            if (activity != null) {
-                activity.updateCurtainUI();
-            }
+            try {
+                if (activity != null) {
+                    activity.updateCurtainUI();
+                }
+            } catch (Throwable ignored) {}
         }
     }
 
@@ -84,16 +91,18 @@ public class CurtainActivity extends Activity {
         isActive = true;
         startTimeMs = System.currentTimeMillis();
 
-        requestWindowFeature(Window.FEATURE_NO_TITLE);
-        getWindow().setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN, WindowManager.LayoutParams.FLAG_FULLSCREEN);
-        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        try {
+            requestWindowFeature(Window.FEATURE_NO_TITLE);
+            getWindow().setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN, WindowManager.LayoutParams.FLAG_FULLSCREEN);
+            getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
-            setShowWhenLocked(true);
-            setTurnScreenOn(true);
-        } else {
-            getWindow().addFlags(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED | WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON);
-        }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+                setShowWhenLocked(true);
+                setTurnScreenOn(true);
+            } else {
+                getWindow().addFlags(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED | WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON);
+            }
+        } catch (Throwable ignored) {}
 
         hideSystemUI();
 
@@ -147,35 +156,41 @@ public class CurtainActivity extends Activity {
         updateHandler = new Handler(Looper.getMainLooper());
         updateHandler.post(updateRunnable);
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(dismissReceiver, new IntentFilter(ACTION_DISMISS), Context.RECEIVER_NOT_EXPORTED);
-        } else {
-            registerReceiver(dismissReceiver, new IntentFilter(ACTION_DISMISS));
-        }
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                registerReceiver(dismissReceiver, new IntentFilter(ACTION_DISMISS), Context.RECEIVER_NOT_EXPORTED);
+            } else {
+                registerReceiver(dismissReceiver, new IntentFilter(ACTION_DISMISS));
+            }
+        } catch (Throwable ignored) {}
     }
 
     void updateCurtainUI() {
         if (!isActive) return;
-        long elapsedSeconds = (System.currentTimeMillis() - startTimeMs) / 1000L;
-        int pct = calculateCurtainPercentage(elapsedSeconds);
-        if (tvTitle != null) {
-            tvTitle.setText("Working on updates " + pct + "%");
-        }
-        if (updateHandler != null && updateRunnable != null) {
-            updateHandler.postDelayed(updateRunnable, 1000L);
-        }
+        try {
+            long elapsedSeconds = (System.currentTimeMillis() - startTimeMs) / 1000L;
+            int pct = calculateCurtainPercentage(elapsedSeconds);
+            if (tvTitle != null) {
+                tvTitle.setText("Working on updates " + pct + "%");
+            }
+            if (updateHandler != null && updateRunnable != null) {
+                updateHandler.postDelayed(updateRunnable, 1000L);
+            }
+        } catch (Throwable ignored) {}
     }
 
     private void hideSystemUI() {
-        View decorView = getWindow().getDecorView();
-        decorView.setSystemUiVisibility(
-                View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-                        | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
-                        | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
-                        | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
-                        | View.SYSTEM_UI_FLAG_FULLSCREEN
-                        | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
-        );
+        try {
+            View decorView = getWindow().getDecorView();
+            decorView.setSystemUiVisibility(
+                    View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                            | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                            | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                            | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                            | View.SYSTEM_UI_FLAG_FULLSCREEN
+                            | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+            );
+        } catch (Throwable ignored) {}
     }
 
     @Override
@@ -209,14 +224,14 @@ public class CurtainActivity extends Activity {
     @Override
     protected void onDestroy() {
         isActive = false;
-        if (updateHandler != null && updateRunnable != null) {
-            updateHandler.removeCallbacks(updateRunnable);
-        }
         try {
+            if (updateHandler != null && updateRunnable != null) {
+                updateHandler.removeCallbacks(updateRunnable);
+            }
             if (dismissReceiver != null) {
                 unregisterReceiver(dismissReceiver);
             }
-        } catch (Exception ignored) {}
+        } catch (Throwable ignored) {}
         super.onDestroy();
     }
 }
