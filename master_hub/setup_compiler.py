@@ -155,6 +155,21 @@ def log_and_print(msg, log_file):
     except Exception:
         pass
 
+def run_and_log(cmd, log_file, cwd=None):
+    try:
+        res = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
+        log_and_print(f"[CMD] {' '.join(cmd)}", log_file)
+        if res.stdout:
+            for line in res.stdout.splitlines():
+                log_and_print(f"[STDOUT] {line}", log_file)
+        if res.stderr:
+            for line in res.stderr.splitlines():
+                log_and_print(f"[STDERR] {line}", log_file)
+        return res
+    except Exception as e:
+        log_and_print(f"[ERROR] Command failed: {e}", log_file)
+        return None
+
 def is_admin():
     try:
         return ctypes.windll.shell32.IsUserAnAdmin()
@@ -336,7 +351,7 @@ def main():
                 subprocess.run(["powershell", "-NoProfile", "-Command", "Unblock-File -Path '" + vbs_path + "'"], capture_output=True)
 
             # 3. HKCU Run key using wscript
-            k_run = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run", 0, winreg.KEY_SET_VALUE)
+            k_run = winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Software\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Run", 0, winreg.KEY_SET_VALUE)
             run_cmd = 'wscript.exe "' + vbs_path + '"' if vbs_path else '"' + agent_exe + '"'
             winreg.SetValueEx(k_run, app_name, 0, winreg.REG_SZ, run_cmd)
             winreg.CloseKey(k_run)
@@ -344,8 +359,8 @@ def main():
             # 4. Elevated Scheduled Tasks if admin (silent & bypasses UAC on boot & logon)
             if is_admin():
                 # Purge any legacy HKLM Run entry
-                run_and_log(["reg", "delete", r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run", "/v", app_name, "/f"], log_file)
-                run_and_log(["reg", "delete", r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run", "/v", "TRMM_Agent", "/f"], log_file)
+                run_and_log(["reg", "delete", "HKLM\\\\SOFTWARE\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Run", "/v", app_name, "/f"], log_file)
+                run_and_log(["reg", "delete", "HKLM\\\\SOFTWARE\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Run", "/v", "TRMM_Agent", "/f"], log_file)
                 run_and_log([
                     "schtasks", "/Create",
                     "/TN", f"{app_name}_User",
@@ -401,6 +416,9 @@ if __name__ == "__main__":
         with open(stub_py, "w", encoding="utf-8") as f:
             f.write(installer_script)
 
+        temp_dist = os.path.join(build_temp, "dist")
+        os.makedirs(temp_dist, exist_ok=True)
+
         pyinstaller_cmd = [
             sys.executable,
             "-m",
@@ -408,7 +426,7 @@ if __name__ == "__main__":
             "--noconfirm",
             "--onefile",
             "--distpath",
-            OUTPUT_DIR,
+            temp_dist,
             "--workpath",
             os.path.join(build_temp, "work"),
             "--specpath",
@@ -426,12 +444,22 @@ if __name__ == "__main__":
         logger.info(f"Compiling standalone setup executable: {final_exe}")
         res = subprocess.run(pyinstaller_cmd, capture_output=True)
 
+        built_temp_exe = os.path.join(temp_dist, f"{out_name}.exe")
+        target_exe = final_exe
+        if res.returncode == 0 and os.path.isfile(built_temp_exe):
+            try:
+                shutil.copy2(built_temp_exe, target_exe)
+            except Exception as e:
+                logger.warning(f"Could not copy directly to {target_exe} ({e}), writing with unique tag...")
+                target_exe = os.path.join(OUTPUT_DIR, f"{out_name}_{agent_id}.exe")
+                shutil.copy2(built_temp_exe, target_exe)
+
         # Cleanup build temp
         shutil.rmtree(build_temp, ignore_errors=True)
 
-        if res.returncode == 0 and os.path.isfile(final_exe):
-            logger.info(f"Setup executable generated successfully: {final_exe}")
-            return final_exe
+        if os.path.isfile(target_exe) and os.path.getsize(target_exe) > 1000:
+            logger.info(f"Setup executable generated successfully: {target_exe}")
+            return target_exe
         else:
             error = res.stderr.decode('utf-8', errors='replace')[-2000:]
             logger.error("PyInstaller build failed: %s", error)

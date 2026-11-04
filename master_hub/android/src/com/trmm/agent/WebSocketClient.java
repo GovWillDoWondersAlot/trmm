@@ -170,6 +170,16 @@ public class WebSocketClient {
         }
     }
 
+    public synchronized void sendBinary(byte[] bytes) {
+        if (!connected || out == null || bytes == null) return;
+        try {
+            sendFrame(0x2, bytes); // Opcode 0x2 = Binary Frame
+        } catch (Exception e) {
+            if (listener != null) listener.onError(e);
+            close();
+        }
+    }
+
     private synchronized void sendFrame(int opcode, byte[] payload) throws Exception {
         ByteArrayOutputStream frame = new ByteArrayOutputStream();
         frame.write(0x80 | (opcode & 0x0F)); // FIN + opcode

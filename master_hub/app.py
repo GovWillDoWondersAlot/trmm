@@ -563,6 +563,8 @@ async def websocket_agent_tunnel(websocket: WebSocket, agent_id: str):
         handshake_data = json.loads(raw_handshake)
         if handshake_data.get("type") == "handshake":
             agent_info = handshake_data.get("data", {})
+        elif handshake_data.get("type") in ("register", "init"):
+            agent_info = handshake_data.get("data") if isinstance(handshake_data.get("data"), dict) else handshake_data
 
         agent = agent_mgr.register_connection(agent_id, websocket, agent_info)
         if not agent:
@@ -629,8 +631,9 @@ async def websocket_agent_tunnel(websocket: WebSocket, agent_id: str):
 
             elif "text" in msg and msg["text"]:
                 text_data = json.loads(msg["text"])
-                if text_data.get("type") == "heartbeat":
-                    agent.update_info(text_data.get("data", {}))
+                if text_data.get("type") in ("heartbeat", "telemetry"):
+                    update_dict = text_data.get("data") if isinstance(text_data.get("data"), dict) else text_data
+                    agent.update_info(update_dict)
                     await broadcast_agent_list()
                 elif text_data.get("type") == "mirror_health":
                     for v_sess in list(agent.mirror_viewers.values()):

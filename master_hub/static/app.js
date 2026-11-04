@@ -802,11 +802,11 @@ async function submitGenerateAgent() {
                     loadAllGeneratedAgents(false);
                 }
                 if (data.exe_download_url) {
-                    btn.innerHTML = `<span>✓ Installer Ready</span>`;
-                    showToast("Installer Built", `Download ${data.exe_filename} for deployment.`, "success");
+                    btn.innerHTML = `<span>✓ Executable Ready</span>`;
+                    showToast("Executable Ready", `Download ${data.exe_filename} for 1-click single-file deployment.`, "success");
                 } else {
-                    btn.innerHTML = `<span>ZIP Ready — EXE Build Failed</span>`;
-                    showToast("Setup EXE Build Failed", data.installer_error || "The ZIP is available, but the Windows setup EXE could not be compiled.", "warning");
+                    btn.innerHTML = `<span>ZIP Ready — Standalone EXE Fallback</span>`;
+                    showToast("Package Ready", data.installer_error || "The deployment package is ready.", "info");
                 }
                 btn.disabled = false;
             }

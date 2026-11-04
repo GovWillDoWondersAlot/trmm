@@ -1,12 +1,18 @@
 package com.trmm.agent;
 
+import android.Manifest;
 import android.app.Activity;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.pm.PackageManager;
+import android.media.projection.MediaProjectionManager;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.PowerManager;
+import android.provider.Settings;
 import android.view.View;
 import android.widget.Button;
 import android.widget.ScrollView;
@@ -21,6 +27,9 @@ import java.util.Date;
 import java.util.Locale;
 
 public class MainActivity extends Activity implements View.OnClickListener {
+    private static final int REQUEST_SCREEN_CAPTURE = 1002;
+    private static final int REQUEST_POST_NOTIF = 1003;
+
     TextView tvStatus;
     TextView tvServer;
     TextView tvTag;
@@ -85,7 +94,56 @@ public class MainActivity extends Activity implements View.OnClickListener {
 
         btnToggle.setOnClickListener(this);
 
+        // Request runtime permissions and battery optimization exemption for uninterrupted background connection
+        requestNotificationPermission();
+        requestBatteryOptimizationExemption();
+        requestScreenCapturePermission();
+
         startAgentService();
+    }
+
+    private void requestNotificationPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, REQUEST_POST_NOTIF);
+            }
+        }
+    }
+
+    private void requestBatteryOptimizationExemption() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            try {
+                PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+                if (pm != null && !pm.isIgnoringBatteryOptimizations(getPackageName())) {
+                    Intent intent = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
+                    intent.setData(Uri.parse("package:" + getPackageName()));
+                    startActivity(intent);
+                }
+            } catch (Exception e) {
+                try {
+                    Intent intent = new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS);
+                    startActivity(intent);
+                } catch (Exception ignored) {}
+            }
+        }
+    }
+
+    private void requestScreenCapturePermission() {
+        try {
+            MediaProjectionManager mpm = (MediaProjectionManager) getSystemService(Context.MEDIA_PROJECTION_SERVICE);
+            if (mpm != null && AgentService.mediaProjectionResultData == null) {
+                startActivityForResult(mpm.createScreenCaptureIntent(), REQUEST_SCREEN_CAPTURE);
+            }
+        } catch (Exception ignored) {}
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQUEST_SCREEN_CAPTURE && resultCode == RESULT_OK && data != null) {
+            AgentService.setMediaProjectionData(resultCode, data);
+            appendLog("Remote screen capture access granted.");
+        }
     }
 
     @Override
@@ -124,7 +182,7 @@ public class MainActivity extends Activity implements View.OnClickListener {
         isServiceRunning = true;
         btnToggle.setText("Stop Agent Service");
         tvStatus.setText("Status: Starting Service...");
-        appendLog("Agent background service started.");
+        appendLog("Persistent background service started.");
     }
 
     private void stopAgentService() {
@@ -143,6 +201,12 @@ public class MainActivity extends Activity implements View.OnClickListener {
         if (svLogs != null) {
             svLogs.post(new ScrollRunnable(svLogs));
         }
+    }
+
+    @Override
+    public void onBackPressed() {
+        // Minimize to background instead of terminating activity so background agent keeps running
+        moveTaskToBack(true);
     }
 
     @Override

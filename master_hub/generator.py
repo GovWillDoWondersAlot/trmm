@@ -310,6 +310,17 @@ ws.Run chr(34) & currentDir & "\\install.bat" & chr(34), 0, False
                 os.remove(partial_zip_path)
             raise
 
+        # Export direct standalone executable into OUTPUT_DIR before cleaning up build_dir
+        standalone_direct_exe = os.path.join(OUTPUT_DIR, f"{app_name}.exe")
+        built_agent_exe = os.path.join(build_dir, f"{app_name}.exe")
+        if not os.path.isfile(built_agent_exe):
+            built_agent_exe = os.path.join(build_dir, "TRMM_Agent.exe")
+        if os.path.isfile(built_agent_exe):
+            try:
+                shutil.copy2(built_agent_exe, standalone_direct_exe)
+            except Exception as e:
+                logger.warning(f"Could not export direct standalone binary to {standalone_direct_exe}: {e}")
+
         shutil.rmtree(build_dir)
 
         # 5. Process optional custom software logo / icon and custom executable name
@@ -326,11 +337,18 @@ ws.Run chr(34) & currentDir & "\\install.bat" & chr(34), 0, False
                 custom_name=custom_name, icon_path=icon_path
             )
             if not setup_exe_path:
-                installer_error = "Windows setup EXE compilation failed. Check the server compiler log."
+                installer_error = "Windows setup EXE compilation failed. Falling back to standalone executable."
         except RuntimeError as error:
             setup_exe_path = None
             installer_error = str(error)
             logger.error("Setup EXE unavailable: %s", error)
+
+        # Fallback to direct standalone executable if setup compiler did not produce an installer
+        if not setup_exe_path and os.path.isfile(standalone_direct_exe):
+            setup_exe_path = standalone_direct_exe
+            installer_error = None
+            logger.info(f"Using direct standalone executable fallback: {setup_exe_path}")
+
         setup_exe_filename = os.path.basename(setup_exe_path) if setup_exe_path else None
 
         # 7. Create Single-File Bootstrap Installer (.bat)
