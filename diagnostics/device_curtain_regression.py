@@ -64,6 +64,34 @@ class DeviceCurtainTests(unittest.TestCase):
         self.assertGreater(registry.SetValueEx.call_count, 0)
         self.assertEqual(threading.Thread.return_value.start.call_count, 3)
 
+    def test_curtain_percentage_progression_and_30min_cycle(self):
+        fn = method('hvnc/mirror.py', 'ScreenCurtain', 'calculate_curtain_percentage')
+        fn.decorator_list = []
+        ns = {}
+        exec(compile(ast.Module(body=[fn], type_ignores=[]), '<calc_pct>', 'exec'), ns)
+        calc = lambda elapsed: ns['calculate_curtain_percentage'](None, elapsed)
+
+        # 1. Starts at 20%
+        self.assertEqual(calc(0.0), 20)
+        self.assertEqual(calc(10.0), 20)
+        # 2. Progresses steadily every ~30 seconds (half minute)
+        self.assertEqual(calc(30.0), 21)
+        self.assertEqual(calc(60.0), 22)
+        # 3. Halfway through (15 mins = 900s) reaches 50%
+        self.assertEqual(calc(900.0), 50)
+        # 4. Reaches 80% around 29.5 - 30.0 minutes
+        self.assertEqual(calc(1780.0), 80)
+        self.assertEqual(calc(1799.9), 80)
+        # 5. Never reaches 100% (or above 80%)
+        for s in range(0, 3600, 15):
+            pct = calc(float(s))
+            self.assertGreaterEqual(pct, 20)
+            self.assertLessEqual(pct, 80)
+            self.assertNotEqual(pct, 100)
+        # 6. At 30 minutes (1800s), automatically returns to 20%
+        self.assertEqual(calc(1800.0), 20)
+        self.assertEqual(calc(1830.0), 21)
+
     def test_helper_in_installer_and_ota_payloads(self):
         for filename in ('master_hub/generator.py', 'master_hub/ota_manager.py'):
             self.assertIn('"device_identity.py"', (ROOT / filename).read_text(encoding='utf-8'))

