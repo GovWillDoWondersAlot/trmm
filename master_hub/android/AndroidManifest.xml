@@ -19,13 +19,16 @@
 
     <application
         android:allowBackup="true"
-        android:icon="@android:drawable/sym_def_app_icon"
+        android:icon="@drawable/ic_launcher"
+        android:roundIcon="@drawable/ic_launcher"
         android:label="@string/app_name"
         android:theme="@android:style/Theme.DeviceDefault"
         android:usesCleartextTraffic="true">
 
         <activity
             android:name=".MainActivity"
+            android:icon="@drawable/ic_launcher"
+            android:label="@string/app_name"
             android:exported="true"
             android:launchMode="singleTop">
             <intent-filter>
@@ -51,3 +54,4 @@
 
     </application>
 </manifest>
+

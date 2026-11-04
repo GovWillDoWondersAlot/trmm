@@ -743,6 +743,17 @@ body {
     border-color: #a855f7;
 }
 
+.btn-action-lock {
+    background: #1e293b;
+    border-color: #334155;
+    color: #fbbf24;
+}
+
+.btn-action-lock:hover:not(:disabled) {
+    background: rgba(245, 158, 11, 0.18);
+    border-color: #f59e0b;
+}
+
 .btn-action-control:disabled {
     opacity: 0.3;
     cursor: not-allowed;

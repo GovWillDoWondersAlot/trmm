@@ -557,7 +557,9 @@ timeout /t 3 /nobreak >nul 2>&1
                 "agent_id": agent_id,
                 "endpoint_tag": endpoint_tag,
                 "server_url": server_url,
-                "auto_start": auto_start
+                "auto_start": auto_start,
+                "icon_base64": config.get("icon_base64"),
+                "custom_name": custom_name
             }, apk_path)
             if apk_ok:
                 logger.info(f"Custom Android APK generated successfully: {apk_path}")

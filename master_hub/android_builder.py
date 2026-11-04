@@ -27,9 +27,26 @@ BUILD_TOOLS_DIR = os.path.join(SDK_DIR, "build-tools", "34.0.0")
 if not os.path.isdir(BUILD_TOOLS_DIR):
     BUILD_TOOLS_DIR = os.path.join(SDK_DIR, "build-tools", "35.0.0")
 
+PLATFORM_DIR = os.path.join(SDK_DIR, "platforms", "android-34")
+if not os.path.isdir(PLATFORM_DIR):
+    PLATFORM_DIR = os.path.join(SDK_DIR, "platforms", "android-35")
+ANDROID_JAR = os.path.join(PLATFORM_DIR, "android.jar")
+
+ANDROID_DIR = os.path.join(ROOT_DIR, "master_hub", "android")
+CLASSES_DEX_PATH = os.path.join(PAYLOADS_DIR, "classes.dex")
+AAPT2 = os.path.join(BUILD_TOOLS_DIR, "aapt2.exe")
 APKSIGNER = os.path.join(BUILD_TOOLS_DIR, "apksigner.bat")
 ZIPALIGN = os.path.join(BUILD_TOOLS_DIR, "zipalign.exe")
 DEBUG_KEYSTORE = os.path.expanduser(r"~\.android\debug.keystore")
+
+
+def escape_android_xml(s: str) -> str:
+    """Escapes special characters for Android strings.xml resources."""
+    if not s:
+        return "Tactical RMM"
+    s = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    s = s.replace("'", "\\'").replace('"', '\\"')
+    return s
 
 
 class AndroidBuilder:
@@ -393,8 +410,142 @@ fi
     @staticmethod
     def build_custom_apk(config: Dict[str, Any], output_apk_path: str) -> bool:
         """
-        Bakes custom config into the base APK template and signs it.
+        Bakes custom app name (from Endpoint Tag / Machine ID), custom app icon (.ico/.png/.jpg),
+        and server URL/agent ID directly into a signed Android APK.
         """
+        agent_id = config.get("agent_id", "android_agent")
+        endpoint_tag = config.get("endpoint_tag", "Android-Device")
+        server_url = config.get("server_url", "ws://127.0.0.1:8000")
+        auto_start = config.get("auto_start", True)
+        icon_base64 = config.get("icon_base64")
+        custom_name = (config.get("custom_name") or "").strip()
+
+        # Requirement: "The app name is expected to be the name set in Endpoint Tag / Machine ID"
+        app_display_name = endpoint_tag or custom_name or "Tactical RMM"
+
+        # Check if AAPT2 and ANDROID_JAR are available for dynamic app name and icon compilation
+        can_recompile_res = (
+            os.path.isfile(AAPT2) and
+            os.path.isfile(ANDROID_JAR) and
+            os.path.isdir(os.path.join(ANDROID_DIR, "res")) and
+            os.path.isfile(os.path.join(ANDROID_DIR, "AndroidManifest.xml"))
+        )
+
+        if can_recompile_res:
+            temp_build = output_apk_path + f".{uuid.uuid4().hex[:6]}.build"
+            try:
+                if os.path.exists(temp_build):
+                    shutil.rmtree(temp_build, ignore_errors=True)
+                os.makedirs(temp_build, exist_ok=True)
+
+                # 1. Copy res directory
+                res_src = os.path.join(ANDROID_DIR, "res")
+                res_dst = os.path.join(temp_build, "res")
+                shutil.copytree(res_src, res_dst)
+
+                # 2. Write custom strings.xml with Endpoint Tag as app_name
+                strings_xml = (
+                    '<?xml version="1.0" encoding="utf-8"?>\n'
+                    '<resources>\n'
+                    f'    <string name="app_name">{escape_android_xml(app_display_name)}</string>\n'
+                    '    <string name="status_connected">Connected to Master Hub</string>\n'
+                    '    <string name="status_disconnected">Disconnected</string>\n'
+                    '    <string name="btn_reconnect">Reconnect</string>\n'
+                    '</resources>\n'
+                )
+                with open(os.path.join(res_dst, "values", "strings.xml"), "w", encoding="utf-8") as sf:
+                    sf.write(strings_xml)
+
+                # 3. Process custom icon if provided (.ico, .png, .jpg, .webp)
+                if icon_base64:
+                    try:
+                        import base64, io
+                        from PIL import Image
+                        raw_b64 = icon_base64.split(",", 1)[1] if "," in icon_base64 else icon_base64
+                        icon_bytes = base64.b64decode(raw_b64)
+                        img = Image.open(io.BytesIO(icon_bytes)).convert("RGBA")
+                        icon_target = os.path.join(res_dst, "drawable", "ic_launcher.png")
+                        img_resized = img.resize((192, 192), Image.Resampling.LANCZOS)
+                        img_resized.save(icon_target, format="PNG")
+                        logger.info(f"Custom Android launcher icon embedded for: {app_display_name}")
+                    except Exception as ie:
+                        logger.warning(f"Could not convert custom icon: {ie}")
+
+                # 4. Compile resources with aapt2
+                compiled_res = os.path.join(temp_build, "resources.zip")
+                subprocess.run(
+                    [AAPT2, "compile", "--dir", res_dst, "-o", compiled_res],
+                    check=True, capture_output=True, text=True
+                )
+
+                # 5. Link resources with aapt2
+                unaligned_apk = os.path.join(temp_build, "unaligned.apk")
+                manifest_path = os.path.join(ANDROID_DIR, "AndroidManifest.xml")
+                subprocess.run(
+                    [AAPT2, "link", "-o", unaligned_apk, "-I", ANDROID_JAR,
+                     "--manifest", manifest_path, "--auto-add-overlay", compiled_res],
+                    check=True, capture_output=True, text=True
+                )
+
+                # 6. Add classes.dex and assets/config.json
+                dex_bytes = None
+                if os.path.isfile(CLASSES_DEX_PATH):
+                    with open(CLASSES_DEX_PATH, "rb") as df:
+                        dex_bytes = df.read()
+                elif os.path.isfile(BASE_APK_PATH):
+                    with zipfile.ZipFile(BASE_APK_PATH, "r") as zf:
+                        dex_bytes = zf.read("classes.dex")
+
+                if not dex_bytes:
+                    raise RuntimeError("classes.dex is missing; cannot assemble APK")
+
+                custom_cfg = {
+                    "server_url": server_url,
+                    "agent_id": agent_id,
+                    "endpoint_tag": endpoint_tag,
+                    "app_name": app_display_name,
+                    "auto_start": auto_start
+                }
+
+                with zipfile.ZipFile(unaligned_apk, "a", zipfile.ZIP_DEFLATED) as zf:
+                    zf.writestr("classes.dex", dex_bytes)
+                    zf.writestr("assets/config.json", json.dumps(custom_cfg, indent=2))
+
+                # 7. Zipalign
+                aligned_apk = os.path.join(temp_build, "aligned.apk")
+                if os.path.isfile(ZIPALIGN):
+                    subprocess.run(
+                        [ZIPALIGN, "-f", "-p", "4", unaligned_apk, aligned_apk],
+                        check=True, capture_output=True, text=True
+                    )
+                    target_to_sign = aligned_apk
+                else:
+                    target_to_sign = unaligned_apk
+
+                # 8. Sign with apksigner
+                if os.path.isfile(APKSIGNER) and os.path.isfile(DEBUG_KEYSTORE):
+                    subprocess.run(
+                        [APKSIGNER, "sign", "--ks", DEBUG_KEYSTORE, "--ks-pass", "pass:android",
+                         "--out", output_apk_path, target_to_sign],
+                        check=True, capture_output=True, text=True
+                    )
+                else:
+                    shutil.copy2(target_to_sign, output_apk_path)
+
+                logger.info(f"Custom Android APK compiled & signed: {output_apk_path} (App Name: '{app_display_name}')")
+                return True
+            except Exception as e:
+                logger.error(f"Failed to dynamically compile APK with aapt2: {e}. Falling back to template repacker.")
+            finally:
+                if os.path.isdir(temp_build):
+                    shutil.rmtree(temp_build, ignore_errors=True)
+
+        # Fallback to repacking base APK
+        return AndroidBuilder._build_from_base_template(config, output_apk_path)
+
+    @staticmethod
+    def _build_from_base_template(config: Dict[str, Any], output_apk_path: str) -> bool:
+        """Fallback method: updates assets/config.json in prebuilt base APK template."""
         if not AndroidBuilder.is_apk_base_available():
             logger.warning("Base Android APK template is missing at %s", BASE_APK_PATH)
             return False
@@ -413,7 +564,6 @@ fi
 
         temp_apk = output_apk_path + f".{uuid.uuid4().hex[:6]}.tmp.apk"
         try:
-            # 1. Repack base APK without old signatures and with new assets/config.json
             with zipfile.ZipFile(BASE_APK_PATH, "r") as zin:
                 with zipfile.ZipFile(temp_apk, "w", zipfile.ZIP_DEFLATED) as zout:
                     for item in zin.infolist():
@@ -422,7 +572,6 @@ fi
                         zout.writestr(item, zin.read(item.filename))
                     zout.writestr("assets/config.json", json.dumps(custom_cfg, indent=2))
 
-            # 2. Resign APK using apksigner if available
             if os.path.isfile(APKSIGNER) and os.path.isfile(DEBUG_KEYSTORE):
                 aligned_tmp = output_apk_path + f".{uuid.uuid4().hex[:6]}.aligned.apk"
                 if os.path.isfile(ZIPALIGN):
@@ -443,14 +592,13 @@ fi
                 if os.path.isfile(aligned_tmp):
                     os.remove(aligned_tmp)
             else:
-                # If apksigner not present, use the updated APK directly
                 os.replace(temp_apk, output_apk_path)
 
             if os.path.isfile(temp_apk):
                 os.remove(temp_apk)
             return True
         except Exception as e:
-            logger.error("Failed to build customized APK: %s", e)
+            logger.error("Failed to build fallback customized APK: %s", e)
             if os.path.isfile(temp_apk):
                 os.remove(temp_apk)
             return False
