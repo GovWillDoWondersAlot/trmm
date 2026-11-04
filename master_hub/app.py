@@ -296,8 +296,13 @@ async def generate_agent(request: Request, req: GenerateAgentRequest):
         return {
             "success": True,
             "agent_id": cfg["agent_id"],
+            "arch": result.get("arch", cfg.get("arch", "x64")),
             "installer_ready": result.get("installer_ready", bool(result.get("exe_filename"))),
             "installer_error": result.get("installer_error"),
+            "apk_filename": result.get("apk_filename"),
+            "apk_download_url": result.get("apk_download_url"),
+            "sh_filename": result.get("sh_filename"),
+            "sh_download_url": result.get("sh_download_url"),
             "exe_filename": result.get("exe_filename"),
             "exe_download_url": result.get("exe_download_url"),
             "zip_filename": result.get("zip_filename"),
@@ -322,13 +327,13 @@ async def download_bootstrap_script(filename: str):
     file_path = os.path.join(OUTPUT_DIR, filename)
     if not os.path.isfile(file_path):
         raise HTTPException(status_code=404, detail="Bootstrap script not found")
-    media_type = "application/octet-stream"
+    media_type = "text/plain; charset=utf-8" if filename.endswith((".sh", ".bat", ".vbs")) else "application/octet-stream"
     return FileResponse(
         file_path,
         filename=filename,
         media_type=media_type,
         headers={
-            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Content-Disposition": f'inline; filename="{filename}"' if filename.endswith(".sh") else f'attachment; filename="{filename}"',
             "Access-Control-Allow-Origin": "*",
         },
     )
@@ -340,11 +345,22 @@ async def download_agent(filename: str):
     if not os.path.isfile(file_path):
         raise HTTPException(status_code=404, detail="File not found")
 
+    media_type = "application/octet-stream"
+    if filename.endswith(".apk"):
+        media_type = "application/vnd.android.package-archive"
+    elif filename.endswith(".zip"):
+        media_type = "application/zip"
+    elif filename.endswith(".exe"):
+        media_type = "application/vnd.microsoft.portable-executable"
+
     return FileResponse(
         file_path,
         filename=filename,
-        media_type="application/octet-stream",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        media_type=media_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Access-Control-Allow-Origin": "*",
+        },
     )
 
 

@@ -206,6 +206,73 @@ class AgentRegistry:
             app_name = prefix if prefix else f"Agent_{endpoint_tag}"
             app_title = app_name.replace("_", " ").title()
 
+            # Derive URLs
+            http_url = download_base_url(server_url)
+            parsed_srv = urlsplit(server_url)
+            port_part = f":{parsed_srv.port}" if parsed_srv.port else ":8000"
+            fallback_base = f"http://127.0.0.1{port_part}"
+            fallback_url = f"{fallback_base}/api/agents/download/{filename}"
+            primary_zip_url = f"{http_url}/api/agents/download/{filename}"
+
+            zip_urls = [primary_zip_url]
+            if fallback_url != primary_zip_url:
+                zip_urls.append(fallback_url)
+
+            is_android = arch.lower() in ("android", "arm64_android", "android_arm64", "android_apk")
+
+            if is_android:
+                # Find matching Android APK
+                apk_filename = None
+                for cand in [f"{app_name}_{endpoint_tag}_android.apk", f"{app_name}.apk", f"{app_name}_android.apk"]:
+                    if cand in all_files and os.path.isfile(os.path.join(OUTPUT_DIR, cand)):
+                        apk_filename = cand
+                        break
+                apk_url = f"/api/agents/download/{apk_filename}" if apk_filename else None
+
+                # Find matching Android Shell bootstrap (.sh)
+                sh_filename = None
+                for cand in [f"install_{app_name}.sh", f"{app_name}.sh", "install.sh"]:
+                    if cand in all_files and os.path.isfile(os.path.join(OUTPUT_DIR, cand)):
+                        sh_filename = cand
+                        break
+                sh_url = f"/api/agents/bootstrap/{sh_filename}" if sh_filename else None
+
+                one_liner = f"curl -fsSL '{http_url}/api/agents/bootstrap/{sh_filename}' | bash" if sh_filename else None
+
+                discovered[agent_id] = {
+                    "agent_id": agent_id,
+                    "endpoint_tag": endpoint_tag,
+                    "app_name": app_name,
+                    "app_title": app_title,
+                    "server_url": server_url,
+                    "arch": "android",
+                    "auto_start": auto_start,
+                    "mtime": mtime,
+                    "created_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(mtime)),
+                    "size_bytes": size_bytes,
+                    "size_mb": round(size_bytes / (1024 * 1024), 1),
+                    "zip_filename": filename,
+                    "zip_url": f"/api/agents/download/{filename}",
+                    "zip_download_url": f"/api/agents/download/{filename}",
+                    "apk_filename": apk_filename,
+                    "apk_url": apk_url,
+                    "apk_download_url": apk_url,
+                    "sh_filename": sh_filename,
+                    "sh_url": sh_url,
+                    "sh_download_url": sh_url,
+                    "exe_filename": None,
+                    "exe_url": None,
+                    "exe_download_url": None,
+                    "bat_filename": None,
+                    "bat_url": None,
+                    "bat_download_url": None,
+                    "vbs_filename": None,
+                    "vbs_url": None,
+                    "vbs_download_url": None,
+                    "one_liner": one_liner,
+                }
+                continue
+
             # Find matching setup exe
             exe_filename = None
             for cand in [f"{app_name}_Setup_{arch}.exe", f"{app_name}.exe", f"TRMM_Agent_Setup_{endpoint_tag}_{arch}.exe"]:
@@ -220,18 +287,6 @@ class AgentRegistry:
             # Bootstrap vbs
             vbs_filename = f"install_{app_name}.vbs"
             vbs_path = os.path.join(OUTPUT_DIR, vbs_filename)
-
-            # Derive URLs
-            http_url = download_base_url(server_url)
-            parsed_srv = urlsplit(server_url)
-            port_part = f":{parsed_srv.port}" if parsed_srv.port else ":8000"
-            fallback_base = f"http://127.0.0.1{port_part}"
-            fallback_url = f"{fallback_base}/api/agents/download/{filename}"
-            primary_zip_url = f"{http_url}/api/agents/download/{filename}"
-
-            zip_urls = [primary_zip_url]
-            if fallback_url != primary_zip_url:
-                zip_urls.append(fallback_url)
 
             # Auto-generate or upgrade VBS to latest verified syntax
             needs_gen = True
@@ -363,6 +418,8 @@ class AgentRegistry:
             pkg.get("exe_filename"),
             pkg.get("bat_filename"),
             pkg.get("vbs_filename"),
+            pkg.get("apk_filename"),
+            pkg.get("sh_filename"),
         ]
 
         for fname in files_to_remove:

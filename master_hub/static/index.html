@@ -206,12 +206,15 @@
                 <!-- Architecture Selection -->
                 <div class="form-group">
                     <label class="form-label">Target Architecture</label>
-                    <div style="display: flex; gap: 20px; padding: 6px 0;">
+                    <div style="display: flex; gap: 16px; padding: 6px 0; flex-wrap: wrap;">
                         <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 13px; color: var(--text-main);">
-                            <input type="radio" name="genArch" value="x64" checked> 64-bit Windows (x64)
+                            <input type="radio" name="genArch" value="x64" checked onchange="onArchChanged(this.value)"> 64-bit Windows (x64)
                         </label>
                         <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 13px; color: var(--text-main);">
-                            <input type="radio" name="genArch" value="x86"> 32-bit Windows (x86)
+                            <input type="radio" name="genArch" value="x86" onchange="onArchChanged(this.value)"> 32-bit Windows (x86)
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 13px; color: #10b981; font-weight: 500;">
+                            <input type="radio" name="genArch" value="android" onchange="onArchChanged(this.value)"> 🤖 Android Mobile (APK / ARM64)
                         </label>
                     </div>
                 </div>
@@ -221,7 +224,7 @@
                     <label class="form-label">Execution & Persistence Settings</label>
                     <div style="display: flex; flex-direction: column; gap: 8px; margin-top: 4px;">
                         <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px; color: var(--text-main);">
-                            <input type="checkbox" id="genAutoStart" checked> Auto-start on boot (Windows Service / Registry Run)
+                            <input type="checkbox" id="genAutoStart" checked> Auto-start on boot (Windows Service / Android Service)
                         </label>
                         <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px; color: var(--text-main);">
                             <input type="checkbox" id="genHiddenMode" checked> Stealth / Hidden Mode (Runs windowless in background)
@@ -238,8 +241,8 @@
                         </span>
                     </div>
 
-                    <!-- Download Actions Grid -->
-                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px;">
+                    <!-- Download Actions Grid (Windows) -->
+                    <div id="windowsDownloadGrid" style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px;">
                         <a id="downloadExeLink" class="btn btn-primary" href="#" style="text-align: center; justify-content: center; font-size: 12px;">
                             ⬇ Standalone Exe (.exe)
                         </a>
@@ -254,9 +257,22 @@
                         </a>
                     </div>
 
-                    <!-- One-Liner PowerShell Command -->
+                    <!-- Download Actions Grid (Android) -->
+                    <div id="androidDownloadGrid" style="display: none; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px;">
+                        <a id="downloadApkLink" class="btn btn-primary" href="#" style="text-align: center; justify-content: center; font-size: 12px; background: #059669; border-color: #10b981;">
+                            🤖 Android App (.apk)
+                        </a>
+                        <a id="downloadShLink" class="btn btn-secondary" href="#" style="text-align: center; justify-content: center; font-size: 12px;">
+                            ⬇ Shell Installer (.sh)
+                        </a>
+                        <a id="downloadAndroidZipLink" class="btn btn-outline" href="#" style="text-align: center; justify-content: center; font-size: 12px; grid-column: span 2;">
+                            📦 Mobile Bundle (.zip)
+                        </a>
+                    </div>
+
+                    <!-- One-Liner Command -->
                     <div class="form-group" style="margin-bottom: 0;">
-                        <label class="form-label" style="font-size: 11px;">1-Click PowerShell Deployment Command</label>
+                        <label id="oneLinerLabel" class="form-label" style="font-size: 11px;">1-Click Deployment Command</label>
                         <div style="display: flex; gap: 6px;">
                             <input type="text" id="oneLinerCode" class="form-input" readonly style="font-family: monospace; font-size: 11px; background: #090a0f;">
                             <button type="button" class="btn btn-sm btn-outline" onclick="copyOneLiner()">Copy</button>

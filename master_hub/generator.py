@@ -19,6 +19,7 @@ from typing import Dict, Any, Optional
 from PIL import Image
 
 from .setup_compiler import SetupCompiler
+from .android_builder import AndroidBuilder
 from server_address import normalize_server_url, http_server_url as download_base_url
 
 logger = logging.getLogger("master_hub.generator")
@@ -163,6 +164,12 @@ class AgentGenerator:
 
         # Derive HTTP URL from server_url for downloads
         http_server_url = download_base_url(server_url)
+
+        # Dedicated pipeline for Android mobile devices
+        if arch.lower() in ("android", "arm64_android", "android_arm64", "android_apk"):
+            return AgentGenerator._build_android_package(
+                config, agent_id, endpoint_tag, server_url, http_server_url, auto_start
+            )
 
         if not os.path.isfile(os.path.join(DIST_AGENT_DIR, "TRMM_Agent.exe")):
             raise ValueError("Native agent runtime is missing; build TRMM_Agent.exe before generating an installer")
@@ -519,3 +526,179 @@ timeout /t 3 /nobreak >nul 2>&1
             logger.warning(f"Failed to record package in registry: {e}")
 
         return result
+
+    @staticmethod
+    def _build_android_package(config: Dict[str, Any], agent_id: str, endpoint_tag: str,
+                               server_url: str, http_server_url: str, auto_start: bool) -> Dict[str, Any]:
+        """
+        Builds a customized Android deployment package including:
+        - Standalone Android App (.apk) with baked configuration
+        - 1-Click Termux / Linux Shell installer (.sh)
+        - Standalone Python mobile agent script (trmm_mobile_agent.py)
+        - Full offline mobile bundle (.zip)
+        """
+        custom_name = (config.get("custom_name") or "").strip()
+        if custom_name:
+            clean = "".join(c for c in custom_name if c.isalnum() or c in ("-", "_", " ")).strip()
+            if clean.lower().endswith(".apk"):
+                clean = clean[:-4]
+            app_name = clean if clean else f"Agent_{endpoint_tag}"
+            app_title = clean.title() if clean else f"Agent ({endpoint_tag})"
+        else:
+            app_name = f"Agent_{endpoint_tag}"
+            app_title = f"Agent ({endpoint_tag})"
+
+        # 1. Build customized signed APK
+        apk_filename = f"{app_name}_{endpoint_tag}_android.apk"
+        apk_path = os.path.join(OUTPUT_DIR, apk_filename)
+        apk_ok = False
+        try:
+            apk_ok = AndroidBuilder.build_custom_apk({
+                "agent_id": agent_id,
+                "endpoint_tag": endpoint_tag,
+                "server_url": server_url,
+                "auto_start": auto_start
+            }, apk_path)
+            if apk_ok:
+                logger.info(f"Custom Android APK generated successfully: {apk_path}")
+        except Exception as e:
+            logger.warning(f"Failed to build custom APK: {e}")
+
+        apk_download_url = f"/api/agents/download/{apk_filename}" if (apk_ok and os.path.isfile(apk_path)) else None
+
+        # 2. Build 1-Click shell bootstrap (.sh)
+        zip_filename = f"{app_name}_{endpoint_tag}_android.zip"
+        zip_path = os.path.join(OUTPUT_DIR, zip_filename)
+        zip_download_url = f"{http_server_url}/api/agents/download/{zip_filename}"
+
+        sh_filename = f"install_{app_name}.sh"
+        sh_path = os.path.join(OUTPUT_DIR, sh_filename)
+        sh_content = AndroidBuilder.generate_shell_bootstrap(
+            app_name, endpoint_tag, agent_id, zip_download_url, server_url
+        )
+        with open(sh_path, "w", encoding="utf-8", newline="\n") as sf:
+            sf.write(sh_content)
+        sh_download_url = f"/api/agents/bootstrap/{sh_filename}"
+
+        # 3. Create standalone Python agent
+        py_agent_content = AndroidBuilder.generate_mobile_python_agent({
+            "agent_id": agent_id,
+            "endpoint_tag": endpoint_tag,
+            "server_url": server_url,
+            "auto_start": auto_start
+        })
+
+        # 4. Create offline zip package
+        build_dir = os.path.join(OUTPUT_DIR, f"build_{agent_id}")
+        if os.path.exists(build_dir):
+            shutil.rmtree(build_dir)
+        os.makedirs(build_dir, exist_ok=True)
+
+        with open(os.path.join(build_dir, "trmm_mobile_agent.py"), "w", encoding="utf-8", newline="\n") as pf:
+            pf.write(py_agent_content)
+
+        with open(os.path.join(build_dir, "install.sh"), "w", encoding="utf-8", newline="\n") as sf:
+            sf.write(sh_content)
+
+        agent_config = {
+            "agent_id": agent_id,
+            "endpoint_tag": endpoint_tag,
+            "server_url": server_url,
+            "arch": "android",
+            "auto_start": auto_start,
+            "reconnect_interval_sec": 5,
+            "heartbeat_interval_sec": 10,
+        }
+        with open(os.path.join(build_dir, "config.json"), "w", encoding="utf-8") as jf:
+            json.dump(agent_config, jf, indent=4)
+
+        if apk_ok and os.path.isfile(apk_path):
+            shutil.copy2(apk_path, os.path.join(build_dir, f"{app_name}.apk"))
+
+        partial_zip_path = f"{zip_path}.{agent_id}.partial"
+        try:
+            with zipfile.ZipFile(partial_zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
+                for root, _, files in os.walk(build_dir):
+                    for file in files:
+                        file_path = os.path.join(root, file)
+                        arcname = os.path.relpath(file_path, build_dir)
+                        zipf.write(file_path, arcname)
+            os.replace(partial_zip_path, zip_path)
+            logger.info(f"Generated Android offline bundle: {zip_path}")
+        except Exception:
+            if os.path.isfile(partial_zip_path):
+                os.remove(partial_zip_path)
+            raise
+        finally:
+            if os.path.isdir(build_dir):
+                shutil.rmtree(build_dir)
+
+        # 5. One-liner curl command
+        one_liner = f"curl -fsSL '{http_server_url}/api/agents/bootstrap/{sh_filename}' | bash"
+
+        # 6. Record in package history registry
+        try:
+            from .registry import AgentRegistry
+        except (ImportError, ModuleNotFoundError):
+            try:
+                from master_hub.registry import AgentRegistry
+            except Exception:
+                AgentRegistry = None
+
+        size_bytes = os.path.getsize(zip_path) if os.path.isfile(zip_path) else 0
+        mtime = time.time()
+        if AgentRegistry:
+            try:
+                AgentRegistry.record_package({
+                    "agent_id": agent_id,
+                    "endpoint_tag": endpoint_tag,
+                    "app_name": app_name,
+                    "app_title": app_title,
+                    "server_url": server_url,
+                    "arch": "android",
+                    "auto_start": auto_start,
+                    "mtime": mtime,
+                    "created_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(mtime)),
+                    "size_bytes": size_bytes,
+                    "size_mb": round(size_bytes / (1024 * 1024), 1),
+                    "zip_filename": zip_filename,
+                    "zip_url": f"/api/agents/download/{zip_filename}",
+                    "apk_filename": apk_filename if apk_ok else None,
+                    "apk_url": apk_download_url,
+                    "sh_filename": sh_filename,
+                    "sh_url": sh_download_url,
+                    "exe_filename": None,
+                    "exe_url": None,
+                    "bat_filename": None,
+                    "bat_url": None,
+                    "vbs_filename": None,
+                    "vbs_url": None,
+                    "one_liner": one_liner,
+                })
+            except Exception as e:
+                logger.warning(f"Failed to record Android package in registry: {e}")
+
+        return {
+            "arch": "android",
+            "installer_ready": bool(apk_ok or os.path.isfile(sh_path)),
+            "installer_error": None if apk_ok else "APK base not present. Shell/Python agent ready.",
+            "apk_path": apk_path if apk_ok else None,
+            "apk_filename": apk_filename if apk_ok else None,
+            "apk_download_url": apk_download_url,
+            "sh_path": sh_path,
+            "sh_filename": sh_filename,
+            "sh_download_url": sh_download_url,
+            "exe_path": None,
+            "exe_filename": None,
+            "exe_download_url": None,
+            "zip_path": zip_path,
+            "zip_filename": zip_filename,
+            "zip_download_url": f"/api/agents/download/{zip_filename}",
+            "bootstrap_path": sh_path,
+            "bootstrap_filename": sh_filename,
+            "bootstrap_download_url": sh_download_url,
+            "vbs_path": None,
+            "vbs_filename": None,
+            "vbs_download_url": None,
+            "one_liner": one_liner,
+        }

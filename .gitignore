@@ -48,4 +48,6 @@ venv.bak/
 # Temporary and test artifacts
 scratch/
 *.tmp
+master_hub/android/work/
+*.idsig
 readme

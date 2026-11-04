@@ -324,6 +324,8 @@ function renderAgentTable() {
         const tagDisplay = escapeHtml(agent.endpoint_tag || agent.hostname || 'Endpoint');
         const hostnameDisplay = escapeHtml(agent.hostname || 'DESKTOP-TARGET');
         const userDisplay = escapeHtml(agent.username || 'SYSTEM');
+        const isAndroidAgent = (agent.arch && agent.arch.toLowerCase().includes('android')) || 
+                               (agent.os && agent.os.toLowerCase().includes('android'));
 
         tr.innerHTML = `
             <td>${statusBadge}</td>
@@ -341,18 +343,26 @@ function renderAgentTable() {
                 </div>
             </td>
             <td>
+                ${isAndroidAgent ? `
+                <span class="os-pill" style="border-color: rgba(16, 185, 129, 0.4); color: #34d399;">
+                    <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><rect width="14" height="20" x="5" y="2" rx="2" ry="2"/><path d="M12 18h.01"/></svg>
+                    ${escapeHtml(agent.os || 'Android')}
+                </span>
+                <span class="arch-chip" style="color: #10b981; border-color: rgba(16, 185, 129, 0.3);">${escapeHtml(agent.arch || 'ARM64')}</span>
+                ` : `
                 <span class="os-pill">
                     <svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor"><path d="M0 3.449L9.75 2.1v9.451H0m10.949-9.602L24 0v11.4H10.949M0 12.6h9.75v9.451L0 20.699M10.949 12.6H24V24l-12.901-1.799"/></svg>
                     ${escapeHtml(agent.os || 'Windows')}
                 </span>
                 <span class="arch-chip">${escapeHtml(agent.arch || 'x64')}</span>
+                `}
             </td>
             <td>
                 <span class="ip-link" title="Click to copy IP" onclick="copyText('${agent.local_ip || '127.0.0.1'}', 'IP Address copied!')">${escapeHtml(agent.local_ip || '127.0.0.1')}</span>
             </td>
             <td>
                 <div class="specs-info">
-                    <strong>${agent.ram_gb ? agent.ram_gb + ' GB RAM' : 'RAM: Active'}</strong>
+                    <strong>${isAndroidAgent ? (agent.battery !== undefined ? '🔋 ' + agent.battery + '% Battery' : (agent.ram_gb ? agent.ram_gb + ' GB RAM' : 'Mobile Active')) : (agent.ram_gb ? agent.ram_gb + ' GB RAM' : 'RAM: Active')}</strong>
                 </div>
             </td>
             <td>
@@ -521,6 +531,16 @@ function clearSearch() {
     renderAgentTable();
 }
 
+function onArchChanged(val) {
+    const btn = document.getElementById("btnBuildAgent");
+    if (!btn) return;
+    if (val === "android") {
+        btn.innerHTML = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><rect width="14" height="20" x="5" y="2" rx="2" ry="2"/><path d="M12 18h.01"/></svg><span>Build Android Package</span>`;
+    } else {
+        btn.innerHTML = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 12 5 5L20 7"/></svg><span>Build & Generate Package</span>`;
+    }
+}
+
 // -------------------------------------------------------------
 // Generator Modal Management (Dismissable: Backdrop, Esc, X)
 // -------------------------------------------------------------
@@ -539,10 +559,15 @@ function openGeneratorModal() {
     const buildCard = document.getElementById("buildResultCard");
     if (buildCard) buildCard.style.display = "none";
     
-    const btn = document.getElementById("btnBuildAgent");
-    if (btn) {
-        btn.disabled = false;
-        btn.innerHTML = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 12 5 5L20 7"/></svg><span>Build & Generate Package</span>`;
+    const checkedArch = document.querySelector('input[name="genArch"]:checked');
+    if (checkedArch) {
+        onArchChanged(checkedArch.value);
+    } else {
+        const btn = document.getElementById("btnBuildAgent");
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 12 5 5L20 7"/></svg><span>Build & Generate Package</span>`;
+        }
     }
 
     if (typeof detectLanIp === "function") {
@@ -649,61 +674,112 @@ async function submitGenerateAgent() {
 
         const data = await res.json();
         if (data.success) {
-            document.getElementById("builtFilename").innerText = data.exe_filename || data.bootstrap_filename;
-            
-            // 1. Standalone Executable Setup Link
-            const exeLink = document.getElementById("downloadExeLink");
-            if (data.exe_download_url) {
-                exeLink.href = data.exe_download_url;
-                exeLink.setAttribute("download", data.exe_filename);
-                exeLink.style.display = "inline-flex";
-            } else {
-                exeLink.href = "#";
-                exeLink.removeAttribute("download");
-                exeLink.style.display = "none";
-            }
+            const isAndroid = (data.arch === 'android' || arch === 'android');
+            const winGrid = document.getElementById("windowsDownloadGrid");
+            const androidGrid = document.getElementById("androidDownloadGrid");
+            const oneLinerLabel = document.getElementById("oneLinerLabel");
 
-            // 2. Single Batch Installer
-            const scriptLink = document.getElementById("downloadScriptLink");
-            scriptLink.href = data.bootstrap_download_url;
-            scriptLink.setAttribute("download", data.bootstrap_filename);
+            if (isAndroid) {
+                if (winGrid) winGrid.style.display = "none";
+                if (androidGrid) androidGrid.style.display = "grid";
+                if (oneLinerLabel) oneLinerLabel.innerText = "1-Click Android Termux / Shell Deployment Command";
 
-            // 3. VBScript Silent Installer
-            const vbsLink = document.getElementById("downloadVbsLink");
-            if (vbsLink) {
-                if (data.vbs_download_url) {
-                    vbsLink.href = data.vbs_download_url;
-                    vbsLink.setAttribute("download", data.vbs_filename || "install.vbs");
-                    vbsLink.onclick = null;
-                    vbsLink.style.display = "inline-flex";
-                } else {
-                    vbsLink.href = "#";
-                    vbsLink.removeAttribute("download");
-                    vbsLink.onclick = null;
-                    vbsLink.style.display = "none";
+                document.getElementById("builtFilename").innerText = data.apk_filename || data.sh_filename || "android_agent";
+
+                const apkLink = document.getElementById("downloadApkLink");
+                if (apkLink) {
+                    if (data.apk_download_url) {
+                        apkLink.href = data.apk_download_url;
+                        apkLink.setAttribute("download", data.apk_filename || "android_agent.apk");
+                        apkLink.style.display = "inline-flex";
+                    } else {
+                        apkLink.style.display = "none";
+                    }
                 }
-            }
 
-            // 4. PowerShell One-Liner
-            document.getElementById("oneLinerCode").value = data.one_liner;
+                const shLink = document.getElementById("downloadShLink");
+                if (shLink) {
+                    shLink.href = data.sh_download_url || data.bootstrap_download_url;
+                    shLink.setAttribute("download", data.sh_filename || data.bootstrap_filename || "install.sh");
+                }
 
-            // 5. Offline Full Zip Package
-            const zipLink = document.getElementById("downloadZipLink");
-            zipLink.href = data.zip_download_url;
-            zipLink.setAttribute("download", data.zip_filename);
+                const androidZipLink = document.getElementById("downloadAndroidZipLink");
+                if (androidZipLink) {
+                    androidZipLink.href = data.zip_download_url;
+                    androidZipLink.setAttribute("download", data.zip_filename);
+                }
 
-            document.getElementById("buildResultCard").style.display = "block";
-            if (typeof loadAllGeneratedAgents === "function") {
-                loadAllGeneratedAgents(false);
-            }
-            if (data.exe_download_url) {
-                btn.innerHTML = `<span>✓ Installer Ready</span>`;
-                showToast("Installer Built", `Download ${data.exe_filename} for deployment.`, "success");
+                document.getElementById("oneLinerCode").value = data.one_liner || "";
+
+                document.getElementById("buildResultCard").style.display = "block";
+                if (typeof loadAllGeneratedAgents === "function") {
+                    loadAllGeneratedAgents(false);
+                }
+
+                btn.innerHTML = `<span>🤖 Android Package Ready</span>`;
+                showToast("Android Agent Ready", `APK & 1-Click Shell installer ready for mobile deployment.`, "success");
+                btn.disabled = false;
             } else {
-                btn.innerHTML = `<span>ZIP Ready — EXE Build Failed</span>`;
-                showToast("Setup EXE Build Failed", data.installer_error || "The ZIP is available, but the Windows setup EXE could not be compiled.", "warning");
+                if (winGrid) winGrid.style.display = "grid";
+                if (androidGrid) androidGrid.style.display = "none";
+                if (oneLinerLabel) oneLinerLabel.innerText = "1-Click PowerShell Deployment Command";
+
+                document.getElementById("builtFilename").innerText = data.exe_filename || data.bootstrap_filename;
+                
+                // 1. Standalone Executable Setup Link
+                const exeLink = document.getElementById("downloadExeLink");
+                if (data.exe_download_url) {
+                    exeLink.href = data.exe_download_url;
+                    exeLink.setAttribute("download", data.exe_filename);
+                    exeLink.style.display = "inline-flex";
+                } else {
+                    exeLink.href = "#";
+                    exeLink.removeAttribute("download");
+                    exeLink.style.display = "none";
+                }
+
+                // 2. Single Batch Installer
+                const scriptLink = document.getElementById("downloadScriptLink");
+                scriptLink.href = data.bootstrap_download_url;
+                scriptLink.setAttribute("download", data.bootstrap_filename);
+
+                // 3. VBScript Silent Installer
+                const vbsLink = document.getElementById("downloadVbsLink");
+                if (vbsLink) {
+                    if (data.vbs_download_url) {
+                        vbsLink.href = data.vbs_download_url;
+                        vbsLink.setAttribute("download", data.vbs_filename || "install.vbs");
+                        vbsLink.onclick = null;
+                        vbsLink.style.display = "inline-flex";
+                    } else {
+                        vbsLink.href = "#";
+                        vbsLink.removeAttribute("download");
+                        vbsLink.onclick = null;
+                        vbsLink.style.display = "none";
+                    }
+                }
+
+                // 4. PowerShell One-Liner
+                document.getElementById("oneLinerCode").value = data.one_liner;
+
+                // 5. Offline Full Zip Package
+                const zipLink = document.getElementById("downloadZipLink");
+                zipLink.href = data.zip_download_url;
+                zipLink.setAttribute("download", data.zip_filename);
+
+                document.getElementById("buildResultCard").style.display = "block";
+                if (typeof loadAllGeneratedAgents === "function") {
+                    loadAllGeneratedAgents(false);
+                }
+                if (data.exe_download_url) {
+                    btn.innerHTML = `<span>✓ Installer Ready</span>`;
+                    showToast("Installer Built", `Download ${data.exe_filename} for deployment.`, "success");
+                } else {
+                    btn.innerHTML = `<span>ZIP Ready — EXE Build Failed</span>`;
+                    showToast("Setup EXE Build Failed", data.installer_error || "The ZIP is available, but the Windows setup EXE could not be compiled.", "warning");
+                }
+                btn.disabled = false;
             }
-            btn.disabled = false;
         } else {
             showToast("Build Failed", data.detail || "Unknown error", "error");
             btn.disabled = false;
@@ -854,34 +930,59 @@ function renderAllAgentsTable(packages) {
         const agentId = escapeHtml(pkg.agent_id || "");
         const serverUrl = escapeHtml(pkg.server_url || "");
 
+        const isAndroid = (pkg.arch && pkg.arch.toLowerCase().includes('android')) ||
+                          !!(pkg.apk_filename || pkg.apk_url || pkg.sh_filename || (pkg.zip_filename && pkg.zip_filename.includes('_android.zip')));
+
         // Build Download Links
         const links = [];
-        const exeUrl = pkg.exe_download_url || pkg.exe_url;
-        if (exeUrl) {
-            links.push(`<a href="${exeUrl}" download="${escapeHtml(pkg.exe_filename || 'agent_setup.exe')}" class="btn btn-xs btn-primary" title="Download Standalone EXE Setup (.exe)">EXE</a>`);
+        if (isAndroid) {
+            const apkUrl = pkg.apk_download_url || pkg.apk_url;
+            if (apkUrl) {
+                links.push(`<a href="${apkUrl}" download="${escapeHtml(pkg.apk_filename || 'agent.apk')}" class="btn btn-xs btn-primary" style="background: #059669; border-color: #10b981;" title="Download Android App (.apk)">APK</a>`);
+            }
+            const shUrl = pkg.sh_download_url || pkg.sh_url || pkg.bootstrap_download_url;
+            if (shUrl) {
+                links.push(`<a href="${shUrl}" download="${escapeHtml(pkg.sh_filename || 'install.sh')}" class="btn btn-xs btn-secondary" title="Download Shell Installer (.sh)">SH</a>`);
+            }
+            const zipUrl = pkg.zip_download_url || pkg.zip_url;
+            if (zipUrl) {
+                links.push(`<a href="${zipUrl}" download="${escapeHtml(pkg.zip_filename || 'agent_android.zip')}" class="btn btn-xs btn-outline" title="Download Full Offline Mobile Bundle (.zip)">ZIP</a>`);
+            }
+            if (pkg.one_liner) {
+                links.push(`<button type="button" class="btn btn-xs btn-outline" onclick="copyPkgOneLiner('${agentId}')" title="Copy 1-Click Android Termux / Shell Command">CURL</button>`);
+            }
+        } else {
+            const exeUrl = pkg.exe_download_url || pkg.exe_url;
+            if (exeUrl) {
+                links.push(`<a href="${exeUrl}" download="${escapeHtml(pkg.exe_filename || 'agent_setup.exe')}" class="btn btn-xs btn-primary" title="Download Standalone EXE Setup (.exe)">EXE</a>`);
+            }
+            const batUrl = pkg.bat_download_url || pkg.bat_url || pkg.bootstrap_download_url;
+            if (batUrl) {
+                links.push(`<a href="${batUrl}" download="${escapeHtml(pkg.bat_filename || 'install.bat')}" class="btn btn-xs btn-secondary" title="Download Batch Installer (.bat)">BAT</a>`);
+            }
+            const vbsUrl = pkg.vbs_download_url || pkg.vbs_url;
+            if (vbsUrl) {
+                const vbsName = escapeHtml(pkg.vbs_filename || 'install.vbs');
+                links.push(`<a href="${vbsUrl}" download="${vbsName}" class="btn btn-xs btn-secondary" style="background: #1e293b; border-color: #3b82f6; color: #60a5fa;" title="Download Silent VBScript Installer (.vbs)">VBS</a>`);
+            }
+            const zipUrl = pkg.zip_download_url || pkg.zip_url;
+            if (zipUrl) {
+                links.push(`<a href="${zipUrl}" download="${escapeHtml(pkg.zip_filename || 'agent.zip')}" class="btn btn-xs btn-outline" title="Download Full Offline Package (.zip)">ZIP</a>`);
+            }
+            if (pkg.one_liner) {
+                links.push(`<button type="button" class="btn btn-xs btn-outline" onclick="copyPkgOneLiner('${agentId}')" title="Copy 1-Click PowerShell Deployment Command">PS1</button>`);
+            }
         }
-        const batUrl = pkg.bat_download_url || pkg.bat_url || pkg.bootstrap_download_url;
-        if (batUrl) {
-            links.push(`<a href="${batUrl}" download="${escapeHtml(pkg.bat_filename || 'install.bat')}" class="btn btn-xs btn-secondary" title="Download Batch Installer (.bat)">BAT</a>`);
-        }
-        const vbsUrl = pkg.vbs_download_url || pkg.vbs_url;
-        if (vbsUrl) {
-            const vbsName = escapeHtml(pkg.vbs_filename || 'install.vbs');
-            links.push(`<a href="${vbsUrl}" download="${vbsName}" class="btn btn-xs btn-secondary" style="background: #1e293b; border-color: #3b82f6; color: #60a5fa;" title="Download Silent VBScript Installer (.vbs)">VBS</a>`);
-        }
-        const zipUrl = pkg.zip_download_url || pkg.zip_url;
-        if (zipUrl) {
-            links.push(`<a href="${zipUrl}" download="${escapeHtml(pkg.zip_filename || 'agent.zip')}" class="btn btn-xs btn-outline" title="Download Full Offline Package (.zip)">ZIP</a>`);
-        }
-        if (pkg.one_liner) {
-            links.push(`<button type="button" class="btn btn-xs btn-outline" onclick="copyPkgOneLiner('${agentId}')" title="Copy 1-Click PowerShell Deployment Command">PS1</button>`);
-        }
+
+        const tagBadge = isAndroid
+            ? `<span class="status-tag-ready" style="font-size: 10px; padding: 1px 6px; background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3);">🤖 ${tag}</span>`
+            : `<span class="status-tag-ready" style="font-size: 10px; padding: 1px 6px;">${tag}</span>`;
 
         return `
             <tr>
                 <td>
                     <div style="font-weight: 600; color: #f3f4f6; display: flex; align-items: center; gap: 6px;">
-                        <span class="status-tag-ready" style="font-size: 10px; padding: 1px 6px;">${tag}</span>
+                        ${tagBadge}
                         <span>${appName}</span>
                     </div>
                     <div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">
