@@ -44,6 +44,7 @@ document.addEventListener("DOMContentLoaded", () => {
     initDashboardSocket();
     startSmartPolling();
     initInstallationsTab();
+    loadGeneratedPackagesCache();
 
     // Global Dismiss Handlers (Esc key)
     initKeyboardShortcuts();
@@ -324,8 +325,40 @@ function renderAgentTable() {
         const tagDisplay = escapeHtml(agent.endpoint_tag || agent.hostname || 'Endpoint');
         const hostnameDisplay = escapeHtml(agent.hostname || 'DESKTOP-TARGET');
         const userDisplay = escapeHtml(agent.username || 'SYSTEM');
-        const isAndroidAgent = (agent.arch && agent.arch.toLowerCase().includes('android')) || 
-                               (agent.os && agent.os.toLowerCase().includes('android'));
+
+        const osLower = (agent.os || '').toLowerCase();
+        const archLower = (agent.arch || '').toLowerCase();
+        const platformLower = (agent.platform || '').toLowerCase();
+        const deviceTypeLower = (agent.device_type || '').toLowerCase();
+
+        // Check if agent_id was generated as an Android package in package history
+        const matchingPkg = Array.isArray(allGeneratedPackages) ? allGeneratedPackages.find(p => p.agent_id === agent.agent_id) : null;
+        const pkgIsAndroid = matchingPkg && (
+            (matchingPkg.arch && matchingPkg.arch.toLowerCase().includes('android')) ||
+            Boolean(matchingPkg.apk_filename) ||
+            Boolean(matchingPkg.apk_url) ||
+            Boolean(matchingPkg.sh_filename)
+        );
+
+        // Strict Android vs Windows determination:
+        // Android if flagged as is_android, or arch/os/platform includes android, or matches an Android package
+        const isAndroidAgent = Boolean(
+            agent.is_android === true || 
+            archLower.includes('android') || 
+            osLower.includes('android') || 
+            platformLower.includes('android') ||
+            deviceTypeLower.includes('phone') ||
+            deviceTypeLower.includes('android') ||
+            pkgIsAndroid ||
+            (!osLower.includes('win') && (osLower.includes('droid') || archLower.includes('arm')))
+        );
+
+        // Backstage is strictly reserved for Windows endpoints ONLY
+        const isWindowsAgent = !isAndroidAgent && (
+            osLower.includes('win') ||
+            (!agent.os && !archLower.includes('android'))
+        );
+
         const deviceName = escapeHtml(agent.device_name || agent.hostname || agent.model || agent.endpoint_tag || 'Android Device');
 
         tr.innerHTML = `
@@ -842,6 +875,21 @@ function copyText(text, successMsg) {
 // All Previously Generated Agents Modal & Registry Management
 // -------------------------------------------------------------
 let allGeneratedPackages = [];
+
+async function loadGeneratedPackagesCache() {
+    try {
+        const res = await fetch("/api/agents/history");
+        if (res.ok) {
+            const data = await res.json();
+            if (data.success && Array.isArray(data.packages)) {
+                allGeneratedPackages = data.packages;
+                renderAgentTable();
+            }
+        }
+    } catch (e) {
+        console.warn("Could not preload agent package history:", e);
+    }
+}
 
 function openAllAgentsModal() {
     const modal = document.getElementById("allAgentsModal");

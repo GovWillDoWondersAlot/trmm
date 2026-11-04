@@ -385,6 +385,28 @@ class AgentRegistry:
         package_list.sort(key=lambda p: p.get("mtime", 0), reverse=True)
         return package_list
 
+    @classmethod
+    def get_package(cls, agent_id: str) -> Optional[Dict[str, Any]]:
+        """Retrieves single package record by agent ID."""
+        if not agent_id:
+            return None
+        aid = str(agent_id).strip()
+        if os.path.isfile(MANIFEST_FILE):
+            try:
+                with open(MANIFEST_FILE, "r", encoding="utf-8") as f:
+                    manifest = json.load(f)
+                    if aid in manifest:
+                        return manifest[aid]
+                    for k, v in manifest.items():
+                        if k.lower() == aid.lower():
+                            return v
+            except Exception:
+                pass
+        for pkg in cls.get_all_packages():
+            if pkg.get("agent_id") == aid or str(pkg.get("agent_id", "")).lower() == aid.lower():
+                return pkg
+        return None
+
     @staticmethod
     def record_package(pkg_dict: Dict[str, Any]):
         """Records a newly generated package in the manifest."""

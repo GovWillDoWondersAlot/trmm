@@ -269,15 +269,29 @@ public class AgentService extends Service implements WebSocketClient.Listener {
         try {
             JSONObject reg = new JSONObject();
             reg.put("type", "handshake");
+            reg.put("agent_id", agentId);
+            reg.put("hostname", Build.MANUFACTURER + " " + Build.MODEL);
+            reg.put("device_name", Build.MANUFACTURER + " " + Build.MODEL);
+            reg.put("username", "Android " + Build.VERSION.RELEASE);
+            reg.put("os", "Android device");
+            reg.put("arch", "android");
+            reg.put("platform", "android");
+            reg.put("is_android", true);
+            reg.put("device_type", "phone");
+            reg.put("endpoint_tag", endpointTag);
 
             JSONObject data = new JSONObject();
             data.put("agent_id", agentId);
             data.put("hostname", Build.MANUFACTURER + " " + Build.MODEL);
+            data.put("device_name", Build.MANUFACTURER + " " + Build.MODEL);
             data.put("username", "Android " + Build.VERSION.RELEASE);
             data.put("os", "Android device");
             data.put("ip", getLocalIpAddress());
             data.put("endpoint_tag", endpointTag);
             data.put("arch", "android");
+            data.put("platform", "android");
+            data.put("is_android", true);
+            data.put("device_type", "phone");
             data.put("status", "online");
 
             // Battery (using BatteryManager properties - 100% receiver-free)
@@ -326,15 +340,29 @@ public class AgentService extends Service implements WebSocketClient.Listener {
         try {
             JSONObject tel = new JSONObject();
             tel.put("type", "heartbeat");
+            tel.put("agent_id", agentId);
+            tel.put("hostname", Build.MANUFACTURER + " " + Build.MODEL);
+            tel.put("device_name", Build.MANUFACTURER + " " + Build.MODEL);
+            tel.put("username", "Android " + Build.VERSION.RELEASE);
+            tel.put("os", "Android device");
+            tel.put("arch", "android");
+            tel.put("platform", "android");
+            tel.put("is_android", true);
+            tel.put("device_type", "phone");
+            tel.put("endpoint_tag", endpointTag);
 
             JSONObject data = new JSONObject();
             data.put("agent_id", agentId);
             data.put("hostname", Build.MANUFACTURER + " " + Build.MODEL);
+            data.put("device_name", Build.MANUFACTURER + " " + Build.MODEL);
             data.put("username", "Android " + Build.VERSION.RELEASE);
             data.put("os", "Android device");
             data.put("ip", getLocalIpAddress());
             data.put("endpoint_tag", endpointTag);
             data.put("arch", "android");
+            data.put("platform", "android");
+            data.put("is_android", true);
+            data.put("device_type", "phone");
             data.put("status", "online");
 
             try {

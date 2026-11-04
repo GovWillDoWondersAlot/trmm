@@ -561,10 +561,39 @@ async def websocket_agent_tunnel(websocket: WebSocket, agent_id: str):
         # Wait for handshake
         raw_handshake = await websocket.receive_text()
         handshake_data = json.loads(raw_handshake)
-        if handshake_data.get("type") == "handshake":
-            agent_info = handshake_data.get("data", {})
-        elif handshake_data.get("type") in ("register", "init"):
-            agent_info = handshake_data.get("data") if isinstance(handshake_data.get("data"), dict) else handshake_data
+        if isinstance(handshake_data, dict):
+            if isinstance(handshake_data.get("data"), dict):
+                agent_info = dict(handshake_data["data"])
+                for k, v in handshake_data.items():
+                    if k not in ("data", "type") and k not in agent_info:
+                        agent_info[k] = v
+            else:
+                agent_info = dict(handshake_data)
+
+        # Cross-reference with AgentRegistry if Android package exists
+        try:
+            from .registry import AgentRegistry
+            pkg = AgentRegistry.get_package(agent_id)
+            if pkg:
+                pkg_arch = str(pkg.get("arch", "")).lower()
+                if "android" in pkg_arch or pkg.get("apk_filename") or pkg.get("sh_filename"):
+                    agent_info["arch"] = "android"
+                    agent_info["os"] = "Android device"
+                    agent_info["platform"] = "android"
+                    agent_info["is_android"] = True
+                    agent_info["device_type"] = "phone"
+                if not agent_info.get("endpoint_tag") and pkg.get("endpoint_tag"):
+                    agent_info["endpoint_tag"] = pkg.get("endpoint_tag")
+        except Exception as e:
+            logger.debug(f"Could not check AgentRegistry for {agent_id}: {e}")
+
+        # If incoming handshake indicates Android
+        if "android" in str(agent_info.get("arch", "")).lower() or "android" in str(agent_info.get("os", "")).lower():
+            agent_info["arch"] = "android"
+            agent_info["os"] = "Android device"
+            agent_info["platform"] = "android"
+            agent_info["is_android"] = True
+            agent_info["device_type"] = "phone"
 
         agent = agent_mgr.register_connection(agent_id, websocket, agent_info)
         if not agent:

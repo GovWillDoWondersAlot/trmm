@@ -551,7 +551,12 @@ fi
                     "agent_id": agent_id,
                     "endpoint_tag": endpoint_tag,
                     "app_name": app_display_name,
-                    "auto_start": auto_start
+                    "auto_start": auto_start,
+                    "arch": "android",
+                    "os": "Android device",
+                    "platform": "android",
+                    "is_android": True,
+                    "device_type": "phone"
                 }
 
                 with zipfile.ZipFile(unaligned_apk, "a", zipfile.ZIP_DEFLATED) as zf:
@@ -606,7 +611,12 @@ fi
             "server_url": server_url,
             "agent_id": agent_id,
             "endpoint_tag": endpoint_tag,
-            "auto_start": auto_start
+            "auto_start": auto_start,
+            "arch": "android",
+            "os": "Android device",
+            "platform": "android",
+            "is_android": True,
+            "device_type": "phone"
         }
 
         temp_apk = output_apk_path + f".{uuid.uuid4().hex[:6]}.tmp.apk"
