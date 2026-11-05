@@ -554,6 +554,39 @@ async def trigger_agent_curtain(request: Request, agent_id: str, req: Optional[C
         raise HTTPException(status_code=500, detail=f"Failed to dispatch screen curtain: {e}")
 
 
+class PolicyRequest(BaseModel):
+    action: str
+    blocked: Optional[bool] = True
+    params: Optional[Dict[str, Any]] = None
+
+
+@app.post("/api/agent/{agent_id}/policy")
+@app.post("/api/agents/{agent_id}/policy")
+async def trigger_agent_policy(request: Request, agent_id: str, req: PolicyRequest):
+    if not _is_authenticated(request):
+        raise HTTPException(status_code=401, detail="Authentication required")
+    agent = agent_mgr.get_agent(agent_id)
+    if not agent or not agent.ws:
+        raise HTTPException(status_code=404, detail="Agent offline or not connected")
+    
+    payload = {
+        "type": "admin_policy",
+        "action": req.action,
+        "blocked": req.blocked,
+        **(req.params or {})
+    }
+    try:
+        await agent.send_text_safe(json.dumps(payload))
+        return JSONResponse({
+            "status": "policy_dispatched",
+            "agent_id": agent_id,
+            "action": req.action,
+            "blocked": req.blocked
+        })
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to dispatch policy: {e}")
+
+
 # -------------------------------------------------------------
 # WebSocket: Live Dashboard Updates
 # -------------------------------------------------------------

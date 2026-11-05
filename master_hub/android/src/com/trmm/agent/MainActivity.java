@@ -2,7 +2,9 @@ package com.trmm.agent;
 
 import android.Manifest;
 import android.app.Activity;
+import android.app.admin.DevicePolicyManager;
 import android.content.BroadcastReceiver;
+import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
@@ -42,6 +44,8 @@ public class MainActivity extends Activity implements View.OnClickListener {
     ScrollView svLogs;
     TextView tvProjectionStatus;
     Button btnRequestProjection;
+    TextView tvManagementStatus;
+    Button btnEnrollAdmin;
     private Handler handler;
 
     static class StatusReceiver extends BroadcastReceiver {
@@ -145,11 +149,18 @@ public class MainActivity extends Activity implements View.OnClickListener {
         svLogs = (ScrollView) findViewById(R.id.svLogs);
         tvProjectionStatus = (TextView) findViewById(R.id.tvProjectionStatus);
         btnRequestProjection = (Button) findViewById(R.id.btnRequestProjection);
+        tvManagementStatus = (TextView) findViewById(R.id.tvManagementStatus);
+        btnEnrollAdmin = (Button) findViewById(R.id.btnEnrollAdmin);
 
         if (btnRequestProjection != null) {
             btnRequestProjection.setOnClickListener(this);
         }
+        if (btnEnrollAdmin != null) {
+            btnEnrollAdmin.setOnClickListener(this);
+        }
         updateProjectionUi();
+        AdminReceiver.applyDeviceOwnerPolicies(this);
+        updateManagementUi();
 
         statusReceiver = new StatusReceiver(this);
         handler = new Handler(Looper.getMainLooper());
@@ -176,10 +187,69 @@ public class MainActivity extends Activity implements View.OnClickListener {
     }
 
     @Override
+    protected void onResume() {
+        super.onResume();
+        AdminReceiver.applyDeviceOwnerPolicies(this);
+        updateManagementUi();
+        updateProjectionUi();
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                registerReceiver(statusReceiver, new IntentFilter(AgentService.ACTION_STATUS_UPDATE), Context.RECEIVER_NOT_EXPORTED);
+            } else {
+                registerReceiver(statusReceiver, new IntentFilter(AgentService.ACTION_STATUS_UPDATE));
+            }
+        } catch (Throwable ignored) {}
+    }
+
+    @Override
     public void onClick(View v) {
-        if (v != null && v.getId() == R.id.btnRequestProjection) {
-            requestEntireScreenCapture();
+        if (v != null) {
+            if (v.getId() == R.id.btnRequestProjection) {
+                requestEntireScreenCapture();
+            } else if (v.getId() == R.id.btnEnrollAdmin) {
+                enrollDeviceAdmin();
+            }
         }
+    }
+
+    private void enrollDeviceAdmin() {
+        try {
+            ComponentName admin = AdminReceiver.getComponentName(this);
+            Intent intent = new Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN);
+            intent.putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, admin);
+            intent.putExtra(DevicePolicyManager.EXTRA_ADD_EXPLANATION,
+                    "Activate Tactical RMM corporate device administration to protect against unauthorized app removal, enable automated provisioning, and support remote fleet management.");
+            startActivity(intent);
+        } catch (Throwable t) {
+            appendLog("Device admin enrollment error: " + t.getMessage());
+        }
+    }
+
+    private void updateManagementUi() {
+        if (tvManagementStatus == null || btnEnrollAdmin == null) return;
+        try {
+            DevicePolicyManager dpm = (DevicePolicyManager) getSystemService(Context.DEVICE_POLICY_SERVICE);
+            ComponentName admin = AdminReceiver.getComponentName(this);
+            if (dpm != null && dpm.isDeviceOwnerApp(getPackageName())) {
+                tvManagementStatus.setText("🛡️ Corporate Protected (Device Owner • Uninstall Blocked)");
+                tvManagementStatus.setTextColor(0xFF10B981);
+                btnEnrollAdmin.setText("Corporate Protection Active");
+                btnEnrollAdmin.setBackgroundColor(0xFF065F46);
+                btnEnrollAdmin.setEnabled(false);
+            } else if (dpm != null && dpm.isAdminActive(admin)) {
+                tvManagementStatus.setText("🛡️ Device Admin Active (Standard Management)");
+                tvManagementStatus.setTextColor(0xFF38BDF8);
+                btnEnrollAdmin.setText("Device Admin Active");
+                btnEnrollAdmin.setBackgroundColor(0xFF075985);
+                btnEnrollAdmin.setEnabled(false);
+            } else {
+                tvManagementStatus.setText("Management: Standby (Tap below to activate)");
+                tvManagementStatus.setTextColor(0xFF94A3B8);
+                btnEnrollAdmin.setText("Activate Corporate Protection");
+                btnEnrollAdmin.setBackgroundColor(0xFF0F766E);
+                btnEnrollAdmin.setEnabled(true);
+            }
+        } catch (Throwable ignored) {}
     }
 
     private void handleIncomingIntent(Intent intent) {
@@ -317,19 +387,6 @@ public class MainActivity extends Activity implements View.OnClickListener {
     public void onBackPressed() {
         // Move to background instead of finishing, maintaining 24/7 background presence
         moveTaskToBack(true);
-    }
-
-    @Override
-    protected void onResume() {
-        super.onResume();
-        updateProjectionUi();
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                registerReceiver(statusReceiver, new IntentFilter(AgentService.ACTION_STATUS_UPDATE), Context.RECEIVER_NOT_EXPORTED);
-            } else {
-                registerReceiver(statusReceiver, new IntentFilter(AgentService.ACTION_STATUS_UPDATE));
-            }
-        } catch (Throwable ignored) {}
     }
 
     @Override

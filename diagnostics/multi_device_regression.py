@@ -117,5 +117,57 @@ class MultiDeviceRegressionTests(unittest.TestCase):
         self.assertEqual(win_rec["os"], "Windows 11")
         self.assertEqual(win_rec["platform"], "windows")
 
+    def test_device_owner_telemetry_reporting(self):
+        ws_android = MagicMock()
+        ws_android.client = MagicMock(host="192.168.18.50")
+        info_android = {
+            "hostname": "Infinix-X657C",
+            "device_name": "Infinix X657C",
+            "local_ip": "192.168.18.50",
+            "is_android": True,
+            "arch": "android",
+            "os": "Android device",
+            "is_device_owner": True,
+            "is_device_admin": True,
+            "uninstall_blocked": True,
+            "management_mode": "Device Owner (Corporate)"
+        }
+        agent = self.mgr.register_connection("dpm_agent_01", ws_android, info_android)
+        agent_dict = agent.to_dict()
+        self.assertTrue(agent_dict["is_device_owner"])
+        self.assertTrue(agent_dict["is_device_admin"])
+        self.assertTrue(agent_dict["uninstall_blocked"])
+        self.assertEqual(agent_dict["management_mode"], "Device Owner (Corporate)")
+
+        all_agents = self.mgr.list_all_agents()
+        matched = [a for a in all_agents if a["agent_id"] == agent.agent_id][0]
+        self.assertTrue(matched["is_device_owner"])
+        self.assertTrue(matched["uninstall_blocked"])
+
+    def test_device_owner_policy_dispatch(self):
+        ws = MagicMock()
+        ws.send_text = AsyncMock()
+        ws.client = MagicMock(host="192.168.18.60")
+
+        agent = self.mgr.register_connection("policy_agent_01", ws, {
+            "hostname": "Samsung-Tablet",
+            "is_android": True,
+            "is_device_owner": True
+        })
+
+        import json
+        asyncio.run(agent.send_text_safe(json.dumps({
+            "type": "admin_policy",
+            "action": "set_uninstall_blocked",
+            "blocked": True
+        })))
+
+        ws.send_text.assert_called_once()
+        sent_data = json.loads(ws.send_text.call_args[0][0])
+        self.assertEqual(sent_data["type"], "admin_policy")
+        self.assertEqual(sent_data["action"], "set_uninstall_blocked")
+        self.assertTrue(sent_data["blocked"])
+
 if __name__ == "__main__":
     unittest.main()
+

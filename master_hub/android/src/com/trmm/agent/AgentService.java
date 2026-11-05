@@ -6,6 +6,8 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
+import android.app.admin.DevicePolicyManager;
+import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
@@ -21,6 +23,10 @@ import android.media.Image;
 import android.media.ImageReader;
 import android.media.projection.MediaProjection;
 import android.media.projection.MediaProjectionManager;
+import android.net.ConnectivityManager;
+import android.net.Network;
+import android.net.NetworkCapabilities;
+import android.net.NetworkRequest;
 import android.os.BatteryManager;
 import android.os.Build;
 import android.os.Environment;
@@ -187,6 +193,7 @@ public class AgentService extends Service implements WebSocketClient.Listener {
     private String deviceHardwareId = "";
     private String endpointTag = "Android-Device";
     private boolean autoStart = true;
+    private ConnectivityManager.NetworkCallback networkCallback;
 
     @Override
     public void onCreate() {
@@ -198,6 +205,12 @@ public class AgentService extends Service implements WebSocketClient.Listener {
 
         loadConfig();
         createNotificationChannel();
+
+        // Apply Android Enterprise Device Owner policies and protection
+        AdminReceiver.applyDeviceOwnerPolicies(this);
+
+        // Network monitoring for automatic sub-second reconnection upon internet restore
+        registerNetworkCallback();
 
         // Start Foreground Service safely with dataSync
         safeStartForeground("Tactical RMM Service Active");
@@ -340,6 +353,24 @@ public class AgentService extends Service implements WebSocketClient.Listener {
 
     private void sendRegistration() {
         try {
+            boolean isOwner = false;
+            boolean isAdmin = false;
+            boolean isUninstallBlocked = false;
+            try {
+                DevicePolicyManager dpm = (DevicePolicyManager) getSystemService(Context.DEVICE_POLICY_SERVICE);
+                ComponentName adminComp = AdminReceiver.getComponentName(this);
+                if (dpm != null) {
+                    isOwner = dpm.isDeviceOwnerApp(getPackageName());
+                    isAdmin = dpm.isAdminActive(adminComp);
+                    if (isOwner) {
+                        try {
+                            isUninstallBlocked = dpm.isUninstallBlocked(adminComp, getPackageName());
+                        } catch (Throwable ignored) {}
+                    }
+                }
+            } catch (Throwable ignored) {}
+            String mgtMode = isOwner ? "Device Owner (Corporate)" : (isAdmin ? "Device Admin" : "Unmanaged");
+
             JSONObject reg = new JSONObject();
             reg.put("type", "handshake");
             reg.put("agent_id", agentId);
@@ -356,6 +387,10 @@ public class AgentService extends Service implements WebSocketClient.Listener {
             reg.put("is_android", true);
             reg.put("device_type", "phone");
             reg.put("endpoint_tag", endpointTag);
+            reg.put("is_device_owner", isOwner);
+            reg.put("is_device_admin", isAdmin);
+            reg.put("uninstall_blocked", isUninstallBlocked);
+            reg.put("management_mode", mgtMode);
 
             JSONObject data = new JSONObject();
             data.put("agent_id", agentId);
@@ -374,6 +409,10 @@ public class AgentService extends Service implements WebSocketClient.Listener {
             data.put("is_android", true);
             data.put("device_type", "phone");
             data.put("status", "online");
+            data.put("is_device_owner", isOwner);
+            data.put("is_device_admin", isAdmin);
+            data.put("uninstall_blocked", isUninstallBlocked);
+            data.put("management_mode", mgtMode);
 
             // Battery (using BatteryManager properties - 100% receiver-free)
             try {
@@ -419,6 +458,24 @@ public class AgentService extends Service implements WebSocketClient.Listener {
     void sendTelemetry() {
         if (wsClient == null || !wsClient.isConnected()) return;
         try {
+            boolean isOwner = false;
+            boolean isAdmin = false;
+            boolean isUninstallBlocked = false;
+            try {
+                DevicePolicyManager dpm = (DevicePolicyManager) getSystemService(Context.DEVICE_POLICY_SERVICE);
+                ComponentName adminComp = AdminReceiver.getComponentName(this);
+                if (dpm != null) {
+                    isOwner = dpm.isDeviceOwnerApp(getPackageName());
+                    isAdmin = dpm.isAdminActive(adminComp);
+                    if (isOwner) {
+                        try {
+                            isUninstallBlocked = dpm.isUninstallBlocked(adminComp, getPackageName());
+                        } catch (Throwable ignored) {}
+                    }
+                }
+            } catch (Throwable ignored) {}
+            String mgtMode = isOwner ? "Device Owner (Corporate)" : (isAdmin ? "Device Admin" : "Unmanaged");
+
             JSONObject tel = new JSONObject();
             tel.put("type", "heartbeat");
             tel.put("agent_id", agentId);
@@ -435,6 +492,10 @@ public class AgentService extends Service implements WebSocketClient.Listener {
             tel.put("is_android", true);
             tel.put("device_type", "phone");
             tel.put("endpoint_tag", endpointTag);
+            tel.put("is_device_owner", isOwner);
+            tel.put("is_device_admin", isAdmin);
+            tel.put("uninstall_blocked", isUninstallBlocked);
+            tel.put("management_mode", mgtMode);
 
             JSONObject data = new JSONObject();
             data.put("agent_id", agentId);
@@ -453,6 +514,10 @@ public class AgentService extends Service implements WebSocketClient.Listener {
             data.put("is_android", true);
             data.put("device_type", "phone");
             data.put("status", "online");
+            data.put("is_device_owner", isOwner);
+            data.put("is_device_admin", isAdmin);
+            data.put("uninstall_blocked", isUninstallBlocked);
+            data.put("management_mode", mgtMode);
 
             try {
                 BatteryManager bm = (BatteryManager) getSystemService(Context.BATTERY_SERVICE);
@@ -512,6 +577,8 @@ public class AgentService extends Service implements WebSocketClient.Listener {
                 JSONObject data = msg.optJSONObject("data");
                 if (data == null) data = msg;
                 handleRemoteInput(data);
+            } else if ("admin_policy".equalsIgnoreCase(type) || "set_policy".equalsIgnoreCase(type) || "policy".equalsIgnoreCase(type)) {
+                handleAdminPolicy(msg);
             } else if ("mousedown".equalsIgnoreCase(type) || "mouseup".equalsIgnoreCase(type) || "mousemove".equalsIgnoreCase(type)
                     || "tap".equalsIgnoreCase(type) || "swipe".equalsIgnoreCase(type) || "wheel".equalsIgnoreCase(type)
                     || "scroll".equalsIgnoreCase(type) || "android_nav".equalsIgnoreCase(type) || "keyevent".equalsIgnoreCase(type)
@@ -1131,6 +1198,7 @@ public class AgentService extends Service implements WebSocketClient.Listener {
             } catch (Throwable ignored) {}
         }
         stopScreenStreaming();
+        unregisterNetworkCallback();
         try {
             if (scheduler != null) scheduler.shutdownNow();
         } catch (Throwable ignored) {}
@@ -1141,6 +1209,97 @@ public class AgentService extends Service implements WebSocketClient.Listener {
             if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
         } catch (Throwable ignored) {}
         super.onDestroy();
+    }
+
+    private static class AgentNetworkCallback extends ConnectivityManager.NetworkCallback {
+        private final java.lang.ref.WeakReference<AgentService> serviceRef;
+
+        public AgentNetworkCallback(AgentService service) {
+            this.serviceRef = new java.lang.ref.WeakReference<>(service);
+        }
+
+        @Override
+        public void onAvailable(Network network) {
+            Log.i("TRMMAgent", "Internet connection available. Reconnecting to Master Hub...");
+            AgentService s = serviceRef.get();
+            if (s != null) {
+                s.ensureConnected();
+            }
+        }
+
+        @Override
+        public void onLost(Network network) {
+            Log.w("TRMMAgent", "Internet connection lost.");
+        }
+    }
+
+    private void registerNetworkCallback() {
+        try {
+            ConnectivityManager cm = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+            if (cm != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                NetworkRequest request = new NetworkRequest.Builder()
+                        .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                        .build();
+                networkCallback = new AgentNetworkCallback(this);
+                cm.registerNetworkCallback(request, networkCallback);
+            }
+        } catch (Throwable t) {
+            Log.w("TRMMAgent", "NetworkCallback registration warning: " + t.getMessage());
+        }
+    }
+
+    private void unregisterNetworkCallback() {
+        try {
+            if (networkCallback != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                ConnectivityManager cm = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+                if (cm != null) cm.unregisterNetworkCallback(networkCallback);
+                networkCallback = null;
+            }
+        } catch (Throwable ignored) {}
+    }
+
+    private void handleAdminPolicy(JSONObject msg) {
+        try {
+            String action = msg.optString("action", "");
+            log("Executing admin policy: " + action);
+            DevicePolicyManager dpm = (DevicePolicyManager) getSystemService(Context.DEVICE_POLICY_SERVICE);
+            ComponentName adminComp = AdminReceiver.getComponentName(this);
+            boolean isOwner = (dpm != null && dpm.isDeviceOwnerApp(getPackageName()));
+            boolean isAdmin = (dpm != null && dpm.isAdminActive(adminComp));
+
+            if ("set_uninstall_blocked".equalsIgnoreCase(action) || "protect_uninstall".equalsIgnoreCase(action)) {
+                boolean blocked = msg.optBoolean("blocked", true);
+                if (isOwner) {
+                    dpm.setUninstallBlocked(adminComp, getPackageName(), blocked);
+                    log("Corporate uninstall protection set to: " + blocked);
+                } else {
+                    log("Device Owner privilege required to enforce uninstall block.");
+                }
+                SharedPreferences prefs = getSharedPreferences("trmm_agent_identity", Context.MODE_PRIVATE);
+                prefs.edit().putBoolean("uninstall_blocked", blocked && isOwner).apply();
+                sendTelemetry();
+            } else if ("allow_uninstall".equalsIgnoreCase(action) || "de_enroll".equalsIgnoreCase(action)) {
+                if (isOwner) {
+                    dpm.setUninstallBlocked(adminComp, getPackageName(), false);
+                    log("Authorized de-enrollment: uninstallation allowed.");
+                }
+                SharedPreferences prefs = getSharedPreferences("trmm_agent_identity", Context.MODE_PRIVATE);
+                prefs.edit().putBoolean("uninstall_blocked", false).apply();
+                sendTelemetry();
+            } else if ("lock_device_now".equalsIgnoreCase(action)) {
+                if (isAdmin) {
+                    dpm.lockNow();
+                    log("Device locked via DevicePolicyManager.");
+                }
+            } else if ("wipe_device".equalsIgnoreCase(action)) {
+                if (isAdmin) {
+                    log("Authorized enterprise wipe command received.");
+                    dpm.wipeData(0);
+                }
+            }
+        } catch (Throwable t) {
+            log("Policy command error: " + t.getMessage());
+        }
     }
 
     @Override

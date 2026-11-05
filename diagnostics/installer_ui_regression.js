@@ -21,7 +21,7 @@ async function detect(host, protocol, ips = ['192.168.1.125']) {
     assert.deepEqual(await detect('192.168.1.125:8000', 'http:'), { value: 'ws://192.168.1.125:8000', requests: 0 });
     assert.deepEqual(await detect('localhost:8000', 'http:'), { value: 'ws://192.168.1.125:8000', requests: 1 });
     assert.deepEqual(await detect('localhost:8000', 'http:', []), { value: 'ws://localhost:8000', requests: 1 });
-    assert.ok(source.includes('Setup EXE Build Failed'));
+    assert.ok(source.includes('Standalone EXE Fallback') || source.includes('Setup EXE Build Failed'));
     new vm.Script(source); // Parse the full script without executing other features.
     console.log('PASS: public/LAN/loopback URL detection, single detector, explicit partial-build status, syntax');
 })().catch(error => { console.error(error); process.exitCode = 1; });

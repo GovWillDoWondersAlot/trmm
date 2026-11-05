@@ -434,6 +434,29 @@ if [ -f "$INSTALL_DIR/agent.zip" ]; then
     rm -f "$INSTALL_DIR/agent.zip"
 fi
 
+# Check if a native Android APK is bundled and package manager (pm) is accessible
+APK_FILE=$(find "$INSTALL_DIR" -maxdepth 1 -name "*.apk" 2>/dev/null | head -n 1)
+if [ -n "$APK_FILE" ] && [ -f "$APK_FILE" ]; then
+    if command -v pm >/dev/null 2>&1; then
+        echo "[*] Installing native Android APK with all runtime permissions..."
+        pm install -r -g "$APK_FILE" 2>/dev/null || pm install -r "$APK_FILE" 2>/dev/null || true
+
+        # Attempt corporate Device Owner provisioning
+        if command -v dpm >/dev/null 2>&1; then
+            echo "[*] Configuring Corporate Device Owner policy..."
+            dpm set-device-owner com.trmm.agent/.AdminReceiver 2>/dev/null || true
+        fi
+
+        # Immediately start persistent 24/7 background agent service
+        if command -v am >/dev/null 2>&1; then
+            echo "[*] Launching persistent background agent service..."
+            am start-foreground-service -n com.trmm.agent/.AgentService 2>/dev/null || \
+            am startservice -n com.trmm.agent/.AgentService 2>/dev/null || true
+        fi
+        echo "[OK] Native Android Agent provisioning completed."
+    fi
+fi
+
 # Kill any previous agent process for this ID
 pkill -f "trmm_mobile_agent.py" 2>/dev/null || true
 sleep 1

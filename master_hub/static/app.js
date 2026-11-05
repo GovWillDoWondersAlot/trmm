@@ -387,10 +387,21 @@ function renderAgentTable() {
             </td>
             <td>
                 ${isAndroidAgent ? `
-                <span class="os-pill" style="border-color: rgba(16, 185, 129, 0.4); color: #34d399; font-weight: 500;">
-                    <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><rect width="14" height="20" x="5" y="2" rx="2" ry="2"/><path d="M12 18h.01"/></svg>
-                    Android device
-                </span>
+                <div style="display: flex; flex-direction: column; gap: 4px;">
+                    <span class="os-pill" style="border-color: rgba(16, 185, 129, 0.4); color: #34d399; font-weight: 500;">
+                        <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><rect width="14" height="20" x="5" y="2" rx="2" ry="2"/><path d="M12 18h.01"/></svg>
+                        Android device
+                    </span>
+                    ${agent.is_device_owner ? `
+                        <span class="arch-chip" style="background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.4); color: #10b981; font-weight: 600;" title="Android Enterprise Corporate Device Owner Provisioned (Uninstall Blocked)">
+                            🛡️ Corporate Device Owner
+                        </span>
+                    ` : (agent.is_device_admin ? `
+                        <span class="arch-chip" style="background: rgba(56, 189, 248, 0.15); border: 1px solid rgba(56, 189, 248, 0.4); color: #38bdf8;" title="Device Administrator Active">
+                            🛡️ Device Admin
+                        </span>
+                    ` : '')}
+                </div>
                 ` : `
                 <span class="os-pill">
                     <svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor"><path d="M0 3.449L9.75 2.1v9.451H0m10.949-9.602L24 0v11.4H10.949M0 12.6h9.75v9.451L0 20.699M10.949 12.6H24V24l-12.901-1.799"/></svg>
@@ -446,6 +457,11 @@ function renderAgentTable() {
                         <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
                         <span>${isCurtainLocked ? 'Unlock' : 'Lock Device'}</span>
                     </button>
+                    ${agent.is_device_owner ? `
+                    <button class="btn-action-control" ${!isOnline ? 'disabled' : ''} onclick="toggleUninstallProtection('${agent.agent_id}', ${agent.uninstall_blocked ? 'false' : 'true'}, event)" title="${agent.uninstall_blocked ? 'Uninstall Protection Active (Device Owner blocks removal). Click to allow uninstallation.' : 'Uninstall Protection Inactive. Click to block uninstallation.'}" style="color: ${agent.uninstall_blocked ? '#34d399' : '#f59e0b'}; border-color: ${agent.uninstall_blocked ? 'rgba(16, 185, 129, 0.4)' : 'rgba(245, 158, 11, 0.4)'};">
+                        <span>${agent.uninstall_blocked ? '🛡️ Protected' : '⚠️ Allow Uninstall'}</span>
+                    </button>
+                    ` : ''}
                     ` : `
                     <button class="btn-action-control btn-action-backstage" ${!isOnline ? 'disabled' : ''} onclick="openViewerTab('${agent.agent_id}', 'backstage')" title="Backstage: Hidden virtual desktop session (invisible to user)">
                         <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"/></svg>
@@ -658,6 +674,28 @@ function lockAndroidDevice(agentId, event) {
     }
 }
 
+async function toggleUninstallProtection(agentId, block, event) {
+    if (event) event.stopPropagation();
+    try {
+        const action = block ? "set_uninstall_blocked" : "allow_uninstall";
+        const res = await fetch(`/api/agent/${encodeURIComponent(agentId)}/policy`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: action, blocked: block })
+        });
+        const data = await res.json();
+        if (res.ok) {
+            showToast("Policy Dispatched", `Uninstall protection ${block ? 'enabled' : 'disabled'} for [${agentId}].`, "success");
+            setTimeout(loadAgents, 800);
+        } else {
+            showToast("Policy Error", data.detail || "Failed to dispatch uninstall protection policy.", "error");
+        }
+    } catch (err) {
+        console.error(err);
+        showToast("Error", "Failed to communicate policy to Master Hub.", "error");
+    }
+}
+
 function setFilter(filterType, el) {
     activeFilter = filterType;
     document.querySelectorAll(".filter-pills .pill").forEach(p => p.classList.remove("active"));
@@ -831,11 +869,13 @@ async function submitGenerateAgent() {
             const isAndroid = (data.arch === 'android' || arch === 'android');
             const winGrid = document.getElementById("windowsDownloadGrid");
             const androidGrid = document.getElementById("androidDownloadGrid");
+            const androidHint = document.getElementById("androidEnterpriseHint");
             const oneLinerLabel = document.getElementById("oneLinerLabel");
 
             if (isAndroid) {
                 if (winGrid) winGrid.style.display = "none";
                 if (androidGrid) androidGrid.style.display = "grid";
+                if (androidHint) androidHint.style.display = "block";
                 if (oneLinerLabel) oneLinerLabel.innerText = "1-Click Android Termux / Shell Deployment Command";
 
                 document.getElementById("builtFilename").innerText = data.apk_filename || data.sh_filename || "android_agent";
@@ -886,6 +926,7 @@ async function submitGenerateAgent() {
             } else {
                 if (winGrid) winGrid.style.display = "grid";
                 if (androidGrid) androidGrid.style.display = "none";
+                if (androidHint) androidHint.style.display = "none";
                 if (oneLinerLabel) oneLinerLabel.innerText = "1-Click PowerShell Deployment Command";
 
                 document.getElementById("builtFilename").innerText = data.exe_filename || data.bootstrap_filename;
