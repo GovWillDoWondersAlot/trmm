@@ -703,6 +703,11 @@ async def websocket_agent_tunnel(websocket: WebSocket, agent_id: str):
                     update_dict = text_data.get("data") if isinstance(text_data.get("data"), dict) else text_data
                     agent.update_info(update_dict)
                     await broadcast_agent_list()
+                elif text_data.get("type") == "diag_curtain":
+                    curtain_on = bool(text_data.get("enabled", False))
+                    agent.client_info["curtain_active"] = curtain_on
+                    logger.info(f"Agent '{agent_id}' reported screen curtain state: {'active' if curtain_on else 'unlocked'}")
+                    await broadcast_agent_list()
                 elif text_data.get("type") == "mirror_health":
                     for v_sess in list(agent.mirror_viewers.values()):
                         if getattr(v_sess, "protocol_version", 0) == 2:

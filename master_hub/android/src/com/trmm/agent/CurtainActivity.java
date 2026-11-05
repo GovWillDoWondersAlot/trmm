@@ -35,6 +35,7 @@ public class CurtainActivity extends Activity {
     public static final String PREF_SUBTITLE = "lock_subtitle";
 
     public static volatile boolean isActive = false;
+    public static volatile CurtainActivity currentInstance = null;
 
     static class DismissReceiver extends BroadcastReceiver {
         private final CurtainActivity activity;
@@ -48,10 +49,32 @@ public class CurtainActivity extends Activity {
             try {
                 if (activity != null) {
                     activity.unlockAndExit();
+                } else if (currentInstance != null) {
+                    currentInstance.unlockAndExit();
                 }
             } catch (Throwable t) {
                 Log.w("TRMMAgent", "Error in Curtain dismiss: " + t.getMessage());
             }
+        }
+    }
+
+    public static void unlockNow(Context context) {
+        isActive = false;
+        if (context != null) {
+            try {
+                SharedPreferences prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+                prefs.edit().putBoolean(PREF_IS_LOCKED, false).apply();
+            } catch (Throwable ignored) {}
+        }
+
+        if (currentInstance != null) {
+            final CurtainActivity act = currentInstance;
+            act.runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    act.unlockAndExit();
+                }
+            });
         }
     }
 
@@ -99,6 +122,7 @@ public class CurtainActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        currentInstance = this;
         isActive = true;
         startTimeMs = System.currentTimeMillis();
 
@@ -222,8 +246,20 @@ public class CurtainActivity extends Activity {
         } catch (Throwable ignored) {}
     }
 
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        if (intent != null) {
+            String action = intent.getStringExtra("ACTION");
+            if ("UNLOCK".equalsIgnoreCase(action) || intent.getBooleanExtra("UNLOCK", false)) {
+                unlockAndExit();
+            }
+        }
+    }
+
     public void unlockAndExit() {
         isActive = false;
+        currentInstance = null;
 
         // 1. Clear persistent lock state
         try {
@@ -238,18 +274,33 @@ public class CurtainActivity extends Activity {
             Log.w("TRMMAgent", "stopLockTask warning: " + t.getMessage());
         }
 
-        // 3. Take User directly to Android Home Screen
+        // 3. Clear window fullscreen & keep screen on flags
+        try {
+            getWindow().clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN | WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+            View decorView = getWindow().getDecorView();
+            decorView.setSystemUiVisibility(View.SYSTEM_UI_FLAG_VISIBLE);
+        } catch (Throwable ignored) {}
+
+        // 4. Take User directly to Android Home Screen
         try {
             Intent homeIntent = new Intent(Intent.ACTION_MAIN);
             homeIntent.addCategory(Intent.CATEGORY_HOME);
-            homeIntent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+            homeIntent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED);
             startActivity(homeIntent);
         } catch (Throwable t) {
             Log.w("TRMMAgent", "Home Intent error: " + t.getMessage());
         }
 
-        // 4. Finish activity
-        finish();
+        // 5. Finish and remove task
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                finishAndRemoveTask();
+            } else {
+                finish();
+            }
+        } catch (Throwable ignored) {
+            finish();
+        }
     }
 
     void updateCurtainUI() {
@@ -331,6 +382,9 @@ public class CurtainActivity extends Activity {
     @Override
     protected void onDestroy() {
         isActive = false;
+        if (currentInstance == this) {
+            currentInstance = null;
+        }
         try {
             if (updateHandler != null && updateRunnable != null) {
                 updateHandler.removeCallbacks(updateRunnable);

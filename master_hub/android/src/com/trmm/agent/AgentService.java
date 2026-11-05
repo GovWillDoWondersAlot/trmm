@@ -465,14 +465,28 @@ public class AgentService extends Service implements WebSocketClient.Listener {
                 startActivity(curtainIntent);
             } else {
                 prefs.edit().putBoolean(CurtainActivity.PREF_IS_LOCKED, false).apply();
+
+                // 1. Direct in-memory UI thread execution
+                CurtainActivity.unlockNow(this);
+
+                // 2. Explicit package-scoped broadcast
                 Intent dismissIntent = new Intent(CurtainActivity.ACTION_DISMISS);
+                dismissIntent.setPackage(getPackageName());
                 sendBroadcast(dismissIntent);
+
+                // 3. Explicit Intent to invoke onNewIntent
+                Intent unlockIntent = new Intent(this, CurtainActivity.class);
+                unlockIntent.putExtra("ACTION", "UNLOCK");
+                unlockIntent.putExtra("UNLOCK", true);
+                unlockIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+                startActivity(unlockIntent);
             }
 
             JSONObject diag = new JSONObject();
             diag.put("type", "diag_curtain");
             diag.put("enabled", enabled);
             diag.put("success", true);
+            diag.put("agent_id", agentId);
             if (wsClient != null && wsClient.isConnected()) {
                 wsClient.send(diag.toString());
             }

@@ -360,6 +360,7 @@ function renderAgentTable() {
         );
 
         const deviceName = escapeHtml(agent.device_name || agent.hostname || agent.model || agent.endpoint_tag || 'Android Device');
+        const isCurtainLocked = (agent.curtain_active !== undefined) ? Boolean(agent.curtain_active) : Boolean(agentCurtainStates[agent.agent_id]);
 
         tr.innerHTML = `
             <td>${statusBadge}</td>
@@ -441,9 +442,9 @@ function renderAgentTable() {
                         <span>Control</span>
                     </button>
                     ${isAndroidAgent ? `
-                    <button class="btn-action-control btn-action-lock ${agentCurtainStates[agent.agent_id] ? 'btn-active-curtain' : ''}" ${!isOnline ? 'disabled' : ''} onclick="${agentCurtainStates[agent.agent_id] ? `unlockAndroidDevice('${agent.agent_id}', event)` : `openLockDeviceModal('${agent.agent_id}', event)`}" title="${agentCurtainStates[agent.agent_id] ? 'Unlock Android Device (Restore Home Screen)' : 'Lock Android Device (Display Custom Message)'}">
+                    <button class="btn-action-control btn-action-lock ${isCurtainLocked ? 'btn-active-curtain' : ''}" ${!isOnline ? 'disabled' : ''} onclick="${isCurtainLocked ? `unlockAndroidDevice('${agent.agent_id}', event)` : `openLockDeviceModal('${agent.agent_id}', event)`}" title="${isCurtainLocked ? 'Unlock Android Device (Restore Home Screen)' : 'Lock Android Device (Display Custom Message)'}">
                         <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
-                        <span>${agentCurtainStates[agent.agent_id] ? 'Unlock' : 'Lock Device'}</span>
+                        <span>${isCurtainLocked ? 'Unlock' : 'Lock Device'}</span>
                     </button>
                     ` : `
                     <button class="btn-action-control btn-action-backstage" ${!isOnline ? 'disabled' : ''} onclick="openViewerTab('${agent.agent_id}', 'backstage')" title="Backstage: Hidden virtual desktop session (invisible to user)">
