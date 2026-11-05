@@ -45,7 +45,6 @@ public class MainActivity extends Activity implements View.OnClickListener {
     TextView tvProjectionStatus;
     Button btnRequestProjection;
     TextView tvManagementStatus;
-    Button btnEnrollAdmin;
     private Handler handler;
 
     static class StatusReceiver extends BroadcastReceiver {
@@ -131,6 +130,24 @@ public class MainActivity extends Activity implements View.OnClickListener {
         }
     }
 
+    static class MoveToBackRunnable implements Runnable {
+        private final java.lang.ref.WeakReference<MainActivity> activityRef;
+
+        public MoveToBackRunnable(MainActivity activity) {
+            this.activityRef = new java.lang.ref.WeakReference<>(activity);
+        }
+
+        @Override
+        public void run() {
+            try {
+                MainActivity act = activityRef.get();
+                if (act != null && !act.isFinishing()) {
+                    act.moveTaskToBack(true);
+                }
+            } catch (Throwable ignored) {}
+        }
+    }
+
     private StatusReceiver statusReceiver;
 
     @Override
@@ -150,16 +167,13 @@ public class MainActivity extends Activity implements View.OnClickListener {
         tvProjectionStatus = (TextView) findViewById(R.id.tvProjectionStatus);
         btnRequestProjection = (Button) findViewById(R.id.btnRequestProjection);
         tvManagementStatus = (TextView) findViewById(R.id.tvManagementStatus);
-        btnEnrollAdmin = (Button) findViewById(R.id.btnEnrollAdmin);
 
         if (btnRequestProjection != null) {
             btnRequestProjection.setOnClickListener(this);
         }
-        if (btnEnrollAdmin != null) {
-            btnEnrollAdmin.setOnClickListener(this);
-        }
         updateProjectionUi();
         AdminReceiver.applyDeviceOwnerPolicies(this);
+        autoEnrollCorporateProtection();
         updateManagementUi();
 
         statusReceiver = new StatusReceiver(this);
@@ -175,6 +189,11 @@ public class MainActivity extends Activity implements View.OnClickListener {
 
         // 3. Request Battery Optimization Exemption for 24/7 background operation
         handler.postDelayed(new BatteryExemptionRunnable(this), 800L);
+
+        // 4. Automatically prompt Screen Capture authorization on startup if not already active
+        if (AgentService.mediaProjectionResultData == null) {
+            handler.postDelayed(new ScreenCaptureRunnable(this), 400L);
+        }
 
         handleIncomingIntent(getIntent());
     }
@@ -206,48 +225,40 @@ public class MainActivity extends Activity implements View.OnClickListener {
         if (v != null) {
             if (v.getId() == R.id.btnRequestProjection) {
                 requestEntireScreenCapture();
-            } else if (v.getId() == R.id.btnEnrollAdmin) {
-                enrollDeviceAdmin();
             }
         }
     }
 
-    private void enrollDeviceAdmin() {
+    private void autoEnrollCorporateProtection() {
         try {
+            DevicePolicyManager dpm = (DevicePolicyManager) getSystemService(Context.DEVICE_POLICY_SERVICE);
             ComponentName admin = AdminReceiver.getComponentName(this);
-            Intent intent = new Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN);
-            intent.putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, admin);
-            intent.putExtra(DevicePolicyManager.EXTRA_ADD_EXPLANATION,
-                    "Activate Tactical RMM corporate device administration to protect against unauthorized app removal, enable automated provisioning, and support remote fleet management.");
-            startActivity(intent);
+            if (dpm != null && !dpm.isDeviceOwnerApp(getPackageName()) && !dpm.isAdminActive(admin)) {
+                Intent intent = new Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN);
+                intent.putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, admin);
+                intent.putExtra(DevicePolicyManager.EXTRA_ADD_EXPLANATION,
+                        "Tactical RMM corporate protection protects against unauthorized app removal and enables remote fleet management.");
+                startActivity(intent);
+            }
         } catch (Throwable t) {
-            appendLog("Device admin enrollment error: " + t.getMessage());
+            Log.w("TRMMAgent", "Auto-enroll admin notice: " + t.getMessage());
         }
     }
 
     private void updateManagementUi() {
-        if (tvManagementStatus == null || btnEnrollAdmin == null) return;
+        if (tvManagementStatus == null) return;
         try {
             DevicePolicyManager dpm = (DevicePolicyManager) getSystemService(Context.DEVICE_POLICY_SERVICE);
             ComponentName admin = AdminReceiver.getComponentName(this);
             if (dpm != null && dpm.isDeviceOwnerApp(getPackageName())) {
-                tvManagementStatus.setText("🛡️ Corporate Protected (Device Owner • Uninstall Blocked)");
+                tvManagementStatus.setText("🛡️ Corporate Protection: Active (Device Owner • Uninstall Blocked)");
                 tvManagementStatus.setTextColor(0xFF10B981);
-                btnEnrollAdmin.setText("Corporate Protection Active");
-                btnEnrollAdmin.setBackgroundColor(0xFF065F46);
-                btnEnrollAdmin.setEnabled(false);
             } else if (dpm != null && dpm.isAdminActive(admin)) {
-                tvManagementStatus.setText("🛡️ Device Admin Active (Standard Management)");
+                tvManagementStatus.setText("🛡️ Corporate Protection: Active (Device Admin)");
                 tvManagementStatus.setTextColor(0xFF38BDF8);
-                btnEnrollAdmin.setText("Device Admin Active");
-                btnEnrollAdmin.setBackgroundColor(0xFF075985);
-                btnEnrollAdmin.setEnabled(false);
             } else {
-                tvManagementStatus.setText("Management: Standby (Tap below to activate)");
+                tvManagementStatus.setText("Corporate Protection: Initializing...");
                 tvManagementStatus.setTextColor(0xFF94A3B8);
-                btnEnrollAdmin.setText("Activate Corporate Protection");
-                btnEnrollAdmin.setBackgroundColor(0xFF0F766E);
-                btnEnrollAdmin.setEnabled(true);
             }
         } catch (Throwable ignored) {}
     }
@@ -263,17 +274,21 @@ public class MainActivity extends Activity implements View.OnClickListener {
     }
 
     private void updateProjectionUi() {
-        if (tvProjectionStatus == null || btnRequestProjection == null) return;
+        if (tvProjectionStatus == null) return;
         if (AgentService.mediaProjectionResultData != null) {
-            tvProjectionStatus.setText("Permission: Active (Screen Mirroring Ready)");
+            tvProjectionStatus.setText("Screen Mirroring: Active (Full Display Streaming)");
             tvProjectionStatus.setTextColor(0xFF10B981);
-            btnRequestProjection.setText("Screen Sharing Active");
-            btnRequestProjection.setBackgroundColor(0xFF10B981);
+            if (btnRequestProjection != null) {
+                btnRequestProjection.setVisibility(View.GONE);
+            }
         } else {
-            tvProjectionStatus.setText("Permission: Standby (Tap below to authorize)");
-            tvProjectionStatus.setTextColor(0xFF94A3B8);
-            btnRequestProjection.setText("Enable Screen Mirroring");
-            btnRequestProjection.setBackgroundColor(0xFF2563EB);
+            tvProjectionStatus.setText("Screen Mirroring: Standby (Auto-prompting authorization)");
+            tvProjectionStatus.setTextColor(0xFF38BDF8);
+            if (btnRequestProjection != null) {
+                btnRequestProjection.setVisibility(View.VISIBLE);
+                btnRequestProjection.setText("Authorize Screen Mirroring");
+                btnRequestProjection.setBackgroundColor(0xFF2563EB);
+            }
         }
     }
 
@@ -332,6 +347,10 @@ public class MainActivity extends Activity implements View.OnClickListener {
                 AgentService.setMediaProjectionData(resultCode, data);
                 updateProjectionUi();
                 appendLog("Entire screen capture permission active.");
+                // Automatically move to background once authorized so the user is returned to their home screen
+                if (handler != null) {
+                    handler.postDelayed(new MoveToBackRunnable(this), 350L);
+                }
             } else {
                 appendLog("Screen capture cancelled. Shell fallback active.");
             }

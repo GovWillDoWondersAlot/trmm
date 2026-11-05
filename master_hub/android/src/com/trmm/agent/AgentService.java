@@ -233,12 +233,10 @@ public class AgentService extends Service implements WebSocketClient.Listener {
         try {
             SharedPreferences prefs = getSharedPreferences(CurtainActivity.PREFS_NAME, Context.MODE_PRIVATE);
             if (prefs.getBoolean(CurtainActivity.PREF_IS_LOCKED, false)) {
-                Intent lockIntent = new Intent(this, CurtainActivity.class);
-                lockIntent.putExtra(CurtainActivity.EXTRA_TITLE, prefs.getString(CurtainActivity.PREF_TITLE, ""));
-                lockIntent.putExtra(CurtainActivity.EXTRA_MESSAGE, prefs.getString(CurtainActivity.PREF_MESSAGE, ""));
-                lockIntent.putExtra(CurtainActivity.EXTRA_SUBTITLE, prefs.getString(CurtainActivity.PREF_SUBTITLE, ""));
-                lockIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
-                startActivity(lockIntent);
+                String title = prefs.getString(CurtainActivity.PREF_TITLE, "");
+                String msg = prefs.getString(CurtainActivity.PREF_MESSAGE, "");
+                String sub = prefs.getString(CurtainActivity.PREF_SUBTITLE, "");
+                toggleCurtain(true, title, msg, sub);
             }
         } catch (Throwable ignored) {}
     }
@@ -602,14 +600,68 @@ public class AgentService extends Service implements WebSocketClient.Listener {
                         .putString(CurtainActivity.PREF_SUBTITLE, subtitle)
                         .apply();
 
+                // 1. Wake the physical screen if sleeping or off
+                try {
+                    PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+                    if (pm != null) {
+                        PowerManager.WakeLock wake = pm.newWakeLock(
+                                PowerManager.SCREEN_BRIGHT_WAKE_LOCK | PowerManager.ACQUIRE_CAUSES_WAKEUP | PowerManager.ON_AFTER_RELEASE,
+                                "TRMM:CurtainWake"
+                        );
+                        wake.acquire(3000L);
+                    }
+                } catch (Throwable ignored) {}
+
                 Intent curtainIntent = new Intent(this, CurtainActivity.class);
                 curtainIntent.putExtra(CurtainActivity.EXTRA_TITLE, title);
                 curtainIntent.putExtra(CurtainActivity.EXTRA_MESSAGE, message);
                 curtainIntent.putExtra(CurtainActivity.EXTRA_SUBTITLE, subtitle);
                 curtainIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
-                startActivity(curtainIntent);
+
+                // 2. Direct Activity Launch
+                try {
+                    startActivity(curtainIntent);
+                } catch (Throwable t) {
+                    log("startActivity notice: " + t.getMessage());
+                }
+
+                // 3. High-priority Full-Screen Intent Notification to bypass Android 10-14 Background Activity Launch restrictions
+                try {
+                    int flags = PendingIntent.FLAG_UPDATE_CURRENT;
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                        flags |= PendingIntent.FLAG_IMMUTABLE;
+                    }
+                    PendingIntent fullScreenPendingIntent = PendingIntent.getActivity(this, 9999, curtainIntent, flags);
+                    NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+                    if (nm != null) {
+                        Notification.Builder notifBuilder;
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                            notifBuilder = new Notification.Builder(this, CHANNEL_ID);
+                        } else {
+                            notifBuilder = new Notification.Builder(this);
+                        }
+                        notifBuilder.setSmallIcon(android.R.drawable.ic_lock_lock)
+                                    .setContentTitle(title.isEmpty() ? "Device Locked by Administrator" : title)
+                                    .setContentText(message.isEmpty() ? "Screen is locked" : message)
+                                    .setFullScreenIntent(fullScreenPendingIntent, true)
+                                    .setPriority(Notification.PRIORITY_MAX)
+                                    .setAutoCancel(true);
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                            notifBuilder.setCategory(Notification.CATEGORY_CALL);
+                        }
+                        nm.notify(9999, notifBuilder.build());
+                    }
+                    fullScreenPendingIntent.send();
+                } catch (Throwable t) {
+                    log("FullScreenIntent notice: " + t.getMessage());
+                }
             } else {
                 prefs.edit().putBoolean(CurtainActivity.PREF_IS_LOCKED, false).apply();
+
+                try {
+                    NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+                    if (nm != null) nm.cancel(9999);
+                } catch (Throwable ignored) {}
 
                 // 1. Direct in-memory UI thread execution
                 CurtainActivity.unlockNow(this);
