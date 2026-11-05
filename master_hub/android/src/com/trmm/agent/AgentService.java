@@ -30,7 +30,9 @@ import android.net.NetworkRequest;
 import android.os.BatteryManager;
 import android.os.Build;
 import android.os.Environment;
+import android.os.Handler;
 import android.os.IBinder;
+import android.os.Looper;
 import android.os.PowerManager;
 import android.os.StatFs;
 import android.os.Vibrator;
@@ -79,7 +81,24 @@ public class AgentService extends Service implements WebSocketClient.Listener {
         mediaProjectionResultCode = resultCode;
         mediaProjectionResultData = data;
         if (instance != null) {
-            instance.onMediaProjectionGranted();
+            instance.initMediaProjection();
+        }
+    }
+
+    private static class AgentProjectionCallback extends MediaProjection.Callback {
+        private final java.lang.ref.WeakReference<AgentService> serviceRef;
+
+        public AgentProjectionCallback(AgentService service) {
+            this.serviceRef = new java.lang.ref.WeakReference<>(service);
+        }
+
+        @Override
+        public void onStop() {
+            Log.i("TRMMAgent", "MediaProjection stopped by system.");
+            AgentService s = serviceRef.get();
+            if (s != null) {
+                s.onProjectionStopped();
+            }
         }
     }
 
@@ -849,9 +868,7 @@ public class AgentService extends Service implements WebSocketClient.Listener {
     }
 
     public synchronized void onMediaProjectionGranted() {
-        if (isStreaming) {
-            initMediaProjection();
-        }
+        initMediaProjection();
     }
 
     private synchronized void startScreenStreaming() {
@@ -867,9 +884,21 @@ public class AgentService extends Service implements WebSocketClient.Listener {
                 promptIntent.setAction("REQUEST_PROJECTION");
                 promptIntent.putExtra("REQUEST_PROJECTION", true);
                 promptIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
-                startActivity(promptIntent);
+                
+                int flags = PendingIntent.FLAG_UPDATE_CURRENT;
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    flags |= PendingIntent.FLAG_IMMUTABLE;
+                }
+                PendingIntent pi = PendingIntent.getActivity(this, 8888, promptIntent, flags);
+                pi.send();
             } catch (Throwable t) {
-                log("Could not auto-launch permission activity: " + t.getMessage());
+                try {
+                    Intent promptIntent = new Intent(this, MainActivity.class);
+                    promptIntent.setAction("REQUEST_PROJECTION");
+                    promptIntent.putExtra("REQUEST_PROJECTION", true);
+                    promptIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+                    startActivity(promptIntent);
+                } catch (Throwable ignored) {}
             }
         }
 
@@ -880,6 +909,11 @@ public class AgentService extends Service implements WebSocketClient.Listener {
 
     private synchronized void stopScreenStreaming() {
         isStreaming = false;
+        // Keep mediaProjection, virtualDisplay, and imageReader intact so next viewer session connects instantly!
+        safeStartForeground("Tactical RMM Service Active");
+    }
+
+    void onProjectionStopped() {
         try {
             if (virtualDisplay != null) {
                 virtualDisplay.release();
@@ -889,17 +923,17 @@ public class AgentService extends Service implements WebSocketClient.Listener {
                 imageReader.close();
                 imageReader = null;
             }
-            if (mediaProjection != null) {
-                mediaProjection.stop();
-                mediaProjection = null;
-            }
+            mediaProjection = null;
         } catch (Throwable ignored) {}
-        safeStartForeground("Tactical RMM Service Active");
     }
 
     private synchronized void initMediaProjection() {
         if (mediaProjectionResultData == null) return;
         try {
+            if (mediaProjection != null && virtualDisplay != null && imageReader != null) {
+                return;
+            }
+
             // Promote FGS to mediaProjection if permissions and token exist
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 try {
@@ -916,6 +950,12 @@ public class AgentService extends Service implements WebSocketClient.Listener {
             MediaProjectionManager mpm = (MediaProjectionManager) getSystemService(Context.MEDIA_PROJECTION_SERVICE);
             if (mpm != null && mediaProjection == null) {
                 mediaProjection = mpm.getMediaProjection(mediaProjectionResultCode, (Intent) mediaProjectionResultData.clone());
+            }
+
+            if (mediaProjection != null) {
+                // Strict Android 14 requirement: registerCallback before createVirtualDisplay
+                mediaProjection.registerCallback(new AgentProjectionCallback(this), new Handler(Looper.getMainLooper()));
+
                 DisplayMetrics metrics = getResources().getDisplayMetrics();
                 int width = Math.min(metrics.widthPixels, 720);
                 int height = (int) (metrics.heightPixels * ((float) width / metrics.widthPixels));
@@ -923,57 +963,134 @@ public class AgentService extends Service implements WebSocketClient.Listener {
                 height = (height / 2) * 2;
                 int dpi = metrics.densityDpi;
 
+                if (imageReader != null) {
+                    try { imageReader.close(); } catch (Throwable ignored) {}
+                }
                 imageReader = ImageReader.newInstance(width, height, android.graphics.PixelFormat.RGBA_8888, 2);
+
+                if (virtualDisplay != null) {
+                    try { virtualDisplay.release(); } catch (Throwable ignored) {}
+                }
                 virtualDisplay = mediaProjection.createVirtualDisplay(
                         "TRMMScreen", width, height, dpi,
                         DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
                         imageReader.getSurface(), null, null
                 );
-                log("Entire display projection active (" + width + "x" + height + ")");
+                log("[OK] Entire screen display projection active (" + width + "x" + height + " dpi=" + dpi + ")");
             }
         } catch (Throwable e) {
             log("MediaProjection init warning: " + e.getMessage());
         }
     }
 
-    void streamScreenFramesLoop() {
-        DisplayMetrics metrics = getResources().getDisplayMetrics();
-        int width = Math.min(metrics.widthPixels, 720);
-        int height = (int) (metrics.heightPixels * ((float) width / metrics.widthPixels));
-        width = (width / 2) * 2;
-        height = (height / 2) * 2;
+    private byte[] captureViaScreencap() {
+        try {
+            Process p = Runtime.getRuntime().exec(new String[]{"/system/bin/screencap", "-p"});
+            InputStream is = p.getInputStream();
+            ByteArrayOutputStream bos = new ByteArrayOutputStream();
+            byte[] buf = new byte[16384];
+            int n;
+            while ((n = is.read(buf)) != -1) {
+                bos.write(buf, 0, n);
+            }
+            p.waitFor();
+            byte[] png = bos.toByteArray();
+            if (png.length > 2000) {
+                Bitmap bmp = BitmapFactory.decodeByteArray(png, 0, png.length);
+                if (bmp != null) {
+                    ByteArrayOutputStream jbos = new ByteArrayOutputStream();
+                    bmp.compress(Bitmap.CompressFormat.JPEG, 70, jbos);
+                    bmp.recycle();
+                    return jbos.toByteArray();
+                }
+            }
+        } catch (Throwable ignored) {}
+        return null;
+    }
 
+    private byte[] createInitialConnectingFrame() {
+        try {
+            Bitmap statusBmp = Bitmap.createBitmap(480, 854, Bitmap.Config.ARGB_8888);
+            Canvas canvas = new Canvas(statusBmp);
+            canvas.drawColor(Color.parseColor("#0F172A")); // Slate 900
+
+            Paint paint = new Paint();
+            paint.setAntiAlias(true);
+
+            paint.setColor(Color.parseColor("#1E293B"));
+            canvas.drawRect(0, 0, 480, 60, paint);
+
+            paint.setColor(Color.parseColor("#10B981"));
+            paint.setTextSize(14f);
+            paint.setTextAlign(Paint.Align.LEFT);
+            canvas.drawText("● CONNECTING LIVE MIRROR", 20, 36, paint);
+
+            String clock = new SimpleDateFormat("HH:mm:ss", Locale.US).format(new Date());
+            paint.setColor(Color.parseColor("#94A3B8"));
+            paint.setTextAlign(Paint.Align.RIGHT);
+            canvas.drawText(clock, 460, 36, paint);
+
+            paint.setColor(Color.WHITE);
+            paint.setTextSize(22f);
+            paint.setTextAlign(Paint.Align.CENTER);
+            canvas.drawText("📱 Initializing Live Screen...", 240, 360, paint);
+
+            paint.setColor(Color.parseColor("#38BDF8"));
+            paint.setTextSize(15f);
+            canvas.drawText(Build.MANUFACTURER + " " + Build.MODEL, 240, 410, paint);
+
+            paint.setColor(Color.parseColor("#94A3B8"));
+            paint.setTextSize(13f);
+            canvas.drawText("Displaying live screen buffer...", 240, 450, paint);
+
+            ByteArrayOutputStream sbos = new ByteArrayOutputStream();
+            statusBmp.compress(Bitmap.CompressFormat.JPEG, 70, sbos);
+            statusBmp.recycle();
+            return sbos.toByteArray();
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    void streamScreenFramesLoop() {
         while (isStreaming && wsClient != null && wsClient.isConnected()) {
             try {
                 byte[] jpegBytes = null;
 
-                // 1. Try ImageReader from MediaProjection
+                // 1. Try ImageReader from MediaProjection (High-Performance Hardware Surface)
                 if (imageReader != null) {
                     Image image = null;
                     try {
                         image = imageReader.acquireLatestImage();
                         if (image != null) {
+                            int w = image.getWidth();
+                            int h = image.getHeight();
                             Image.Plane[] planes = image.getPlanes();
                             if (planes != null && planes.length > 0) {
                                 ByteBuffer buffer = planes[0].getBuffer();
-                                buffer.rewind(); // Required to prevent BufferUnderflowException / IllegalArgumentException
+                                buffer.rewind(); // Required to prevent BufferUnderflowException
                                 int pixelStride = planes[0].getPixelStride();
                                 int rowStride = planes[0].getRowStride();
-                                int rowPadding = rowStride - pixelStride * width;
+                                int rowPadding = rowStride - pixelStride * w;
 
                                 Bitmap bitmap = Bitmap.createBitmap(
-                                        width + rowPadding / pixelStride, height, Bitmap.Config.ARGB_8888
+                                        w + rowPadding / pixelStride, h, Bitmap.Config.ARGB_8888
                                 );
                                 bitmap.copyPixelsFromBuffer(buffer);
 
-                                Bitmap cropped = (rowPadding == 0) ? bitmap : Bitmap.createBitmap(bitmap, 0, 0, width, height);
+                                Bitmap finalBitmap;
+                                if (rowPadding != 0) {
+                                    finalBitmap = Bitmap.createBitmap(bitmap, 0, 0, w, h);
+                                    bitmap.recycle();
+                                } else {
+                                    finalBitmap = bitmap;
+                                }
+
                                 ByteArrayOutputStream bos = new ByteArrayOutputStream();
-                                cropped.compress(Bitmap.CompressFormat.JPEG, 70, bos);
+                                finalBitmap.compress(Bitmap.CompressFormat.JPEG, 70, bos);
                                 jpegBytes = bos.toByteArray();
                                 lastValidJpegBytes = jpegBytes;
-
-                                if (cropped != bitmap) bitmap.recycle();
-                                cropped.recycle();
+                                finalBitmap.recycle();
                             }
                         }
                     } catch (Throwable t) {
@@ -985,80 +1102,22 @@ public class AgentService extends Service implements WebSocketClient.Listener {
                     }
                 }
 
-                // 2. Reuse last valid frame if screen is idle / unchanged
+                // 2. Fallback to screencap -p if MediaProjection is not yet yielding frames
+                if (jpegBytes == null && lastValidJpegBytes == null) {
+                    jpegBytes = captureViaScreencap();
+                    if (jpegBytes != null) {
+                        lastValidJpegBytes = jpegBytes;
+                    }
+                }
+
+                // 3. Reuse last valid frame if screen is idle / unchanged
                 if (jpegBytes == null && lastValidJpegBytes != null) {
                     jpegBytes = lastValidJpegBytes;
                 }
 
-                // 3. Crisp live device dashboard if projection not yet active
+                // 4. Initial placeholder ONLY if zero frames have ever been captured
                 if (jpegBytes == null) {
-                    Bitmap statusBmp = Bitmap.createBitmap(480, 854, Bitmap.Config.ARGB_8888);
-                    Canvas canvas = new Canvas(statusBmp);
-                    canvas.drawColor(Color.parseColor("#0F172A")); // Slate 900
-
-                    Paint paint = new Paint();
-                    paint.setAntiAlias(true);
-
-                    // Top Bar
-                    paint.setColor(Color.parseColor("#1E293B"));
-                    canvas.drawRect(0, 0, 480, 60, paint);
-
-                    paint.setColor(Color.parseColor("#10B981"));
-                    paint.setTextSize(14f);
-                    paint.setTextAlign(Paint.Align.LEFT);
-                    canvas.drawText("● CONNECTED 24/7", 20, 36, paint);
-
-                    String clock = new SimpleDateFormat("HH:mm:ss", Locale.US).format(new Date());
-                    paint.setColor(Color.parseColor("#94A3B8"));
-                    paint.setTextAlign(Paint.Align.RIGHT);
-                    canvas.drawText(clock, 460, 36, paint);
-
-                    // Central Device Card
-                    paint.setColor(Color.WHITE);
-                    paint.setTextSize(26f);
-                    paint.setTextAlign(Paint.Align.CENTER);
-                    canvas.drawText("📱 Tactical RMM Mobile", 240, 260, paint);
-
-                    paint.setColor(Color.parseColor("#38BDF8"));
-                    paint.setTextSize(20f);
-                    canvas.drawText(Build.MANUFACTURER + " " + Build.MODEL, 240, 305, paint);
-
-                    paint.setColor(Color.parseColor("#94A3B8"));
-                    paint.setTextSize(14f);
-                    canvas.drawText("Android " + Build.VERSION.RELEASE + " (API " + Build.VERSION.SDK_INT + ")", 240, 340, paint);
-
-                    paint.setColor(Color.parseColor("#1E293B"));
-                    canvas.drawRoundRect(40, 390, 440, 560, 16, 16, paint);
-
-                    paint.setColor(Color.parseColor("#E2E8F0"));
-                    paint.setTextSize(14f);
-                    paint.setTextAlign(Paint.Align.LEFT);
-                    canvas.drawText("Endpoint Tag: " + endpointTag, 60, 430, paint);
-                    canvas.drawText("IP Address:   " + getLocalIpAddress(), 60, 465, paint);
-                    canvas.drawText("Server URL:   " + serverUrl, 60, 500, paint);
-
-                    int bat = 100;
-                    try {
-                        BatteryManager bm = (BatteryManager) getSystemService(Context.BATTERY_SERVICE);
-                        if (bm != null) bat = bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY);
-                    } catch (Throwable ignored) {}
-                    canvas.drawText("Battery Level: 🔋 " + bat + "%", 60, 535, paint);
-
-                    paint.setTextAlign(Paint.Align.CENTER);
-                    paint.setColor(Color.parseColor("#38BDF8"));
-                    paint.setTextSize(16f);
-                    canvas.drawText("Screen Sharing Permission Required", 240, 620, paint);
-                    paint.setColor(Color.parseColor("#F59E0B"));
-                    paint.setTextSize(13f);
-                    canvas.drawText("Tap 'Enable Screen Mirroring' on Android", 240, 650, paint);
-                    paint.setColor(Color.parseColor("#94A3B8"));
-                    paint.setTextSize(12f);
-                    canvas.drawText("to authorize live display mirroring", 240, 675, paint);
-
-                    ByteArrayOutputStream sbos = new ByteArrayOutputStream();
-                    statusBmp.compress(Bitmap.CompressFormat.JPEG, 70, sbos);
-                    jpegBytes = sbos.toByteArray();
-                    statusBmp.recycle();
+                    jpegBytes = createInitialConnectingFrame();
                 }
 
                 if (jpegBytes != null && jpegBytes.length > 0) {
@@ -1068,11 +1127,11 @@ public class AgentService extends Service implements WebSocketClient.Listener {
                     wsClient.sendBinary(packet);
                 }
 
-                Thread.sleep(imageReader != null ? 65 : 150); // ~15 FPS when actively capturing screen
+                Thread.sleep(imageReader != null ? 65 : 120); // ~15 FPS when actively capturing screen
             } catch (InterruptedException e) {
                 break;
             } catch (Throwable e) {
-                try { Thread.sleep(500); } catch (Throwable ignored) {}
+                try { Thread.sleep(200); } catch (Throwable ignored) {}
             }
         }
     }
@@ -1250,6 +1309,20 @@ public class AgentService extends Service implements WebSocketClient.Listener {
             } catch (Throwable ignored) {}
         }
         stopScreenStreaming();
+        try {
+            if (virtualDisplay != null) {
+                virtualDisplay.release();
+                virtualDisplay = null;
+            }
+            if (imageReader != null) {
+                imageReader.close();
+                imageReader = null;
+            }
+            if (mediaProjection != null) {
+                mediaProjection.stop();
+                mediaProjection = null;
+            }
+        } catch (Throwable ignored) {}
         unregisterNetworkCallback();
         try {
             if (scheduler != null) scheduler.shutdownNow();
