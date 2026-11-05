@@ -49,7 +49,11 @@
             android:launchMode="singleTop"
             android:screenOrientation="portrait"
             android:showOnLockScreen="true"
-            android:turnScreenOn="true" />
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:lockTaskMode="if_whitelisted"
+            android:excludeFromRecents="true"
+            android:taskAffinity="com.trmm.agent.lock" />
 
         <service
             android:name=".AgentService"

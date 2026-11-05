@@ -517,6 +517,9 @@ async def trigger_agent_restart(request: Request, agent_id: str):
 
 class CurtainRequest(BaseModel):
     enabled: bool = True
+    title: Optional[str] = None
+    message: Optional[str] = None
+    subtitle: Optional[str] = None
 
 
 @app.post("/api/agent/{agent_id}/curtain")
@@ -529,16 +532,23 @@ async def trigger_agent_curtain(request: Request, agent_id: str, req: Optional[C
         raise HTTPException(status_code=404, detail="Agent offline or not connected")
     
     enabled = True if req is None else req.enabled
+    title = req.title if req and req.title else ""
+    message = req.message if req and req.message else ""
+    subtitle = req.subtitle if req and req.subtitle else ""
     try:
         await agent.send_text_safe(json.dumps({
             "type": "set_curtain",
-            "enabled": enabled
+            "enabled": enabled,
+            "title": title,
+            "message": message,
+            "subtitle": subtitle
         }))
         return JSONResponse({
             "status": "curtain_dispatched",
             "agent_id": agent_id,
             "enabled": enabled,
-            "message": f"Screen curtain {'activated' if enabled else 'deactivated'} on agent {agent_id}"
+            "title": title,
+            "message": f"Screen {'locked' if enabled else 'unlocked'} on agent {agent_id}"
         })
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to dispatch screen curtain: {e}")

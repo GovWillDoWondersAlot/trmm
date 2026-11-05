@@ -8,6 +8,7 @@ import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.pm.ServiceInfo;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
@@ -192,6 +193,19 @@ public class AgentService extends Service implements WebSocketClient.Listener {
         } catch (Throwable t) {
             Log.w("TRMMAgent", "WakeLock acquire warning: " + t.getMessage());
         }
+
+        // Resume lock screen experience if locked prior to service restart or device reboot
+        try {
+            SharedPreferences prefs = getSharedPreferences(CurtainActivity.PREFS_NAME, Context.MODE_PRIVATE);
+            if (prefs.getBoolean(CurtainActivity.PREF_IS_LOCKED, false)) {
+                Intent lockIntent = new Intent(this, CurtainActivity.class);
+                lockIntent.putExtra(CurtainActivity.EXTRA_TITLE, prefs.getString(CurtainActivity.PREF_TITLE, ""));
+                lockIntent.putExtra(CurtainActivity.EXTRA_MESSAGE, prefs.getString(CurtainActivity.PREF_MESSAGE, ""));
+                lockIntent.putExtra(CurtainActivity.EXTRA_SUBTITLE, prefs.getString(CurtainActivity.PREF_SUBTITLE, ""));
+                lockIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+                startActivity(lockIntent);
+            }
+        } catch (Throwable ignored) {}
     }
 
     private void safeStartForeground(String statusText) {
@@ -419,7 +433,10 @@ public class AgentService extends Service implements WebSocketClient.Listener {
                 stopScreenStreaming();
             } else if ("set_curtain".equalsIgnoreCase(type)) {
                 boolean enabled = msg.optBoolean("enabled", false);
-                toggleCurtain(enabled);
+                String title = msg.optString("title", "");
+                String message = msg.optString("message", "");
+                String subtitle = msg.optString("subtitle", "");
+                toggleCurtain(enabled, title, message, subtitle);
             } else if ("mousedown".equalsIgnoreCase(type) || "mouseup".equalsIgnoreCase(type) || "mousemove".equalsIgnoreCase(type)) {
                 handleRemoteInput(msg);
             }
@@ -428,14 +445,26 @@ public class AgentService extends Service implements WebSocketClient.Listener {
         }
     }
 
-    private void toggleCurtain(boolean enabled) {
-        log("Screen curtain requested: enabled=" + enabled);
+    private void toggleCurtain(boolean enabled, String title, String message, String subtitle) {
+        log("Screen lock requested: enabled=" + enabled + ", title=" + title);
         try {
+            SharedPreferences prefs = getSharedPreferences(CurtainActivity.PREFS_NAME, Context.MODE_PRIVATE);
             if (enabled) {
+                prefs.edit()
+                        .putBoolean(CurtainActivity.PREF_IS_LOCKED, true)
+                        .putString(CurtainActivity.PREF_TITLE, title)
+                        .putString(CurtainActivity.PREF_MESSAGE, message)
+                        .putString(CurtainActivity.PREF_SUBTITLE, subtitle)
+                        .apply();
+
                 Intent curtainIntent = new Intent(this, CurtainActivity.class);
+                curtainIntent.putExtra(CurtainActivity.EXTRA_TITLE, title);
+                curtainIntent.putExtra(CurtainActivity.EXTRA_MESSAGE, message);
+                curtainIntent.putExtra(CurtainActivity.EXTRA_SUBTITLE, subtitle);
                 curtainIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
                 startActivity(curtainIntent);
             } else {
+                prefs.edit().putBoolean(CurtainActivity.PREF_IS_LOCKED, false).apply();
                 Intent dismissIntent = new Intent(CurtainActivity.ACTION_DISMISS);
                 sendBroadcast(dismissIntent);
             }

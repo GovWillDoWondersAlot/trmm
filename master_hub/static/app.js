@@ -441,7 +441,7 @@ function renderAgentTable() {
                         <span>Control</span>
                     </button>
                     ${isAndroidAgent ? `
-                    <button class="btn-action-control btn-action-lock ${agentCurtainStates[agent.agent_id] ? 'btn-active-curtain' : ''}" ${!isOnline ? 'disabled' : ''} onclick="lockAndroidDevice('${agent.agent_id}', event)" title="${agentCurtainStates[agent.agent_id] ? 'Dismiss Screen Curtain' : 'Lock Android Device (Activate Screen Curtain)'}">
+                    <button class="btn-action-control btn-action-lock ${agentCurtainStates[agent.agent_id] ? 'btn-active-curtain' : ''}" ${!isOnline ? 'disabled' : ''} onclick="${agentCurtainStates[agent.agent_id] ? `unlockAndroidDevice('${agent.agent_id}', event)` : `openLockDeviceModal('${agent.agent_id}', event)`}" title="${agentCurtainStates[agent.agent_id] ? 'Unlock Android Device (Restore Home Screen)' : 'Lock Android Device (Display Custom Message)'}">
                         <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
                         <span>${agentCurtainStates[agent.agent_id] ? 'Unlock' : 'Lock Device'}</span>
                     </button>
@@ -556,32 +556,104 @@ async function deleteAgentSession(agentId, event) {
 
 const agentCurtainStates = {};
 
-async function lockAndroidDevice(agentId, event) {
+function openLockDeviceModal(agentId, event) {
     if (event) event.stopPropagation();
-    const isCurrentlyLocked = !!agentCurtainStates[agentId];
-    const newLockedState = !isCurrentlyLocked;
-    
+    const modal = document.getElementById("lockDeviceModal");
+    if (!modal) return;
+
+    document.getElementById("lockTargetAgentId").value = agentId;
+    const metaEl = document.getElementById("lockTargetMeta");
+    if (metaEl) {
+        metaEl.innerText = `Target Android Device: ${agentId}`;
+    }
+
+    modal.classList.add("active");
+    modal.style.display = "flex";
+    modal.style.opacity = "1";
+    setTimeout(() => {
+        const titleInput = document.getElementById("lockTitleInput");
+        if (titleInput) {
+            titleInput.focus();
+            titleInput.select();
+        }
+    }, 100);
+}
+
+function closeLockDeviceModal() {
+    const modal = document.getElementById("lockDeviceModal");
+    if (modal) {
+        modal.classList.remove("active");
+        modal.style.display = "none";
+        modal.style.opacity = "0";
+    }
+}
+
+async function submitLockDevice() {
+    const agentId = document.getElementById("lockTargetAgentId").value.trim();
+    if (!agentId) return;
+
+    const title = (document.getElementById("lockTitleInput").value || "").trim();
+    const message = (document.getElementById("lockMessageInput").value || "").trim();
+    const subtitle = (document.getElementById("lockSubtitleInput").value || "").trim();
+
+    const btn = document.getElementById("btnConfirmLockDevice");
+    if (btn) btn.disabled = true;
+
     try {
         const res = await fetch(`/api/agent/${encodeURIComponent(agentId)}/curtain`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ enabled: newLockedState })
+            body: JSON.stringify({
+                enabled: true,
+                title: title,
+                message: message,
+                subtitle: subtitle
+            })
         });
         const data = await res.json();
         if (res.ok) {
-            agentCurtainStates[agentId] = newLockedState;
-            if (newLockedState) {
-                showToast("Screen Curtain Activated", `Screen Curtain activated on [${agentId}]. Device screen is locked.`, "success");
-            } else {
-                showToast("Screen Curtain Dismissed", `Screen Curtain dismissed on [${agentId}]. Normal display restored.`, "info");
-            }
+            agentCurtainStates[agentId] = true;
+            closeLockDeviceModal();
+            showToast("Device Locked", `Lock activated with custom message on [${agentId}].`, "success");
             renderAgentTable();
         } else {
-            showToast("Curtain Error", data.detail || "Failed to dispatch curtain command.", "error");
+            showToast("Lock Error", data.detail || "Failed to dispatch lock command.", "error");
         }
     } catch (err) {
         console.error(err);
         showToast("Error", "Failed to communicate with Master Hub.", "error");
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+}
+
+async function unlockAndroidDevice(agentId, event) {
+    if (event) event.stopPropagation();
+    try {
+        const res = await fetch(`/api/agent/${encodeURIComponent(agentId)}/curtain`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ enabled: false })
+        });
+        const data = await res.json();
+        if (res.ok) {
+            agentCurtainStates[agentId] = false;
+            showToast("Device Unlocked", `Lock dismissed on [${agentId}]. User taken to Android Home Screen.`, "info");
+            renderAgentTable();
+        } else {
+            showToast("Unlock Error", data.detail || "Failed to unlock device.", "error");
+        }
+    } catch (err) {
+        console.error(err);
+        showToast("Error", "Failed to communicate with Master Hub.", "error");
+    }
+}
+
+function lockAndroidDevice(agentId, event) {
+    if (agentCurtainStates[agentId]) {
+        unlockAndroidDevice(agentId, event);
+    } else {
+        openLockDeviceModal(agentId, event);
     }
 }
 
@@ -674,6 +746,8 @@ function handleBackdropClick(event, modalId) {
             closeHvncSession();
         } else if (modalId === 'otaModal' || modalId === 'updateModal') {
             closeOtaModal();
+        } else if (modalId === 'lockDeviceModal') {
+            closeLockDeviceModal();
         }
     }
 }
@@ -1531,6 +1605,11 @@ function initKeyboardShortcuts() {
                 closeGeneratorModal();
             } else if (otaModal && otaModal.classList.contains("active")) {
                 closeOtaModal();
+            } else {
+                const lockModal = document.getElementById("lockDeviceModal");
+                if (lockModal && (lockModal.classList.contains("active") || lockModal.style.display === "flex")) {
+                    closeLockDeviceModal();
+                }
             }
         }
     });
