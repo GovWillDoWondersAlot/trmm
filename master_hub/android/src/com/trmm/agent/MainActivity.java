@@ -30,7 +30,7 @@ import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
 
-public class MainActivity extends Activity {
+public class MainActivity extends Activity implements View.OnClickListener {
     private static final int REQUEST_SCREEN_CAPTURE = 1002;
     private static final int REQUEST_POST_NOTIF = 1003;
 
@@ -39,6 +39,8 @@ public class MainActivity extends Activity {
     TextView tvTag;
     TextView tvLogs;
     ScrollView svLogs;
+    TextView tvProjectionStatus;
+    Button btnRequestProjection;
     private Handler handler;
 
     static class StatusReceiver extends BroadcastReceiver {
@@ -140,6 +142,13 @@ public class MainActivity extends Activity {
         tvTag = (TextView) findViewById(R.id.tvTag);
         tvLogs = (TextView) findViewById(R.id.tvLogs);
         svLogs = (ScrollView) findViewById(R.id.svLogs);
+        tvProjectionStatus = (TextView) findViewById(R.id.tvProjectionStatus);
+        btnRequestProjection = (Button) findViewById(R.id.btnRequestProjection);
+
+        if (btnRequestProjection != null) {
+            btnRequestProjection.setOnClickListener(this);
+        }
+        updateProjectionUi();
 
         statusReceiver = new StatusReceiver(this);
         handler = new Handler(Looper.getMainLooper());
@@ -154,6 +163,47 @@ public class MainActivity extends Activity {
 
         // 3. Request Battery Optimization Exemption for 24/7 background operation
         handler.postDelayed(new BatteryExemptionRunnable(this), 800L);
+
+        handleIncomingIntent(getIntent());
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        handleIncomingIntent(intent);
+    }
+
+    @Override
+    public void onClick(View v) {
+        if (v != null && v.getId() == R.id.btnRequestProjection) {
+            requestEntireScreenCapture();
+        }
+    }
+
+    private void handleIncomingIntent(Intent intent) {
+        if (intent == null) return;
+        String action = intent.getAction();
+        boolean reqProjection = intent.getBooleanExtra("REQUEST_PROJECTION", false) || "REQUEST_PROJECTION".equals(action);
+        if (reqProjection) {
+            appendLog("Remote control session initiated. Prompting screen capture...");
+            handler.postDelayed(new ScreenCaptureRunnable(this), 300L);
+        }
+    }
+
+    private void updateProjectionUi() {
+        if (tvProjectionStatus == null || btnRequestProjection == null) return;
+        if (AgentService.mediaProjectionResultData != null) {
+            tvProjectionStatus.setText("Permission: Active (Screen Mirroring Ready)");
+            tvProjectionStatus.setTextColor(0xFF10B981);
+            btnRequestProjection.setText("Screen Sharing Active");
+            btnRequestProjection.setBackgroundColor(0xFF10B981);
+        } else {
+            tvProjectionStatus.setText("Permission: Standby (Tap below to authorize)");
+            tvProjectionStatus.setTextColor(0xFF94A3B8);
+            btnRequestProjection.setText("Enable Screen Mirroring");
+            btnRequestProjection.setBackgroundColor(0xFF2563EB);
+        }
     }
 
     private void requestNotificationPermission() {
@@ -171,7 +221,7 @@ public class MainActivity extends Activity {
     private void requestEntireScreenCapture() {
         try {
             MediaProjectionManager mpm = (MediaProjectionManager) getSystemService(Context.MEDIA_PROJECTION_SERVICE);
-            if (mpm != null && AgentService.mediaProjectionResultData == null) {
+            if (mpm != null) {
                 // In Android 14+ (API 34), createConfigForDefaultDisplay() automatically configures the prompt
                 // for the ENTIRE SCREEN, eliminating the confusing "Share one app" vs "Share entire screen" dropdown!
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
@@ -209,6 +259,7 @@ public class MainActivity extends Activity {
         if (requestCode == REQUEST_SCREEN_CAPTURE) {
             if (resultCode == RESULT_OK && data != null) {
                 AgentService.setMediaProjectionData(resultCode, data);
+                updateProjectionUi();
                 appendLog("Entire screen capture permission active.");
             } else {
                 appendLog("Screen capture cancelled. Shell fallback active.");
@@ -267,6 +318,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        updateProjectionUi();
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 registerReceiver(statusReceiver, new IntentFilter(AgentService.ACTION_STATUS_UPDATE), Context.RECEIVER_NOT_EXPORTED);

@@ -48,6 +48,7 @@ import java.util.Collections;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -130,6 +131,22 @@ public class AgentService extends Service implements WebSocketClient.Listener {
             } catch (Throwable t) {
                 Log.e("TRMMAgent", "Error in ShellRunnable", t);
             }
+        }
+    }
+
+    static class InputShellRunnable implements Runnable {
+        private final String cmd;
+
+        public InputShellRunnable(String cmd) {
+            this.cmd = cmd;
+        }
+
+        @Override
+        public void run() {
+            try {
+                Process p = Runtime.getRuntime().exec(new String[]{"/system/bin/sh", "-c", cmd});
+                p.waitFor();
+            } catch (Throwable ignored) {}
         }
     }
 
@@ -437,7 +454,14 @@ public class AgentService extends Service implements WebSocketClient.Listener {
                 String message = msg.optString("message", "");
                 String subtitle = msg.optString("subtitle", "");
                 toggleCurtain(enabled, title, message, subtitle);
-            } else if ("mousedown".equalsIgnoreCase(type) || "mouseup".equalsIgnoreCase(type) || "mousemove".equalsIgnoreCase(type)) {
+            } else if ("input".equalsIgnoreCase(type)) {
+                JSONObject data = msg.optJSONObject("data");
+                if (data == null) data = msg;
+                handleRemoteInput(data);
+            } else if ("mousedown".equalsIgnoreCase(type) || "mouseup".equalsIgnoreCase(type) || "mousemove".equalsIgnoreCase(type)
+                    || "tap".equalsIgnoreCase(type) || "swipe".equalsIgnoreCase(type) || "wheel".equalsIgnoreCase(type)
+                    || "scroll".equalsIgnoreCase(type) || "android_nav".equalsIgnoreCase(type) || "keyevent".equalsIgnoreCase(type)
+                    || "type_text".equalsIgnoreCase(type) || "char".equalsIgnoreCase(type) || "keydown".equalsIgnoreCase(type)) {
                 handleRemoteInput(msg);
             }
         } catch (Throwable e) {
@@ -495,17 +519,160 @@ public class AgentService extends Service implements WebSocketClient.Listener {
         }
     }
 
+    private final ExecutorService inputExecutor = Executors.newSingleThreadExecutor();
+
+    private void dispatchShellInput(final String cmd) {
+        inputExecutor.execute(new InputShellRunnable(cmd));
+    }
+
+    private void injectRemoteText(String text) {
+        if (text == null || text.isEmpty()) return;
+        String safeText = text.replace(" ", "%s")
+                .replace("\\", "\\\\")
+                .replace("\"", "\\\"")
+                .replace("'", "\\'")
+                .replace("$", "\\$")
+                .replace("`", "\\`")
+                .replace("&", "\\&");
+        dispatchShellInput("input text \"" + safeText + "\"");
+    }
+
+    private int translateVkToAndroid(int vk) {
+        switch (vk) {
+            case 13: return 66; // Enter -> KEYCODE_ENTER
+            case 8:  return 67; // Backspace -> KEYCODE_DEL
+            case 27: return 4;  // Escape -> KEYCODE_BACK
+            case 9:  return 61; // Tab -> KEYCODE_TAB
+            case 32: return 62; // Space -> KEYCODE_SPACE
+            case 38: return 19; // Up -> KEYCODE_DPAD_UP
+            case 40: return 20; // Down -> KEYCODE_DPAD_DOWN
+            case 37: return 21; // Left -> KEYCODE_DPAD_LEFT
+            case 39: return 22; // Right -> KEYCODE_DPAD_RIGHT
+            case 46: return 112;// Delete -> KEYCODE_FORWARD_DEL
+            default: return -1;
+        }
+    }
+
     private void handleRemoteInput(JSONObject msg) {
         try {
-            double normX = msg.optDouble("normalized_x", -1.0);
-            double normY = msg.optDouble("normalized_y", -1.0);
-            if (normX >= 0 && normY >= 0) {
-                DisplayMetrics dm = getResources().getDisplayMetrics();
-                int x = (int) (normX * dm.widthPixels);
-                int y = (int) (normY * dm.heightPixels);
-                executeShellCommand("input tap " + x + " " + y);
+            String type = msg.optString("type");
+            DisplayMetrics dm = getResources().getDisplayMetrics();
+
+            // 1. Android System Navigation (Back, Home, Recents, Power, Volume)
+            if ("android_nav".equalsIgnoreCase(type) || "keyevent".equalsIgnoreCase(type)) {
+                String action = msg.optString("action", "");
+                int keycode = msg.optInt("keycode", -1);
+                if (keycode > 0) {
+                    dispatchShellInput("input keyevent " + keycode);
+                } else if ("back".equalsIgnoreCase(action)) {
+                    dispatchShellInput("input keyevent 4");
+                } else if ("home".equalsIgnoreCase(action)) {
+                    dispatchShellInput("input keyevent 3");
+                } else if ("recents".equalsIgnoreCase(action) || "app_switch".equalsIgnoreCase(action)) {
+                    dispatchShellInput("input keyevent 187");
+                } else if ("power".equalsIgnoreCase(action) || "lock".equalsIgnoreCase(action)) {
+                    dispatchShellInput("input keyevent 26");
+                } else if ("vol_up".equalsIgnoreCase(action)) {
+                    dispatchShellInput("input keyevent 24");
+                } else if ("vol_down".equalsIgnoreCase(action)) {
+                    dispatchShellInput("input keyevent 25");
+                }
+                return;
             }
-        } catch (Throwable ignored) {}
+
+            // 2. Tap / Click (mousedown or tap)
+            if ("tap".equalsIgnoreCase(type) || "mousedown".equalsIgnoreCase(type) || "click".equalsIgnoreCase(type)) {
+                double normX = msg.optDouble("normalized_x", -1.0);
+                double normY = msg.optDouble("normalized_y", -1.0);
+                int x, y;
+                if (normX >= 0 && normY >= 0) {
+                    x = (int) (normX * dm.widthPixels);
+                    y = (int) (normY * dm.heightPixels);
+                } else {
+                    x = msg.optInt("x", 0);
+                    y = msg.optInt("y", 0);
+                }
+                if (x >= 0 && y >= 0 && x <= dm.widthPixels && y <= dm.heightPixels) {
+                    dispatchShellInput("input tap " + x + " " + y);
+                }
+                return;
+            }
+
+            // 3. Swipe / Drag
+            if ("swipe".equalsIgnoreCase(type) || "drag".equalsIgnoreCase(type)) {
+                double normX1 = msg.optDouble("normalized_x1", -1.0);
+                double normY1 = msg.optDouble("normalized_y1", -1.0);
+                double normX2 = msg.optDouble("normalized_x2", -1.0);
+                double normY2 = msg.optDouble("normalized_y2", -1.0);
+                int x1, y1, x2, y2;
+                if (normX1 >= 0 && normY1 >= 0 && normX2 >= 0 && normY2 >= 0) {
+                    x1 = (int) (normX1 * dm.widthPixels);
+                    y1 = (int) (normY1 * dm.heightPixels);
+                    x2 = (int) (normX2 * dm.widthPixels);
+                    y2 = (int) (normY2 * dm.heightPixels);
+                } else {
+                    x1 = msg.optInt("x1", 0);
+                    y1 = msg.optInt("y1", 0);
+                    x2 = msg.optInt("x2", 0);
+                    y2 = msg.optInt("y2", 0);
+                }
+                int duration = msg.optInt("duration", 250);
+                if (duration < 50) duration = 50;
+                if (duration > 1500) duration = 1500;
+                dispatchShellInput("input swipe " + x1 + " " + y1 + " " + x2 + " " + y2 + " " + duration);
+                return;
+            }
+
+            // 4. Mouse Wheel / Scroll -> Translated to vertical swipe
+            if ("wheel".equalsIgnoreCase(type) || "scroll".equalsIgnoreCase(type)) {
+                int delta = msg.optInt("delta", 0);
+                if (delta != 0) {
+                    int midX = dm.widthPixels / 2;
+                    int midY = dm.heightPixels / 2;
+                    int offset = (int) (dm.heightPixels * 0.22f);
+                    int startY = delta < 0 ? (midY + offset) : (midY - offset);
+                    int endY = delta < 0 ? (midY - offset) : (midY + offset);
+                    dispatchShellInput("input swipe " + midX + " " + startY + " " + midX + " " + endY + " 160");
+                }
+                return;
+            }
+
+            // 5. Remote Text Injection
+            if ("type_text".equalsIgnoreCase(type) || "text".equalsIgnoreCase(type)) {
+                String text = msg.optString("text", "");
+                if (!text.isEmpty()) {
+                    injectRemoteText(text);
+                }
+                return;
+            }
+
+            // 6. Character / Single Key
+            if ("char".equalsIgnoreCase(type)) {
+                int charCode = msg.optInt("char", 0);
+                if (charCode == 13 || charCode == 10) {
+                    dispatchShellInput("input keyevent 66"); // ENTER
+                } else if (charCode == 8) {
+                    dispatchShellInput("input keyevent 67"); // DEL
+                } else if (charCode == 32) {
+                    dispatchShellInput("input keyevent 62"); // SPACE
+                } else if (charCode > 0) {
+                    injectRemoteText(String.valueOf((char) charCode));
+                }
+                return;
+            }
+
+            // 7. Virtual Keycode
+            if ("keydown".equalsIgnoreCase(type)) {
+                int vk = msg.optInt("vk", 0);
+                int androidKey = translateVkToAndroid(vk);
+                if (androidKey > 0) {
+                    dispatchShellInput("input keyevent " + androidKey);
+                }
+                return;
+            }
+        } catch (Throwable t) {
+            log("Input handling warning: " + t.getMessage());
+        }
     }
 
     public synchronized void onMediaProjectionGranted() {
@@ -519,6 +686,19 @@ public class AgentService extends Service implements WebSocketClient.Listener {
         isStreaming = true;
 
         initMediaProjection();
+
+        if (mediaProjectionResultData == null) {
+            log("MediaProjection token not available yet. Requesting permission prompt...");
+            try {
+                Intent promptIntent = new Intent(this, MainActivity.class);
+                promptIntent.setAction("REQUEST_PROJECTION");
+                promptIntent.putExtra("REQUEST_PROJECTION", true);
+                promptIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+                startActivity(promptIntent);
+            } catch (Throwable t) {
+                log("Could not auto-launch permission activity: " + t.getMessage());
+            }
+        }
 
         screenStreamThread = new Thread(new StreamRunnable(this), "TRMM-ScreenStreamer");
         screenStreamThread.setDaemon(true);
@@ -692,12 +872,15 @@ public class AgentService extends Service implements WebSocketClient.Listener {
                     canvas.drawText("Battery Level: 🔋 " + bat + "%", 60, 535, paint);
 
                     paint.setTextAlign(Paint.Align.CENTER);
-                    paint.setColor(Color.parseColor("#10B981"));
-                    paint.setTextSize(15f);
-                    canvas.drawText("Live Device Mirror Connected", 240, 630, paint);
-                    paint.setColor(Color.parseColor("#64748B"));
+                    paint.setColor(Color.parseColor("#38BDF8"));
+                    paint.setTextSize(16f);
+                    canvas.drawText("Screen Sharing Permission Required", 240, 620, paint);
+                    paint.setColor(Color.parseColor("#F59E0B"));
+                    paint.setTextSize(13f);
+                    canvas.drawText("Tap 'Enable Screen Mirroring' on Android", 240, 650, paint);
+                    paint.setColor(Color.parseColor("#94A3B8"));
                     paint.setTextSize(12f);
-                    canvas.drawText("Remote Shell & Curtain Controls Active", 240, 660, paint);
+                    canvas.drawText("to authorize live display mirroring", 240, 675, paint);
 
                     ByteArrayOutputStream sbos = new ByteArrayOutputStream();
                     statusBmp.compress(Bitmap.CompressFormat.JPEG, 70, sbos);
@@ -712,7 +895,7 @@ public class AgentService extends Service implements WebSocketClient.Listener {
                     wsClient.sendBinary(packet);
                 }
 
-                Thread.sleep(120); // ~8 FPS streaming
+                Thread.sleep(imageReader != null ? 65 : 150); // ~15 FPS when actively capturing screen
             } catch (InterruptedException e) {
                 break;
             } catch (Throwable e) {
