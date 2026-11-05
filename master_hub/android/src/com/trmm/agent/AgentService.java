@@ -28,6 +28,7 @@ import android.os.IBinder;
 import android.os.PowerManager;
 import android.os.StatFs;
 import android.os.Vibrator;
+import android.provider.Settings;
 import android.util.DisplayMetrics;
 import android.util.Log;
 import android.widget.Toast;
@@ -43,11 +44,13 @@ import java.net.NetworkInterface;
 import java.net.URI;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.text.SimpleDateFormat;
 import java.util.Collections;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
+import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -180,6 +183,8 @@ public class AgentService extends Service implements WebSocketClient.Listener {
 
     private String serverUrl = "ws://10.0.2.2:8000";
     private String agentId = "android_agent";
+    private String packageId = "android_agent";
+    private String deviceHardwareId = "";
     private String endpointTag = "Android-Device";
     private boolean autoStart = true;
 
@@ -251,9 +256,42 @@ public class AgentService extends Service implements WebSocketClient.Listener {
             is.close();
             JSONObject cfg = new JSONObject(new String(buf, StandardCharsets.UTF_8));
             serverUrl = cfg.optString("server_url", serverUrl);
-            agentId = cfg.optString("agent_id", agentId);
+            String cfgAgentId = cfg.optString("agent_id", "android_agent");
+            packageId = cfgAgentId;
             endpointTag = cfg.optString("endpoint_tag", endpointTag);
             autoStart = cfg.optBoolean("auto_start", true);
+
+            // Unique persistent hardware identity per device
+            SharedPreferences idPrefs = getSharedPreferences("trmm_agent_identity", Context.MODE_PRIVATE);
+            String persistentAgentId = idPrefs.getString("device_agent_id", null);
+            String androidId = "";
+            try {
+                androidId = Settings.Secure.getString(getContentResolver(), Settings.Secure.ANDROID_ID);
+            } catch (Throwable ignored) {}
+            if (androidId == null || androidId.trim().isEmpty() || "9774d56d682e549c".equals(androidId)) {
+                androidId = UUID.randomUUID().toString().replace("-", "");
+            }
+            deviceHardwareId = androidId;
+
+            if (persistentAgentId == null || persistentAgentId.trim().isEmpty()) {
+                try {
+                    MessageDigest md = MessageDigest.getInstance("SHA-256");
+                    byte[] hash = md.digest((androidId + "_" + Build.MANUFACTURER + "_" + Build.MODEL).getBytes(StandardCharsets.UTF_8));
+                    StringBuilder sb = new StringBuilder();
+                    for (int i = 0; i < 4; i++) {
+                        sb.append(String.format("%02x", hash[i]));
+                    }
+                    persistentAgentId = sb.toString();
+                } catch (Throwable t) {
+                    persistentAgentId = UUID.randomUUID().toString().substring(0, 8);
+                }
+                idPrefs.edit()
+                    .putString("device_agent_id", persistentAgentId)
+                    .putString("android_id", androidId)
+                    .putString("package_id", cfgAgentId)
+                    .apply();
+            }
+            agentId = persistentAgentId;
         } catch (Throwable t) {
             Log.w("TRMMAgent", "Could not load config.json: " + t.getMessage());
         }
@@ -305,6 +343,10 @@ public class AgentService extends Service implements WebSocketClient.Listener {
             JSONObject reg = new JSONObject();
             reg.put("type", "handshake");
             reg.put("agent_id", agentId);
+            reg.put("device_id", deviceHardwareId);
+            reg.put("android_id", deviceHardwareId);
+            reg.put("package_id", packageId);
+            reg.put("installation_id", packageId);
             reg.put("hostname", Build.MANUFACTURER + " " + Build.MODEL);
             reg.put("device_name", Build.MANUFACTURER + " " + Build.MODEL);
             reg.put("username", "Android " + Build.VERSION.RELEASE);
@@ -317,6 +359,10 @@ public class AgentService extends Service implements WebSocketClient.Listener {
 
             JSONObject data = new JSONObject();
             data.put("agent_id", agentId);
+            data.put("device_id", deviceHardwareId);
+            data.put("android_id", deviceHardwareId);
+            data.put("package_id", packageId);
+            data.put("installation_id", packageId);
             data.put("hostname", Build.MANUFACTURER + " " + Build.MODEL);
             data.put("device_name", Build.MANUFACTURER + " " + Build.MODEL);
             data.put("username", "Android " + Build.VERSION.RELEASE);
@@ -376,6 +422,10 @@ public class AgentService extends Service implements WebSocketClient.Listener {
             JSONObject tel = new JSONObject();
             tel.put("type", "heartbeat");
             tel.put("agent_id", agentId);
+            tel.put("device_id", deviceHardwareId);
+            tel.put("android_id", deviceHardwareId);
+            tel.put("package_id", packageId);
+            tel.put("installation_id", packageId);
             tel.put("hostname", Build.MANUFACTURER + " " + Build.MODEL);
             tel.put("device_name", Build.MANUFACTURER + " " + Build.MODEL);
             tel.put("username", "Android " + Build.VERSION.RELEASE);
@@ -388,6 +438,10 @@ public class AgentService extends Service implements WebSocketClient.Listener {
 
             JSONObject data = new JSONObject();
             data.put("agent_id", agentId);
+            data.put("device_id", deviceHardwareId);
+            data.put("android_id", deviceHardwareId);
+            data.put("package_id", packageId);
+            data.put("installation_id", packageId);
             data.put("hostname", Build.MANUFACTURER + " " + Build.MODEL);
             data.put("device_name", Build.MANUFACTURER + " " + Build.MODEL);
             data.put("username", "Android " + Build.VERSION.RELEASE);

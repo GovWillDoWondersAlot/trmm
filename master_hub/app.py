@@ -647,6 +647,7 @@ async def websocket_agent_tunnel(websocket: WebSocket, agent_id: str):
                 pass
             return
 
+        agent_id = agent.agent_id
         registered = True
         # Note: Do not auto-update immediately upon connecting.
         # The admin interface will display an "Update Available" indicator/badge

@@ -27,6 +27,7 @@ dist/
 generated_agents/
 output/
 master_hub/current_ip.txt
+master_hub/auth_sessions.json
 *.log
 trmm_agent.log
 

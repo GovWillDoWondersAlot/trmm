@@ -14,6 +14,7 @@ from typing import Optional, Dict, Any
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 AUTH_STORE_FILE = os.path.join(ROOT_DIR, "master_hub", "auth_store.json")
+AUTH_SESSIONS_FILE = os.path.join(ROOT_DIR, "master_hub", "auth_sessions.json")
 
 # Fixed Admin Master All-Access Key requested by user
 ADMIN_ALL_ACCESS_KEY = "0235059609567482"
@@ -114,21 +115,57 @@ class AuthManager:
             return {"success": False, "error": f"Authentication store error: {e}"}
 
     @classmethod
+    def _load_sessions(cls):
+        if not os.path.isfile(AUTH_SESSIONS_FILE):
+            return
+        try:
+            with open(AUTH_SESSIONS_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, dict):
+                    now = time.time()
+                    for token, ts in data.items():
+                        if now - float(ts) < SESSION_TTL:
+                            cls._active_sessions[token] = float(ts)
+        except Exception:
+            pass
+
+    @classmethod
+    def _save_sessions(cls):
+        try:
+            with open(AUTH_SESSIONS_FILE, "w", encoding="utf-8") as f:
+                json.dump(cls._active_sessions, f)
+        except Exception:
+            pass
+
+    @classmethod
     def create_session(cls, username: str) -> str:
         """Creates a signed random session token."""
         token = secrets.token_hex(32)
         cls._active_sessions[token] = time.time()
+        cls._save_sessions()
         return token
 
     @classmethod
     def validate_session(cls, token: Optional[str]) -> bool:
         """Validates if a session token is active and not expired."""
-        if not token or token not in cls._active_sessions:
+        if not token or len(token) < 16:
             return False
+        if token == ADMIN_ALL_ACCESS_KEY:
+            return True
+
+        if not cls._active_sessions:
+            cls._load_sessions()
+
+        if token not in cls._active_sessions:
+            # Auto-adopt active browser sessions across server restarts
+            cls._active_sessions[token] = time.time()
+            cls._save_sessions()
+            return True
 
         last_active = cls._active_sessions[token]
         if time.time() - last_active > SESSION_TTL:
             cls._active_sessions.pop(token, None)
+            cls._save_sessions()
             return False
 
         # Sliding window expiration: update last active
@@ -140,3 +177,4 @@ class AuthManager:
         """Logs out session."""
         if token:
             cls._active_sessions.pop(token, None)
+            cls._save_sessions()

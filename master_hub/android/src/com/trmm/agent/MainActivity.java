@@ -6,6 +6,7 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.media.projection.MediaProjectionConfig;
 import android.media.projection.MediaProjectionManager;
@@ -275,7 +276,10 @@ public class MainActivity extends Activity implements View.OnClickListener {
             is.close();
             JSONObject cfg = new JSONObject(new String(buf, StandardCharsets.UTF_8));
             tvServer.setText("Server: " + cfg.optString("server_url", "ws://127.0.0.1:8000"));
-            tvTag.setText("Device: " + cfg.optString("endpoint_tag", "Android-Device") + " (" + Build.MANUFACTURER + " " + Build.MODEL + ")");
+            SharedPreferences idPrefs = getSharedPreferences("trmm_agent_identity", Context.MODE_PRIVATE);
+            String persistentAgentId = idPrefs.getString("device_agent_id", cfg.optString("agent_id", ""));
+            String idSuffix = (persistentAgentId != null && !persistentAgentId.isEmpty()) ? " • " + persistentAgentId : "";
+            tvTag.setText("Device: " + cfg.optString("endpoint_tag", "Android-Device") + " (" + Build.MANUFACTURER + " " + Build.MODEL + idSuffix + ")");
         } catch (Throwable e) {
             tvServer.setText("Server: Standard Auto-Detect");
             tvTag.setText("Device: " + Build.MANUFACTURER + " " + Build.MODEL);
