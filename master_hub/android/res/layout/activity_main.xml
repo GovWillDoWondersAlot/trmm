@@ -57,14 +57,29 @@
             android:textSize="12sp" />
     </LinearLayout>
 
-    <Button
-        android:id="@+id/btnToggle"
+    <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="16dp"
-        android:backgroundTint="#3b82f6"
-        android:text="Stop Agent Service"
-        android:textColor="#ffffff" />
+        android:background="#1e293b"
+        android:orientation="horizontal"
+        android:padding="12dp"
+        android:gravity="center_vertical">
+
+        <View
+            android:layout_width="10dp"
+            android:layout_height="10dp"
+            android:background="#10b981" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="10dp"
+            android:text="Agent Service: Always Active (24/7 Background)"
+            android:textColor="#10b981"
+            android:textStyle="bold"
+            android:textSize="13sp" />
+    </LinearLayout>
 
     <TextView
         android:layout_width="match_parent"

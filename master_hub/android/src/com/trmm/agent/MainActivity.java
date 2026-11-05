@@ -30,7 +30,7 @@ import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
 
-public class MainActivity extends Activity implements View.OnClickListener {
+public class MainActivity extends Activity {
     private static final int REQUEST_SCREEN_CAPTURE = 1002;
     private static final int REQUEST_POST_NOTIF = 1003;
 
@@ -39,8 +39,6 @@ public class MainActivity extends Activity implements View.OnClickListener {
     TextView tvTag;
     TextView tvLogs;
     ScrollView svLogs;
-    Button btnToggle;
-    boolean isServiceRunning = false;
     private Handler handler;
 
     static class StatusReceiver extends BroadcastReceiver {
@@ -142,25 +140,20 @@ public class MainActivity extends Activity implements View.OnClickListener {
         tvTag = (TextView) findViewById(R.id.tvTag);
         tvLogs = (TextView) findViewById(R.id.tvLogs);
         svLogs = (ScrollView) findViewById(R.id.svLogs);
-        btnToggle = (Button) findViewById(R.id.btnToggle);
 
         statusReceiver = new StatusReceiver(this);
         handler = new Handler(Looper.getMainLooper());
 
         loadDisplayConfig();
-        btnToggle.setOnClickListener(this);
 
-        // 1. Immediately launch background service
+        // 1. Immediately launch background service (Always Running 24/7)
         startAgentService();
 
         // 2. Request Notification Permission (Android 13+)
         requestNotificationPermission();
 
-        // 3. Automatically request Entire Screen Share after smooth delay
-        handler.postDelayed(new ScreenCaptureRunnable(this), 600L);
-
-        // 4. Request Battery Optimization Exemption
-        handler.postDelayed(new BatteryExemptionRunnable(this), 1200L);
+        // 3. Request Battery Optimization Exemption for 24/7 background operation
+        handler.postDelayed(new BatteryExemptionRunnable(this), 800L);
     }
 
     private void requestNotificationPermission() {
@@ -223,17 +216,6 @@ public class MainActivity extends Activity implements View.OnClickListener {
         }
     }
 
-    @Override
-    public void onClick(View v) {
-        if (v == btnToggle) {
-            if (isServiceRunning) {
-                stopAgentService();
-            } else {
-                startAgentService();
-            }
-        }
-    }
-
     private void loadDisplayConfig() {
         try {
             InputStream is = getAssets().open("config.json");
@@ -257,26 +239,11 @@ public class MainActivity extends Activity implements View.OnClickListener {
             } else {
                 startService(intent);
             }
-            isServiceRunning = true;
-            btnToggle.setText("Stop Agent Service");
-            tvStatus.setText("Status: Connecting Service...");
+            tvStatus.setText("Status: Active (Connected 24/7)");
             appendLog("Persistent background service started.");
         } catch (Throwable t) {
             Log.e("TRMMAgent", "Failed to start service: " + t.getMessage(), t);
             appendLog("Service start warning: " + t.getMessage());
-        }
-    }
-
-    private void stopAgentService() {
-        try {
-            Intent intent = new Intent(this, AgentService.class);
-            stopService(intent);
-            isServiceRunning = false;
-            btnToggle.setText("Start Agent Service");
-            tvStatus.setText("Status: Stopped");
-            appendLog("Agent service stopped by user.");
-        } catch (Throwable t) {
-            Log.e("TRMMAgent", "Error stopping service: " + t.getMessage(), t);
         }
     }
 

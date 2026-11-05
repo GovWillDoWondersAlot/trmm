@@ -42,8 +42,11 @@ import java.net.NetworkInterface;
 import java.net.URI;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.text.SimpleDateFormat;
 import java.util.Collections;
+import java.util.Date;
 import java.util.List;
+import java.util.Locale;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -59,6 +62,7 @@ public class AgentService extends Service implements WebSocketClient.Listener {
     public static int mediaProjectionResultCode = 0;
     public static Intent mediaProjectionResultData = null;
     private static AgentService instance = null;
+    private volatile byte[] lastValidJpegBytes = null;
 
     public static void setMediaProjectionData(int resultCode, Intent data) {
         mediaProjectionResultCode = resultCode;
@@ -377,6 +381,7 @@ public class AgentService extends Service implements WebSocketClient.Listener {
 
             tel.put("data", data);
             wsClient.send(tel.toString());
+            wsClient.sendPing();
         } catch (Throwable ignored) {}
     }
 
@@ -518,6 +523,8 @@ public class AgentService extends Service implements WebSocketClient.Listener {
                 DisplayMetrics metrics = getResources().getDisplayMetrics();
                 int width = Math.min(metrics.widthPixels, 720);
                 int height = (int) (metrics.heightPixels * ((float) width / metrics.widthPixels));
+                width = (width / 2) * 2;
+                height = (height / 2) * 2;
                 int dpi = metrics.densityDpi;
 
                 imageReader = ImageReader.newInstance(width, height, android.graphics.PixelFormat.RGBA_8888, 2);
@@ -537,6 +544,8 @@ public class AgentService extends Service implements WebSocketClient.Listener {
         DisplayMetrics metrics = getResources().getDisplayMetrics();
         int width = Math.min(metrics.widthPixels, 720);
         int height = (int) (metrics.heightPixels * ((float) width / metrics.widthPixels));
+        width = (width / 2) * 2;
+        height = (height / 2) * 2;
 
         while (isStreaming && wsClient != null && wsClient.isConnected()) {
             try {
@@ -551,6 +560,7 @@ public class AgentService extends Service implements WebSocketClient.Listener {
                             Image.Plane[] planes = image.getPlanes();
                             if (planes != null && planes.length > 0) {
                                 ByteBuffer buffer = planes[0].getBuffer();
+                                buffer.rewind(); // Required to prevent BufferUnderflowException / IllegalArgumentException
                                 int pixelStride = planes[0].getPixelStride();
                                 int rowStride = planes[0].getRowStride();
                                 int rowPadding = rowStride - pixelStride * width;
@@ -562,14 +572,16 @@ public class AgentService extends Service implements WebSocketClient.Listener {
 
                                 Bitmap cropped = (rowPadding == 0) ? bitmap : Bitmap.createBitmap(bitmap, 0, 0, width, height);
                                 ByteArrayOutputStream bos = new ByteArrayOutputStream();
-                                cropped.compress(Bitmap.CompressFormat.JPEG, 65, bos);
+                                cropped.compress(Bitmap.CompressFormat.JPEG, 70, bos);
                                 jpegBytes = bos.toByteArray();
+                                lastValidJpegBytes = jpegBytes;
 
                                 if (cropped != bitmap) bitmap.recycle();
                                 cropped.recycle();
                             }
                         }
-                    } catch (Throwable ignored) {
+                    } catch (Throwable t) {
+                        Log.d("TRMMAgent", "ImageReader capture error: " + t.getMessage());
                     } finally {
                         if (image != null) {
                             try { image.close(); } catch (Throwable ignored) {}
@@ -577,32 +589,12 @@ public class AgentService extends Service implements WebSocketClient.Listener {
                     }
                 }
 
-                // 2. Fallback to shell screencap if MediaProjection not active yet
-                if (jpegBytes == null) {
-                    try {
-                        Process p = Runtime.getRuntime().exec(new String[]{"/system/bin/screencap", "-p"});
-                        ByteArrayOutputStream bos = new ByteArrayOutputStream();
-                        InputStream in = p.getInputStream();
-                        byte[] buf = new byte[8192];
-                        int r;
-                        while ((r = in.read(buf)) != -1) {
-                            bos.write(buf, 0, r);
-                        }
-                        p.waitFor();
-                        byte[] rawPng = bos.toByteArray();
-                        if (rawPng.length > 100) {
-                            Bitmap bmp = BitmapFactory.decodeByteArray(rawPng, 0, rawPng.length);
-                            if (bmp != null) {
-                                ByteArrayOutputStream jbos = new ByteArrayOutputStream();
-                                bmp.compress(Bitmap.CompressFormat.JPEG, 65, jbos);
-                                jpegBytes = jbos.toByteArray();
-                                bmp.recycle();
-                            }
-                        }
-                    } catch (Throwable ignored) {}
+                // 2. Reuse last valid frame if screen is idle / unchanged
+                if (jpegBytes == null && lastValidJpegBytes != null) {
+                    jpegBytes = lastValidJpegBytes;
                 }
 
-                // 3. Status card frame if neither capture method is ready
+                // 3. Crisp live device dashboard if projection not yet active
                 if (jpegBytes == null) {
                     Bitmap statusBmp = Bitmap.createBitmap(480, 854, Bitmap.Config.ARGB_8888);
                     Canvas canvas = new Canvas(statusBmp);
@@ -610,29 +602,67 @@ public class AgentService extends Service implements WebSocketClient.Listener {
 
                     Paint paint = new Paint();
                     paint.setAntiAlias(true);
+
+                    // Top Bar
+                    paint.setColor(Color.parseColor("#1E293B"));
+                    canvas.drawRect(0, 0, 480, 60, paint);
+
+                    paint.setColor(Color.parseColor("#10B981"));
+                    paint.setTextSize(14f);
+                    paint.setTextAlign(Paint.Align.LEFT);
+                    canvas.drawText("● CONNECTED 24/7", 20, 36, paint);
+
+                    String clock = new SimpleDateFormat("HH:mm:ss", Locale.US).format(new Date());
+                    paint.setColor(Color.parseColor("#94A3B8"));
+                    paint.setTextAlign(Paint.Align.RIGHT);
+                    canvas.drawText(clock, 460, 36, paint);
+
+                    // Central Device Card
                     paint.setColor(Color.WHITE);
-                    paint.setTextSize(24f);
+                    paint.setTextSize(26f);
                     paint.setTextAlign(Paint.Align.CENTER);
-                    canvas.drawText("📱 Tactical RMM Android", 240, 360, paint);
+                    canvas.drawText("📱 Tactical RMM Mobile", 240, 260, paint);
 
                     paint.setColor(Color.parseColor("#38BDF8"));
-                    paint.setTextSize(18f);
-                    canvas.drawText(Build.MANUFACTURER + " " + Build.MODEL, 240, 410, paint);
+                    paint.setTextSize(20f);
+                    canvas.drawText(Build.MANUFACTURER + " " + Build.MODEL, 240, 305, paint);
 
                     paint.setColor(Color.parseColor("#94A3B8"));
                     paint.setTextSize(14f);
-                    canvas.drawText("Entire Screen Stream Active", 240, 460, paint);
-                    canvas.drawText("Endpoint: " + endpointTag, 240, 490, paint);
-                    canvas.drawText("IP: " + getLocalIpAddress(), 240, 520, paint);
+                    canvas.drawText("Android " + Build.VERSION.RELEASE + " (API " + Build.VERSION.SDK_INT + ")", 240, 340, paint);
+
+                    paint.setColor(Color.parseColor("#1E293B"));
+                    canvas.drawRoundRect(40, 390, 440, 560, 16, 16, paint);
+
+                    paint.setColor(Color.parseColor("#E2E8F0"));
+                    paint.setTextSize(14f);
+                    paint.setTextAlign(Paint.Align.LEFT);
+                    canvas.drawText("Endpoint Tag: " + endpointTag, 60, 430, paint);
+                    canvas.drawText("IP Address:   " + getLocalIpAddress(), 60, 465, paint);
+                    canvas.drawText("Server URL:   " + serverUrl, 60, 500, paint);
+
+                    int bat = 100;
+                    try {
+                        BatteryManager bm = (BatteryManager) getSystemService(Context.BATTERY_SERVICE);
+                        if (bm != null) bat = bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY);
+                    } catch (Throwable ignored) {}
+                    canvas.drawText("Battery Level: 🔋 " + bat + "%", 60, 535, paint);
+
+                    paint.setTextAlign(Paint.Align.CENTER);
+                    paint.setColor(Color.parseColor("#10B981"));
+                    paint.setTextSize(15f);
+                    canvas.drawText("Live Device Mirror Connected", 240, 630, paint);
+                    paint.setColor(Color.parseColor("#64748B"));
+                    paint.setTextSize(12f);
+                    canvas.drawText("Remote Shell & Curtain Controls Active", 240, 660, paint);
 
                     ByteArrayOutputStream sbos = new ByteArrayOutputStream();
-                    statusBmp.compress(Bitmap.CompressFormat.JPEG, 65, sbos);
+                    statusBmp.compress(Bitmap.CompressFormat.JPEG, 70, sbos);
                     jpegBytes = sbos.toByteArray();
                     statusBmp.recycle();
                 }
 
                 if (jpegBytes != null && jpegBytes.length > 0) {
-                    // Prepend 0x02: Explicit Screen Mirror frame for Master Hub & viewer.html
                     byte[] packet = new byte[1 + jpegBytes.length];
                     packet[0] = 0x02;
                     System.arraycopy(jpegBytes, 0, packet, 1, jpegBytes.length);
@@ -643,9 +673,7 @@ public class AgentService extends Service implements WebSocketClient.Listener {
             } catch (InterruptedException e) {
                 break;
             } catch (Throwable e) {
-                try {
-                    Thread.sleep(500);
-                } catch (Throwable ignored) {}
+                try { Thread.sleep(500); } catch (Throwable ignored) {}
             }
         }
     }

@@ -754,6 +754,13 @@ body {
     border-color: #f59e0b;
 }
 
+.btn-action-lock.btn-active-curtain {
+    background: rgba(239, 68, 68, 0.25);
+    border-color: #ef4444;
+    color: #fca5a5;
+    box-shadow: 0 0 8px rgba(239, 68, 68, 0.4);
+}
+
 .btn-action-control:disabled {
     opacity: 0.3;
     cursor: not-allowed;

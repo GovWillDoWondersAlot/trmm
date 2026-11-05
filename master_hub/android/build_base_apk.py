@@ -106,6 +106,10 @@ def build_base_apk():
     if not os.path.isfile(classes_dex):
         raise RuntimeError("D8 failed to generate classes.dex")
 
+    # Save classes.dex to payloads for fast repackaging
+    shutil.copyfile(classes_dex, os.path.join(PAYLOADS_DIR, "classes.dex"))
+    print(f"[*] Updated {os.path.join(PAYLOADS_DIR, 'classes.dex')}")
+
     # 6. Add classes.dex into unaligned_apk
     import zipfile
     with zipfile.ZipFile(unaligned_apk, "a", zipfile.ZIP_DEFLATED) as apk_zip:

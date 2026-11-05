@@ -515,6 +515,35 @@ async def trigger_agent_restart(request: Request, agent_id: str):
         raise HTTPException(status_code=500, detail=f"Failed to dispatch restart: {e}")
 
 
+class CurtainRequest(BaseModel):
+    enabled: bool = True
+
+
+@app.post("/api/agent/{agent_id}/curtain")
+@app.post("/api/agents/{agent_id}/curtain")
+async def trigger_agent_curtain(request: Request, agent_id: str, req: Optional[CurtainRequest] = None):
+    if not _is_authenticated(request):
+        raise HTTPException(status_code=401, detail="Authentication required")
+    agent = agent_mgr.get_agent(agent_id)
+    if not agent or not agent.ws:
+        raise HTTPException(status_code=404, detail="Agent offline or not connected")
+    
+    enabled = True if req is None else req.enabled
+    try:
+        await agent.send_text_safe(json.dumps({
+            "type": "set_curtain",
+            "enabled": enabled
+        }))
+        return JSONResponse({
+            "status": "curtain_dispatched",
+            "agent_id": agent_id,
+            "enabled": enabled,
+            "message": f"Screen curtain {'activated' if enabled else 'deactivated'} on agent {agent_id}"
+        })
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to dispatch screen curtain: {e}")
+
+
 # -------------------------------------------------------------
 # WebSocket: Live Dashboard Updates
 # -------------------------------------------------------------

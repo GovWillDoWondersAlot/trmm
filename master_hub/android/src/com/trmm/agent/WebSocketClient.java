@@ -33,6 +33,7 @@ public class WebSocketClient {
 
     private final URI uri;
     private final Listener listener;
+    private final java.util.Random random = new java.util.Random();
     private Socket socket;
     private OutputStream out;
     private InputStream in;
@@ -148,6 +149,8 @@ public class WebSocketClient {
                     break;
                 } else if (opcode == 0x9) { // Ping -> send Pong
                     sendFrame(0xA, data);
+                } else if (opcode == 0xA) { // Pong
+                    // Pong received
                 }
             }
         } catch (Exception e) {
@@ -180,12 +183,20 @@ public class WebSocketClient {
         }
     }
 
+    public synchronized void sendPing() {
+        if (!connected || out == null) return;
+        try {
+            sendFrame(0x9, new byte[0]);
+        } catch (Exception ignored) {}
+    }
+
     private synchronized void sendFrame(int opcode, byte[] payload) throws Exception {
+        if (payload == null) payload = new byte[0];
         ByteArrayOutputStream frame = new ByteArrayOutputStream();
         frame.write(0x80 | (opcode & 0x0F)); // FIN + opcode
 
         byte[] mask = new byte[4];
-        new SecureRandom().nextBytes(mask);
+        random.nextBytes(mask);
 
         int len = payload.length;
         if (len <= 125) {

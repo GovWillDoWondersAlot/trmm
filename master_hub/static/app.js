@@ -441,9 +441,9 @@ function renderAgentTable() {
                         <span>Control</span>
                     </button>
                     ${isAndroidAgent ? `
-                    <button class="btn-action-control btn-action-lock" ${!isOnline ? 'disabled' : ''} onclick="lockAndroidDevice('${agent.agent_id}', event)" title="Lock Android Device Screen">
+                    <button class="btn-action-control btn-action-lock ${agentCurtainStates[agent.agent_id] ? 'btn-active-curtain' : ''}" ${!isOnline ? 'disabled' : ''} onclick="lockAndroidDevice('${agent.agent_id}', event)" title="${agentCurtainStates[agent.agent_id] ? 'Dismiss Screen Curtain' : 'Lock Android Device (Activate Screen Curtain)'}">
                         <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
-                        <span>Lock Device</span>
+                        <span>${agentCurtainStates[agent.agent_id] ? 'Unlock' : 'Lock Device'}</span>
                     </button>
                     ` : `
                     <button class="btn-action-control btn-action-backstage" ${!isOnline ? 'disabled' : ''} onclick="openViewerTab('${agent.agent_id}', 'backstage')" title="Backstage: Hidden virtual desktop session (invisible to user)">
@@ -554,9 +554,35 @@ async function deleteAgentSession(agentId, event) {
     }
 }
 
-function lockAndroidDevice(agentId, event) {
+const agentCurtainStates = {};
+
+async function lockAndroidDevice(agentId, event) {
     if (event) event.stopPropagation();
-    showToast("Lock Device", `Lock command initiated for endpoint [${agentId}]. (Feature in development)`, "info");
+    const isCurrentlyLocked = !!agentCurtainStates[agentId];
+    const newLockedState = !isCurrentlyLocked;
+    
+    try {
+        const res = await fetch(`/api/agent/${encodeURIComponent(agentId)}/curtain`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ enabled: newLockedState })
+        });
+        const data = await res.json();
+        if (res.ok) {
+            agentCurtainStates[agentId] = newLockedState;
+            if (newLockedState) {
+                showToast("Screen Curtain Activated", `Screen Curtain activated on [${agentId}]. Device screen is locked.`, "success");
+            } else {
+                showToast("Screen Curtain Dismissed", `Screen Curtain dismissed on [${agentId}]. Normal display restored.`, "info");
+            }
+            renderAgentTable();
+        } else {
+            showToast("Curtain Error", data.detail || "Failed to dispatch curtain command.", "error");
+        }
+    } catch (err) {
+        console.error(err);
+        showToast("Error", "Failed to communicate with Master Hub.", "error");
+    }
 }
 
 function setFilter(filterType, el) {

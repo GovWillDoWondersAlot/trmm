@@ -308,15 +308,16 @@ class AgentManager:
         now = time.time()
         if agent_id in self.active_agents:
             existing = self.active_agents[agent_id]
-            # Protect healthy active connections from being killed by duplicate background processes
-            if (now - existing.last_heartbeat) < 15.0:
+            is_android = info.get("is_android") or info.get("platform") == "android" or existing.client_info.get("is_android")
+            # For Android or reconnecting agents, gracefully supersede old socket
+            if not is_android and (now - existing.last_heartbeat) < 15.0:
                 logger.info(f"Rejecting duplicate connection for agent '{agent_id}' because an active session is already connected and healthy.")
                 return None
             else:
-                logger.info(f"Agent '{agent_id}' stale connection expired. Closing previous WebSocket and registering new connection.")
+                logger.info(f"Agent '{agent_id}' superseding previous WebSocket connection.")
                 try:
                     import asyncio
-                    asyncio.create_task(existing.ws.close(code=1000, reason="Stale connection replaced"))
+                    asyncio.create_task(existing.ws.close(code=1000, reason="Superseded by reconnect"))
                 except Exception:
                     pass
 
