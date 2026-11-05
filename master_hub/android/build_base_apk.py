@@ -51,7 +51,7 @@ def build_base_apk():
 
     compiled_res = os.path.join(WORK_DIR, "compiled_res")
     os.makedirs(compiled_res, exist_ok=True)
-    gen_dir = os.path.join(WORK_DIR, "gen")
+    gen_dir = os.path.join(ANDROID_DIR, "gen")
     os.makedirs(gen_dir, exist_ok=True)
     classes_dir = os.path.join(WORK_DIR, "classes")
     os.makedirs(classes_dir, exist_ok=True)

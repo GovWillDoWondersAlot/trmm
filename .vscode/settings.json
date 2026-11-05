@@ -1,0 +1,17 @@
+{
+  "java.project.sourcePaths": [
+    "master_hub/android/src",
+    "master_hub/android/gen"
+  ],
+  "java.project.referencedLibraries": [
+    "master_hub/android/libs/android.jar",
+    "master_hub/android/libs/**/*.jar",
+    "C:/Users/Samace Tech Lab/AppData/Local/Android/Sdk/platforms/android-34/android.jar",
+    "C:/Users/Samace Tech Lab/AppData/Local/Android/Sdk/platforms/android-35/android.jar"
+  ],
+  "java.compile.nullAnalysis.mode": "automatic",
+  "java.configuration.updateBuildConfiguration": "automatic",
+  "files.exclude": {
+    "**/master_hub/android/work": true
+  }
+}

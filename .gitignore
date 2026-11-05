@@ -41,7 +41,8 @@ env.bak/
 venv.bak/
 
 # IDE files
-.vscode/
+.vscode/*
+!.vscode/settings.json
 .idea/
 *.sublime-project
 *.sublime-workspace
@@ -50,5 +51,7 @@ venv.bak/
 scratch/
 *.tmp
 master_hub/android/work/
+master_hub/android/bin/
+master_hub/android/libs/
 *.idsig
 readme
