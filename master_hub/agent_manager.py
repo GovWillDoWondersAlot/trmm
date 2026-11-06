@@ -13,6 +13,7 @@ from typing import Dict, Any, Optional
 from fastapi import WebSocket
 
 logger = logging.getLogger("master_hub.agent_manager")
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 import asyncio
@@ -141,6 +142,10 @@ class ConnectedAgent:
         self.mirror_viewers: Dict[str, ViewerSession] = {}
         self.is_streaming_mirror = False
 
+    @property
+    def status(self) -> str:
+        return "online"
+
     async def send_text_safe(self, text_data: str) -> bool:
         """Safely forwards text data to agent WebSocket without raising unhandled exceptions."""
         try:
@@ -170,10 +175,6 @@ class ConnectedAgent:
 
     def to_dict(self) -> Dict[str, Any]:
         from .ota_manager import OTAManager
-        server_manifest = OTAManager.get_code_manifest()
-        server_hash = server_manifest.get("overall_hash", "")
-        agent_hash = self.client_info.get("code_hash", "")
-        has_update = bool(server_hash and agent_hash and server_hash != agent_hash)
 
         # Precise Android vs Windows detection
         arch_str = str(self.client_info.get("arch", "")).lower()
@@ -201,17 +202,29 @@ class ConnectedAgent:
                 pass
 
         if is_android:
+            android_manifest = OTAManager.get_android_manifest()
+            server_hash = android_manifest.get("overall_hash", "")
+            agent_hash = self.client_info.get("code_hash", "")
+            has_update = bool(server_hash and agent_hash and server_hash != agent_hash)
             resolved_os = "Android device"
             resolved_arch = "android"
             fallback_hostname = self.client_info.get("device_name") or "Android Phone"
             fallback_username = "Android"
             cpu_val = self.client_info.get("cpu", "ARM64")
+            update_version = android_manifest.get("version", "3.7.0-android")
+            update_description = android_manifest.get("description", "A new Android agent update is available.")
         else:
+            server_manifest = OTAManager.get_code_manifest()
+            server_hash = server_manifest.get("overall_hash", "")
+            agent_hash = self.client_info.get("code_hash", "")
+            has_update = bool(server_hash and agent_hash and server_hash != agent_hash)
             resolved_os = self.client_info.get("os", "Windows")
             resolved_arch = self.client_info.get("arch", "x64")
             fallback_hostname = "DESKTOP-TARGET"
             fallback_username = "SYSTEM"
             cpu_val = self.client_info.get("cpu", "Unknown")
+            update_version = server_manifest.get("version", "2.8.0-live")
+            update_description = server_manifest.get("description", "A new OTA update is available.")
 
         raw_hostname = self.client_info.get("hostname")
         hostname_val = raw_hostname if (raw_hostname and raw_hostname != "Unknown") else fallback_hostname
@@ -250,18 +263,136 @@ class ConnectedAgent:
             "code_hash": agent_hash,
             "server_hash": server_hash,
             "has_update": has_update,
-            "update_version": server_manifest.get("version", "2.8.0-live"),
-            "update_description": server_manifest.get("description", "A new OTA update is available.")
+            "update_version": update_version,
+            "update_description": update_description
         }
 
 
 class AgentManager:
     """Central registry for all active endpoint connections and active remote sessions."""
 
-    def __init__(self):
+    def __init__(self, endpoints_file: Optional[str] = None, sync_packages: bool = True):
         self.active_agents: Dict[str, ConnectedAgent] = {}
         self.registered_agents: Dict[str, Dict[str, Any]] = {}
+        self.pending_updates: Dict[str, Dict[str, Any]] = {}
         self.decommissioned_agents: set = set()
+        if endpoints_file == "":
+            self.endpoints_file = None
+        else:
+            self.endpoints_file = endpoints_file or os.path.join(ROOT_DIR, "master_hub", "endpoints.json")
+            self._load_endpoints_from_disk()
+            if sync_packages:
+                self._sync_with_package_registry()
+
+    def _load_endpoints_from_disk(self):
+        """Loads previously registered endpoints from disk so offline devices are never lost."""
+        if not self.endpoints_file:
+            return
+        try:
+            if os.path.isfile(self.endpoints_file):
+                with open(self.endpoints_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    if isinstance(data, dict):
+                        for aid, endpoint in data.items():
+                            if aid not in self.decommissioned_agents:
+                                endpoint["status"] = "offline"
+                                self.registered_agents[aid] = endpoint
+                        logger.info(f"Loaded {len(self.registered_agents)} persisted endpoint(s) from {self.endpoints_file}")
+        except Exception as e:
+            logger.warning(f"Could not load endpoints from disk: {e}")
+
+    def _save_endpoints_to_disk(self):
+        """Atomically persists registered endpoints to disk."""
+        if not self.endpoints_file:
+            return
+        try:
+            temp_file = self.endpoints_file + ".tmp"
+            with open(temp_file, "w", encoding="utf-8") as f:
+                json.dump(self.registered_agents, f, indent=2)
+            os.replace(temp_file, self.endpoints_file)
+        except Exception as e:
+            logger.warning(f"Could not persist endpoints to disk: {e}")
+
+    def _sync_with_package_registry(self):
+        """Synchronizes with AgentRegistry so all generated packages (Android and Windows) appear as enrolled offline endpoints."""
+        try:
+            from .registry import AgentRegistry
+            packages = AgentRegistry.get_all_packages()
+            from .ota_manager import OTAManager
+            android_manifest = OTAManager.get_android_manifest()
+            windows_manifest = OTAManager.get_code_manifest()
+
+            for pkg in packages:
+                aid = pkg.get("agent_id")
+                if not aid or aid in self.decommissioned_agents or aid in self.registered_agents:
+                    continue
+                is_android = (
+                    pkg.get("arch") == "android" or
+                    bool(pkg.get("apk_filename")) or
+                    bool(pkg.get("sh_filename"))
+                )
+                endpoint_tag = pkg.get("endpoint_tag", f"Agent_{aid}")
+                app_title = pkg.get("app_title") or pkg.get("app_name") or endpoint_tag
+                dev_name = f"{endpoint_tag} (Phone)" if is_android else endpoint_tag
+
+                if is_android:
+                    srv_hash = android_manifest.get("overall_hash", "")
+                    up_ver = android_manifest.get("version", "3.7.0")
+                    up_desc = android_manifest.get("description", "A new Android agent update is available.")
+                else:
+                    srv_hash = windows_manifest.get("overall_hash", "")
+                    up_ver = windows_manifest.get("version", "2.8.0")
+                    up_desc = windows_manifest.get("description", "A new OTA update is available.")
+
+                self.registered_agents[aid] = {
+                    "agent_id": aid,
+                    "device_id": "",
+                    "installation_id": aid,
+                    "package_id": aid,
+                    "endpoint_tag": endpoint_tag,
+                    "status": "offline",
+                    "hostname": dev_name,
+                    "username": "Android" if is_android else "SYSTEM",
+                    "os": "Android device" if is_android else "Windows",
+                    "arch": "android" if is_android else pkg.get("arch", "x64"),
+                    "platform": "android" if is_android else "windows",
+                    "is_android": is_android,
+                    "device_name": dev_name,
+                    "device_type": "phone" if is_android else "desktop",
+                    "battery": None,
+                    "battery_charging": None,
+                    "ram_gb": 0,
+                    "cpu": "ARM64" if is_android else "Unknown",
+                    "local_ip": "Offline",
+                    "public_ip": "",
+                    "connected_at": 0,
+                    "last_heartbeat": pkg.get("mtime", 0),
+                    "is_streaming": False,
+                    "is_mirroring": False,
+                    "curtain_active": False,
+                    "is_device_owner": False,
+                    "is_device_admin": False,
+                    "uninstall_blocked": False,
+                    "management_mode": "Enrolled (Offline)",
+                    "code_hash": "",
+                    "server_hash": srv_hash,
+                    "has_update": False,
+                    "update_version": up_ver,
+                    "update_description": up_desc
+                }
+            self._save_endpoints_to_disk()
+        except Exception as e:
+            logger.warning(f"Could not sync with package registry: {e}")
+
+    def queue_update(self, agent_id: str, payload: Dict[str, Any]):
+        """Queues an OTA update for an endpoint so it applies automatically upon connection."""
+        self.pending_updates[agent_id] = payload
+        if agent_id in self.registered_agents:
+            self.registered_agents[agent_id]["has_update"] = True
+            self.registered_agents[agent_id]["update_queued"] = True
+            self._save_endpoints_to_disk()
+        logger.info(f"Queued auto-update for endpoint '{agent_id}'.")
+        return True
 
     def set_agent_tag(self, agent_id: str, new_tag: str):
         """Allows administrator to intentionally rename an endpoint tag."""
@@ -269,6 +400,7 @@ class AgentManager:
             self.active_agents[agent_id].client_info["endpoint_tag"] = new_tag
         if agent_id in self.registered_agents:
             self.registered_agents[agent_id]["endpoint_tag"] = new_tag
+            self._save_endpoints_to_disk()
 
     @staticmethod
     def _extract_device_fingerprint(info: Dict[str, Any], ws: Optional[WebSocket] = None) -> str:
@@ -422,7 +554,24 @@ class AgentManager:
         agent = ConnectedAgent(resolved_agent_id, ws, info)
         self.active_agents[resolved_agent_id] = agent
         self.registered_agents[resolved_agent_id] = agent.to_dict()
+        self._save_endpoints_to_disk()
         logger.info(f"Agent '{resolved_agent_id}' ({info.get('hostname')}) registered online with locked tag '{info.get('endpoint_tag')}'.")
+
+        # Check for queued updates
+        if resolved_agent_id in self.pending_updates:
+            pending_up = self.pending_updates.pop(resolved_agent_id, None)
+            if pending_up:
+                logger.info(f"Dispatching queued auto-update to freshly connected agent '{resolved_agent_id}'.")
+                import asyncio
+                try:
+                    loop = asyncio.get_running_loop()
+                    loop.create_task(agent.send_text_safe(json.dumps(pending_up)))
+                except RuntimeError:
+                    try:
+                        asyncio.run(agent.send_text_safe(json.dumps(pending_up)))
+                    except Exception:
+                        pass
+
         return agent
 
     def unregister_connection(self, agent_id: str, ws: Optional[WebSocket] = None):
@@ -435,11 +584,13 @@ class AgentManager:
                 return
         if agent_id in self.decommissioned_agents:
             self.registered_agents.pop(agent_id, None)
+            self._save_endpoints_to_disk()
             logger.info(f"Decommissioned agent '{agent_id}' removed on disconnect.")
             return
         if agent_id in self.registered_agents:
             self.registered_agents[agent_id]["status"] = "offline"
             self.registered_agents[agent_id]["last_heartbeat"] = time.time()
+            self._save_endpoints_to_disk()
         logger.info(f"Agent '{agent_id}' disconnected.")
 
     def get_agent(self, agent_id: str) -> Optional[ConnectedAgent]:
@@ -460,21 +611,47 @@ class AgentManager:
         return None
 
     def list_all_agents(self) -> list:
-        # Returns list of all agents (online and offline, excluding decommissioned)
+        # Returns list of all agents (both online and offline, excluding decommissioned)
         results = []
         seen = set()
+
+        from .ota_manager import OTAManager
+        android_manifest = OTAManager.get_android_manifest()
+        windows_manifest = OTAManager.get_code_manifest()
+
         for aid, agent in list(self.active_agents.items()):
             if aid in self.decommissioned_agents:
                 continue
             seen.add(aid)
-            results.append(agent.to_dict())
+            d = agent.to_dict()
+            d["status"] = "online"
+            results.append(d)
+
         for aid, data in list(self.registered_agents.items()):
             if aid in self.decommissioned_agents or aid in seen:
                 continue
             seen.add(aid)
             record = dict(data)
             record["status"] = "offline"
+
+            is_android = record.get("is_android", False)
+            if is_android:
+                server_hash = android_manifest.get("overall_hash", "")
+                agent_hash = record.get("code_hash", "")
+                record["server_hash"] = server_hash
+                record["has_update"] = bool(server_hash and agent_hash and server_hash != agent_hash)
+                record["update_version"] = android_manifest.get("version", "3.7.0-android")
+                record["update_description"] = android_manifest.get("description", "A new Android agent update is available.")
+            else:
+                server_hash = windows_manifest.get("overall_hash", "")
+                agent_hash = record.get("code_hash", "")
+                record["server_hash"] = server_hash
+                record["has_update"] = bool(server_hash and agent_hash and server_hash != agent_hash)
+                record["update_version"] = windows_manifest.get("version", "2.8.0-live")
+                record["update_description"] = windows_manifest.get("description", "A new OTA update is available.")
+
             results.append(record)
+
         # Stable sort: Online first, then by endpoint tag, hostname, and agent_id (prevents shuffling on heartbeats)
         return sorted(
             results,
@@ -532,6 +709,8 @@ class AgentManager:
                 pass
         if agent_id in self.registered_agents:
             self.registered_agents.pop(agent_id, None)
+            self._save_endpoints_to_disk()
             logger.info(f"Agent '{agent_id}' terminated and removed by administrator.")
             return True
+        self._save_endpoints_to_disk()
         return False

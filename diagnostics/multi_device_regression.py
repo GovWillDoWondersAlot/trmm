@@ -5,7 +5,7 @@ from master_hub.agent_manager import AgentManager, ConnectedAgent
 
 class MultiDeviceRegressionTests(unittest.TestCase):
     def setUp(self):
-        self.mgr = AgentManager()
+        self.mgr = AgentManager(endpoints_file="")
 
     def test_multi_android_disambiguation(self):
         # Mock WebSocket for Phone 1 (Samsung)

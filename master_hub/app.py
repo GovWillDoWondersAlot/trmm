@@ -293,7 +293,7 @@ async def generate_agent(request: Request, req: GenerateAgentRequest):
             
         from starlette.concurrency import run_in_threadpool
         result = await run_in_threadpool(AgentGenerator.build_package, cfg)
-        return {
+        ret_data = {
             "success": True,
             "agent_id": cfg["agent_id"],
             "arch": result.get("arch", cfg.get("arch", "x64")),
@@ -313,6 +313,10 @@ async def generate_agent(request: Request, req: GenerateAgentRequest):
             "vbs_download_url": result.get("vbs_download_url"),
             "one_liner": result.get("one_liner"),
         }
+        agent_mgr._sync_with_package_registry()
+        import asyncio
+        asyncio.create_task(broadcast_agent_list())
+        return ret_data
     except BuildStorageError as e:
         raise HTTPException(status_code=507, detail=str(e))
     except ValueError as e:
@@ -416,21 +420,169 @@ async def get_agent_payload(filename: str):
     return FileResponse(p, filename=os.path.basename(p))
 
 
+@app.api_route("/api/agents/update/{agent_id}.apk", methods=["GET", "HEAD"])
+async def download_update_apk(request: Request, agent_id: str):
+    agent_info = agent_mgr.registered_agents.get(agent_id) or {}
+    tag = agent_info.get("endpoint_tag") or "Android-Device"
+    
+    update_filename = f"trmm_update_{agent_id}.apk"
+    update_path = os.path.join(PAYLOADS_DIR, update_filename)
+    classes_dex_path = os.path.join(PAYLOADS_DIR, "classes.dex")
+    base_apk = os.path.join(PAYLOADS_DIR, "android_agent_base.apk")
+    
+    rebuild = True
+    if os.path.isfile(update_path) and os.path.isfile(classes_dex_path):
+        if os.path.getmtime(update_path) >= os.path.getmtime(classes_dex_path):
+            rebuild = False
+            
+    if rebuild and os.path.isfile(classes_dex_path):
+        try:
+            client_host = request.headers.get("x-forwarded-host") or request.headers.get("host") or "127.0.0.1:8000"
+            scheme = request.headers.get("x-forwarded-proto") or request.url.scheme
+            if "127.0.0.1" in client_host or "localhost" in client_host:
+                try:
+                    import socket
+                    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                    s.connect(("8.8.8.8", 80))
+                    local_ip = s.getsockname()[0]
+                    s.close()
+                except Exception:
+                    local_ip = socket.gethostbyname(socket.gethostname())
+                if local_ip and local_ip != "127.0.0.1":
+                    port_suffix = f":{client_host.split(':')[1]}" if ":" in client_host else ":8000"
+                    client_host = f"{local_ip}{port_suffix}"
+            ws_scheme = "wss" if scheme == "https" else "ws"
+            server_url = f"{ws_scheme}://{client_host}"
+
+            cfg = {
+                "agent_id": agent_id,
+                "endpoint_tag": tag,
+                "server_url": server_url,
+                "arch": "android",
+                "auto_start": True
+            }
+            from .android_builder import AndroidBuilder
+            from starlette.concurrency import run_in_threadpool
+            built = await run_in_threadpool(AndroidBuilder.build_custom_apk, cfg, update_path)
+            if not built:
+                update_path = base_apk
+        except Exception as e:
+            logger.warning(f"Failed to build custom update APK for {agent_id}: {e}")
+            update_path = base_apk
+    elif not os.path.isfile(update_path):
+        update_path = base_apk
+        
+    if not os.path.isfile(update_path):
+        raise HTTPException(status_code=404, detail="Android update APK not available")
+        
+    return FileResponse(
+        update_path,
+        filename=f"Update_{tag}.apk",
+        media_type="application/vnd.android.package-archive"
+    )
+
+
+@app.post("/api/agents/{agent_id}/update")
+@app.post("/api/agent/{agent_id}/update")
 @app.post("/api/agent/{agent_id}/sync")
-async def trigger_agent_sync(request: Request, agent_id: str):
+async def trigger_agent_update(request: Request, agent_id: str):
     if not _is_authenticated(request):
         raise HTTPException(status_code=401, detail="Authentication required")
-    agent = agent_mgr.active_agents.get(agent_id)
-    if not agent or not agent.ws:
-        raise HTTPException(status_code=404, detail="Agent offline or not connected")
 
-    server_manifest = OTAManager.get_code_manifest()
-    server_hash = server_manifest.get("overall_hash", "")
-    agent_hash = agent.client_info.get("code_hash", "")
-    description = server_manifest.get("description", "Latest code features applied.")
+    agent = agent_mgr.get_agent(agent_id)
+    reg_data = agent_mgr.registered_agents.get(agent_id) or {}
 
-    has_update = (agent_hash != server_hash)
-    try:
+    is_android = False
+    if agent:
+        is_android = agent.client_info.get("is_android", False)
+    elif reg_data:
+        is_android = reg_data.get("is_android", False)
+
+    # Resolve LAN IP for mobile reachability
+    client_host = request.headers.get("x-forwarded-host") or request.headers.get("host") or "127.0.0.1:8000"
+    scheme = request.headers.get("x-forwarded-proto") or request.url.scheme
+    if "127.0.0.1" in client_host or "localhost" in client_host:
+        try:
+            import socket
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            local_ip = s.getsockname()[0]
+            s.close()
+        except Exception:
+            local_ip = socket.gethostbyname(socket.gethostname())
+        if local_ip and local_ip != "127.0.0.1":
+            port_suffix = f":{client_host.split(':')[1]}" if ":" in client_host else ":8000"
+            client_host = f"{local_ip}{port_suffix}"
+
+    http_base = f"{scheme}://{client_host}"
+
+    if is_android:
+        manifest = OTAManager.get_android_manifest()
+        server_hash = manifest.get("overall_hash", "")
+        agent_hash = (agent.client_info.get("code_hash", "") if agent else reg_data.get("code_hash", ""))
+        has_update = bool(server_hash and agent_hash and server_hash != agent_hash)
+        download_url = f"{http_base}/api/agents/update/{agent_id}.apk"
+
+        payload = {
+            "type": "update_app",
+            "action": "ota_update",
+            "download_url": download_url,
+            "sha256": server_hash,
+            "version": manifest.get("version", "3.7.0"),
+            "description": manifest.get("description", "New Android features and enhancements.")
+        }
+
+        if agent and agent.ws:
+            import asyncio
+            asyncio.create_task(agent.send_text_safe(json.dumps(payload)))
+            return JSONResponse({
+                "success": True,
+                "status": "update_dispatched",
+                "has_update": has_update,
+                "message": f"Update dispatched to Android device [{agent_id}]. Automatic installation started in background.",
+                "download_url": download_url,
+                "version": manifest.get("version"),
+                "description": manifest.get("description")
+            })
+        else:
+            # Queue update for offline Android device
+            agent_mgr.queue_update(agent_id, payload)
+            import asyncio
+            asyncio.create_task(broadcast_agent_list())
+            return JSONResponse({
+                "success": True,
+                "status": "update_queued",
+                "has_update": True,
+                "message": f"Update queued for offline Android device [{agent_id}]. It will install automatically when the device connects.",
+                "download_url": download_url,
+                "version": manifest.get("version"),
+                "description": manifest.get("description")
+            })
+    else:
+        # Windows agent update
+        if not agent or not agent.ws:
+            # Allow queuing for Windows as well
+            server_manifest = OTAManager.get_code_manifest()
+            agent_mgr.queue_update(agent_id, {
+                "type": "sync_code",
+                "server_hash": server_manifest.get("overall_hash", ""),
+                "description": server_manifest.get("description", "Latest code features applied."),
+                "force": True,
+                "force_restart": True
+            })
+            return JSONResponse({
+                "success": True,
+                "status": "update_queued",
+                "has_update": True,
+                "message": f"Update queued for offline Windows endpoint [{agent_id}]. It will install automatically when connected."
+            })
+
+        server_manifest = OTAManager.get_code_manifest()
+        server_hash = server_manifest.get("overall_hash", "")
+        agent_hash = agent.client_info.get("code_hash", "")
+        description = server_manifest.get("description", "Latest code features applied.")
+        has_update = (agent_hash != server_hash)
+
         await agent.ws.send_text(json.dumps({
             "type": "sync_code",
             "server_hash": server_hash,
@@ -439,6 +591,7 @@ async def trigger_agent_sync(request: Request, agent_id: str):
             "force_restart": has_update
         }))
         return JSONResponse({
+            "success": True,
             "status": "update_applied" if has_update else "no_update",
             "has_update": has_update,
             "message": f"Update applied: {description}" if has_update else "No update available. Device is already running the latest version.",
@@ -447,8 +600,85 @@ async def trigger_agent_sync(request: Request, agent_id: str):
             "server_hash": server_hash,
             "agent_hash": agent_hash
         })
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to dispatch sync: {e}")
+
+
+@app.post("/api/agents/update-all")
+async def trigger_update_all(request: Request):
+    if not _is_authenticated(request):
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    all_agents = agent_mgr.list_all_agents()
+    dispatched = 0
+    queued = 0
+
+    client_host = request.headers.get("x-forwarded-host") or request.headers.get("host") or "127.0.0.1:8000"
+    scheme = request.headers.get("x-forwarded-proto") or request.url.scheme
+    if "127.0.0.1" in client_host or "localhost" in client_host:
+        try:
+            import socket
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            local_ip = s.getsockname()[0]
+            s.close()
+        except Exception:
+            local_ip = socket.gethostbyname(socket.gethostname())
+        if local_ip and local_ip != "127.0.0.1":
+            port_suffix = f":{client_host.split(':')[1]}" if ":" in client_host else ":8000"
+            client_host = f"{local_ip}{port_suffix}"
+    http_base = f"{scheme}://{client_host}"
+
+    android_manifest = OTAManager.get_android_manifest()
+    windows_manifest = OTAManager.get_code_manifest()
+
+    import asyncio
+    for a in all_agents:
+        aid = a.get("agent_id")
+        is_android = a.get("is_android", False)
+        agent_obj = agent_mgr.get_agent(aid)
+        is_online = agent_obj is not None and agent_obj.ws is not None
+
+        if is_android:
+            payload = {
+                "type": "update_app",
+                "action": "ota_update",
+                "download_url": f"{http_base}/api/agents/update/{aid}.apk",
+                "sha256": android_manifest.get("overall_hash", ""),
+                "version": android_manifest.get("version", "3.7.0"),
+                "description": android_manifest.get("description", "Android agent update")
+            }
+            if is_online:
+                asyncio.create_task(agent_obj.send_text_safe(json.dumps(payload)))
+                dispatched += 1
+            else:
+                agent_mgr.queue_update(aid, payload)
+                queued += 1
+        else:
+            if is_online:
+                asyncio.create_task(agent_obj.send_text_safe(json.dumps({
+                    "type": "sync_code",
+                    "server_hash": windows_manifest.get("overall_hash", ""),
+                    "description": windows_manifest.get("description", "Latest code features applied."),
+                    "force": True,
+                    "force_restart": True
+                })))
+                dispatched += 1
+            else:
+                agent_mgr.queue_update(aid, {
+                    "type": "sync_code",
+                    "server_hash": windows_manifest.get("overall_hash", ""),
+                    "description": windows_manifest.get("description", "Latest code features applied."),
+                    "force": True,
+                    "force_restart": True
+                })
+                queued += 1
+
+    asyncio.create_task(broadcast_agent_list())
+    return JSONResponse({
+        "success": True,
+        "dispatched": dispatched,
+        "queued": queued,
+        "message": f"Update dispatched to {dispatched} online device(s) and queued for {queued} offline device(s)."
+    })
 
 
 class InstallServiceRequest(BaseModel):

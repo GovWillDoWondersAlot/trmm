@@ -93,6 +93,36 @@ class OTAManager:
         return mem_file.getvalue(), manifest["overall_hash"]
 
     @staticmethod
+    def get_android_manifest() -> Dict[str, Any]:
+        """Calculates hash of Android classes.dex and base APK for native Android OTA tracking."""
+        classes_dex = os.path.join(PAYLOADS_DIR, "classes.dex")
+        base_apk = os.path.join(PAYLOADS_DIR, "android_agent_base.apk")
+        
+        target_file = classes_dex if os.path.isfile(classes_dex) else base_apk
+        if os.path.isfile(target_file):
+            try:
+                with open(target_file, "rb") as f:
+                    content = f.read()
+                dex_hash = hashlib.sha256(content).hexdigest()[:16]
+                mtime = os.path.getmtime(target_file)
+                return {
+                    "version": f"3.7.0-{dex_hash[:6]}",
+                    "overall_hash": dex_hash,
+                    "code_hash": dex_hash,
+                    "download_url": "/api/agents/update/{agent_id}.apk",
+                    "description": "Native Android background agent build with Live Screen Mirroring, Kiosk Lock, and OTA auto-update.",
+                    "size_bytes": len(content),
+                    "mtime": mtime
+                }
+            except Exception:
+                pass
+        return {
+            "version": "3.0.0-base",
+            "overall_hash": "android_base_default",
+            "description": "Base Android management agent."
+        }
+
+    @staticmethod
     def get_payload_path(filename: str) -> Optional[str]:
         """Returns safe path to a dependency payload file if it exists."""
         clean_name = os.path.basename(filename)

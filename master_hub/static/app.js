@@ -437,8 +437,13 @@ function renderAgentTable() {
             </td>
             <td style="text-align: right;">
                 <div class="action-btn-group">
-                    ${agent.has_update ? `
-                        <button class="btn-action-control btn-action-update" ${!isOnline ? 'disabled' : ''} onclick="promptAgentUpdate('${agent.agent_id}', event)" title="Update Available: ${escapeHtml(agent.update_description || 'New features ready')}">
+                    ${isAndroidAgent ? `
+                        <button class="btn-action-control btn-action-update ${agent.has_update ? 'btn-has-update' : ''}" onclick="pushAgentUpdate('${agent.agent_id}', event)" title="${isOnline ? (agent.has_update ? 'Update Available: Click to push new build to device' : 'Push latest updated build to this Android device') : 'Device offline: Click to queue automatic update upon reconnection'}">
+                            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                            <span>${agent.has_update ? 'Update App' : 'Push Update'}</span>
+                        </button>
+                    ` : (agent.has_update ? `
+                        <button class="btn-action-control btn-action-update" onclick="promptAgentUpdate('${agent.agent_id}', event)" title="Update Available: ${escapeHtml(agent.update_description || 'New features ready')}">
                             <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.3"/></svg>
                             <span>Update</span>
                         </button>
@@ -447,7 +452,7 @@ function renderAgentTable() {
                             <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.3"/></svg>
                             <span>Sync</span>
                         </button>
-                    `}
+                    `)}
                     <button class="btn-action-control btn-action-mirror" ${!isOnline ? 'disabled' : ''} onclick="openViewerTab('${agent.agent_id}', 'mirror')" title="${isAndroidAgent ? 'Take Control: Remote Control & Shell' : 'Take Control: Mirror real desktop with physical mouse & keyboard'}">
                         <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg>
                         <span>Control</span>
@@ -520,7 +525,50 @@ async function confirmPushUpdate() {
     if (!pendingUpdateAgentId) return;
     const targetId = pendingUpdateAgentId;
     closeUpdateModal();
-    await syncAgentCode(targetId, null, true);
+    await pushAgentUpdate(targetId, null);
+}
+
+async function pushAgentUpdate(agentId, event) {
+    if (event) event.stopPropagation();
+    const agent = currentAgents.find(a => a.agent_id === agentId);
+    const tag = agent ? (agent.endpoint_tag || agent.hostname || agentId) : agentId;
+
+    try {
+        showToast("Deploying Update", `Initiating auto-update for [${tag}]...`, "info");
+        const res = await fetch(`/api/agents/${encodeURIComponent(agentId)}/update`, { method: "POST" });
+        const data = await res.json();
+        if (res.ok && data.success) {
+            if (data.status === "update_queued") {
+                showToast("Update Queued (Offline)", `[${tag}] is offline. Update will install automatically upon connection.`, "info");
+            } else {
+                showToast("Update Dispatched", `Latest app build dispatched to [${tag}]. Auto-update is executing in background.`, "success");
+            }
+            setTimeout(manualRefresh, 1200);
+        } else {
+            showToast("Update Notice", data.message || data.detail || "Update processed.", "info");
+        }
+    } catch (e) {
+        showToast("Update Error", e.message, "error");
+    }
+}
+
+async function pushAllUpdates() {
+    if (!confirm("Push the latest app update to all endpoints?\n\n• Online devices will automatically download and update in the background.\n• Offline devices will update automatically upon reconnection.")) {
+        return;
+    }
+    try {
+        showToast("Deploying All Updates", "Pushing latest builds to all endpoints...", "info");
+        const res = await fetch("/api/agents/update-all", { method: "POST" });
+        const data = await res.json();
+        if (res.ok && data.success) {
+            showToast("Updates Dispatched", data.message || "All devices notified.", "success");
+            setTimeout(manualRefresh, 1500);
+        } else {
+            showToast("Update Error", data.detail || "Failed to dispatch updates.", "error");
+        }
+    } catch (e) {
+        showToast("Update Error", e.message, "error");
+    }
 }
 
 async function syncAgentCode(agentId, event, force = false) {

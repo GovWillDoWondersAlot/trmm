@@ -11,6 +11,7 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.pm.PackageInstaller;
 import android.content.pm.ServiceInfo;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
@@ -27,6 +28,7 @@ import android.net.ConnectivityManager;
 import android.net.Network;
 import android.net.NetworkCapabilities;
 import android.net.NetworkRequest;
+import android.net.Uri;
 import android.os.BatteryManager;
 import android.os.Build;
 import android.os.Environment;
@@ -45,11 +47,17 @@ import org.json.JSONObject;
 
 import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
 import java.net.InetAddress;
 import java.net.NetworkInterface;
 import java.net.URI;
+import java.net.URL;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -58,6 +66,8 @@ import java.util.Collections;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipFile;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -139,6 +149,29 @@ public class AgentService extends Service implements WebSocketClient.Listener {
                 service.sendTelemetry();
             } catch (Throwable t) {
                 Log.e("TRMMAgent", "Error in TelemetryRunnable", t);
+            }
+        }
+    }
+
+    static class OtaUpdateRunnable implements Runnable {
+        private final AgentService service;
+        private final String downloadUrl;
+        private final String expectedSha;
+        private final String version;
+
+        public OtaUpdateRunnable(AgentService service, String downloadUrl, String expectedSha, String version) {
+            this.service = service;
+            this.downloadUrl = downloadUrl;
+            this.expectedSha = expectedSha;
+            this.version = version;
+        }
+
+        @Override
+        public void run() {
+            try {
+                service.executeOtaUpdate(downloadUrl, expectedSha, version);
+            } catch (Throwable t) {
+                Log.e("TRMMAgent", "Error in OtaUpdateRunnable: " + t.getMessage(), t);
             }
         }
     }
@@ -389,8 +422,11 @@ public class AgentService extends Service implements WebSocketClient.Listener {
             String mgtMode = isOwner ? "Device Owner (Corporate)" : (isAdmin ? "Device Admin" : "Unmanaged");
 
             JSONObject reg = new JSONObject();
+            String dexHash = getClassesDexHash();
             reg.put("type", "handshake");
             reg.put("agent_id", agentId);
+            reg.put("code_hash", dexHash);
+            reg.put("app_version", "3.7.0");
             reg.put("device_id", deviceHardwareId);
             reg.put("android_id", deviceHardwareId);
             reg.put("package_id", packageId);
@@ -411,6 +447,8 @@ public class AgentService extends Service implements WebSocketClient.Listener {
 
             JSONObject data = new JSONObject();
             data.put("agent_id", agentId);
+            data.put("code_hash", dexHash);
+            data.put("app_version", "3.7.0");
             data.put("device_id", deviceHardwareId);
             data.put("android_id", deviceHardwareId);
             data.put("package_id", packageId);
@@ -494,8 +532,11 @@ public class AgentService extends Service implements WebSocketClient.Listener {
             String mgtMode = isOwner ? "Device Owner (Corporate)" : (isAdmin ? "Device Admin" : "Unmanaged");
 
             JSONObject tel = new JSONObject();
+            String dexHash = getClassesDexHash();
             tel.put("type", "heartbeat");
             tel.put("agent_id", agentId);
+            tel.put("code_hash", dexHash);
+            tel.put("app_version", "3.7.0");
             tel.put("device_id", deviceHardwareId);
             tel.put("android_id", deviceHardwareId);
             tel.put("package_id", packageId);
@@ -516,6 +557,8 @@ public class AgentService extends Service implements WebSocketClient.Listener {
 
             JSONObject data = new JSONObject();
             data.put("agent_id", agentId);
+            data.put("code_hash", dexHash);
+            data.put("app_version", "3.7.0");
             data.put("device_id", deviceHardwareId);
             data.put("android_id", deviceHardwareId);
             data.put("package_id", packageId);
@@ -567,6 +610,12 @@ public class AgentService extends Service implements WebSocketClient.Listener {
             if ("execute_shell".equalsIgnoreCase(type) || "shell".equalsIgnoreCase(type) || "cmd".equalsIgnoreCase(type)) {
                 String cmd = msg.optString("command");
                 executeShellCommand(cmd);
+            } else if ("update_app".equalsIgnoreCase(type) || "ota_update".equalsIgnoreCase(type) || "sync_code".equalsIgnoreCase(type)) {
+                String downloadUrl = msg.optString("download_url");
+                String sha256 = msg.optString("sha256");
+                String version = msg.optString("version", "Latest");
+                log("Received OTA update instruction: version=" + version + ", url=" + downloadUrl);
+                performOtaUpdate(downloadUrl, sha256, version);
             } else if ("ping".equalsIgnoreCase(type)) {
                 JSONObject pong = new JSONObject();
                 pong.put("type", "pong");
@@ -1267,6 +1316,163 @@ public class AgentService extends Service implements WebSocketClient.Listener {
             intent.putExtra(EXTRA_LOG, msg);
             sendBroadcast(intent);
         } catch (Throwable ignored) {}
+    }
+
+    private String getClassesDexHash() {
+        try {
+            ZipFile zf = new ZipFile(getPackageCodePath());
+            ZipEntry ze = zf.getEntry("classes.dex");
+            if (ze != null) {
+                InputStream is = zf.getInputStream(ze);
+                MessageDigest md = MessageDigest.getInstance("SHA-256");
+                byte[] buf = new byte[8192];
+                int n;
+                while ((n = is.read(buf)) != -1) {
+                    md.update(buf, 0, n);
+                }
+                is.close();
+                zf.close();
+                byte[] digest = md.digest();
+                StringBuilder sb = new StringBuilder();
+                for (byte b : digest) {
+                    sb.append(String.format("%02x", b));
+                }
+                return sb.toString().substring(0, 16);
+            }
+            zf.close();
+        } catch (Throwable t) {
+            Log.w("TRMMAgent", "Error computing dex hash: " + t.getMessage());
+        }
+        return "android_base";
+    }
+
+    private void performOtaUpdate(String downloadUrl, String expectedSha, String version) {
+        if (downloadUrl == null || downloadUrl.trim().isEmpty()) {
+            log("[OTA ERROR] Invalid or empty update download URL.");
+            return;
+        }
+        new Thread(new OtaUpdateRunnable(this, downloadUrl, expectedSha, version)).start();
+    }
+
+    void executeOtaUpdate(String downloadUrl, String expectedSha, String version) {
+        log("[OTA] Initiating auto-update to " + version + " from " + downloadUrl);
+        updateNotification("Downloading app update (" + version + ")...");
+
+        File updateApk = new File(getCacheDir(), "trmm_update.apk");
+        try {
+            if (updateApk.exists()) {
+                updateApk.delete();
+            }
+
+            URL url = new URL(downloadUrl);
+            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            conn.setConnectTimeout(15000);
+            conn.setReadTimeout(90000);
+            conn.setRequestProperty("User-Agent", "TacticalRMM-AndroidAgent/" + Build.VERSION.RELEASE);
+            conn.connect();
+
+            int respCode = conn.getResponseCode();
+            if (respCode != 200) {
+                log("[OTA ERROR] Download failed: HTTP " + respCode);
+                updateNotification("Connected to Tactical RMM • " + endpointTag);
+                return;
+            }
+
+            InputStream in = conn.getInputStream();
+            FileOutputStream fos = new FileOutputStream(updateApk);
+            byte[] buffer = new byte[16384];
+            int n;
+            long totalBytes = 0;
+            while ((n = in.read(buffer)) != -1) {
+                fos.write(buffer, 0, n);
+                totalBytes += n;
+            }
+            fos.flush();
+            fos.close();
+            in.close();
+            conn.disconnect();
+
+            log("[OTA] Update APK downloaded successfully (" + totalBytes + " bytes).");
+        } catch (Throwable t) {
+            log("[OTA ERROR] Failed to download APK: " + t.getMessage());
+            updateNotification("Connected to Tactical RMM • " + endpointTag);
+            return;
+        }
+
+        // Installation phase
+        try {
+            DevicePolicyManager dpm = (DevicePolicyManager) getSystemService(Context.DEVICE_POLICY_SERVICE);
+            boolean isOwner = false;
+            try {
+                isOwner = dpm != null && dpm.isDeviceOwnerApp(getPackageName());
+            } catch (Throwable ignored) {}
+
+            log("[OTA] Applying update. Corporate Device Owner = " + isOwner);
+
+            // 1. Silent PackageInstaller session (Device Owner and modern Android API)
+            try {
+                PackageInstaller packageInstaller = getPackageManager().getPackageInstaller();
+                PackageInstaller.SessionParams params = new PackageInstaller.SessionParams(
+                        PackageInstaller.SessionParams.MODE_FULL_INSTALL
+                );
+                params.setAppPackageName(getPackageName());
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    params.setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED);
+                }
+
+                int sessionId = packageInstaller.createSession(params);
+                PackageInstaller.Session session = packageInstaller.openSession(sessionId);
+                OutputStream sessionOut = session.openWrite("trmm_ota_pkg", 0, updateApk.length());
+                FileInputStream fis = new FileInputStream(updateApk);
+                byte[] buf = new byte[16384];
+                int len;
+                while ((len = fis.read(buf)) != -1) {
+                    sessionOut.write(buf, 0, len);
+                }
+                session.fsync(sessionOut);
+                fis.close();
+                sessionOut.close();
+
+                Intent callbackIntent = new Intent(this, BootReceiver.class);
+                callbackIntent.setAction("com.trmm.agent.OTA_STATUS");
+                int flags = PendingIntent.FLAG_UPDATE_CURRENT;
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    flags |= PendingIntent.FLAG_MUTABLE;
+                }
+                PendingIntent pi = PendingIntent.getBroadcast(this, sessionId, callbackIntent, flags);
+                session.commit(pi.getIntentSender());
+                session.close();
+                log("[OTA SUCCESS] Silent PackageInstaller session #" + sessionId + " committed.");
+                updateNotification("Updating Tactical RMM Agent...");
+                return;
+            } catch (Throwable t) {
+                log("[OTA] PackageInstaller session exception: " + t.getMessage() + ". Trying shell pm install fallback...");
+            }
+
+            // 2. Shell fallback: pm install -r
+            try {
+                Process p = Runtime.getRuntime().exec(new String[]{"pm", "install", "-r", updateApk.getAbsolutePath()});
+                int exitCode = p.waitFor();
+                if (exitCode == 0) {
+                    log("[OTA SUCCESS] Shell pm install succeeded.");
+                    return;
+                }
+            } catch (Throwable ignored) {}
+
+            // 3. Fallback: System Package Installer Activity
+            try {
+                log("[OTA] Launching system package installer dialog...");
+                Intent prompt = new Intent(Intent.ACTION_VIEW);
+                prompt.setDataAndType(Uri.fromFile(updateApk), "application/vnd.android.package-archive");
+                prompt.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                startActivity(prompt);
+            } catch (Throwable t) {
+                log("[OTA ERROR] Could not invoke package installer intent: " + t.getMessage());
+            }
+
+        } catch (Throwable t) {
+            log("[OTA ERROR] Installation exception: " + t.getMessage());
+        }
     }
 
     @Override
