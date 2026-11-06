@@ -54,7 +54,10 @@ def prune_old_build_artifacts(target_free_bytes: int = 304 * 1024 * 1024):
                 except Exception:
                     pass
 
-    free = shutil.disk_usage(OUTPUT_DIR).free
+    try:
+        free = shutil.disk_usage(OUTPUT_DIR).free
+    except Exception:
+        free = shutil.disk_usage(ROOT_DIR).free
     if free >= target_free_bytes:
         return
 
@@ -68,7 +71,11 @@ def prune_old_build_artifacts(target_free_bytes: int = 304 * 1024 * 1024):
         # Prune oldest installer files first
         files.sort(key=lambda x: x[1])
         for path, _ in files:
-            if shutil.disk_usage(OUTPUT_DIR).free >= target_free_bytes:
+            try:
+                curr_free = shutil.disk_usage(OUTPUT_DIR).free
+            except Exception:
+                curr_free = shutil.disk_usage(ROOT_DIR).free
+            if curr_free >= target_free_bytes:
                 break
             try:
                 os.remove(path)
