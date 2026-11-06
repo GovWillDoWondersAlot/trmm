@@ -571,6 +571,29 @@ async function pushAllUpdates() {
     }
 }
 
+async function deleteAllDevices() {
+    const count = currentAgents.length;
+    if (!confirm(`Are you sure you want to delete and unbind ALL ${count} device(s)?\n\n• All active agent sessions will be disconnected and terminated.\n• All offline and registered endpoints will be removed from Managed Endpoints.\n• This action cannot be undone.`)) {
+        return;
+    }
+    try {
+        showToast("Deleting Endpoints", "Removing all connected and enrolled devices...", "info");
+        const res = await fetch("/api/agents", { method: "DELETE" });
+        const data = await res.json();
+        if (res.ok && data.success) {
+            currentAgents = [];
+            updateStats();
+            renderAgentTable();
+            showToast("Endpoints Cleared", data.message || "All devices have been successfully deleted.", "success");
+            setTimeout(manualRefresh, 500);
+        } else {
+            showToast("Delete Error", data.detail || data.message || "Failed to delete devices.", "error");
+        }
+    } catch (e) {
+        showToast("Delete Error", e.message, "error");
+    }
+}
+
 async function syncAgentCode(agentId, event, force = false) {
     if (event) event.stopPropagation();
     try {

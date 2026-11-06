@@ -714,3 +714,25 @@ class AgentManager:
             return True
         self._save_endpoints_to_disk()
         return False
+
+    def remove_all_agents(self) -> int:
+        """Removes and unbinds all agents (both active and registered offline) and wipes persistence."""
+        all_ids = set(self.active_agents.keys()) | set(self.registered_agents.keys())
+        count = len(all_ids)
+        for aid in list(all_ids):
+            self.remove_agent(aid)
+        self.registered_agents.clear()
+        self.pending_updates.clear()
+        self._save_endpoints_to_disk()
+
+        # Also wipe historical packages manifest so old test packages do not resurrect on reboot
+        try:
+            from .registry import MANIFEST_FILE
+            if os.path.isfile(MANIFEST_FILE):
+                with open(MANIFEST_FILE, "w", encoding="utf-8") as f:
+                    json.dump({}, f, indent=2)
+        except Exception as e:
+            logger.warning(f"Could not wipe package manifest: {e}")
+
+        logger.info(f"All {count} endpoints removed and unbound by administrator.")
+        return count

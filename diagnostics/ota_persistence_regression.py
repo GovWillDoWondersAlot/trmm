@@ -110,5 +110,20 @@ class OtaPersistenceRegressionTests(unittest.TestCase):
         self.assertTrue(len(manifest["code_hash"]) > 0)
         self.assertNotEqual(manifest["code_hash"], "unknown")
 
+    def test_delete_all_devices(self):
+        ws_mock = MagicMock()
+        ws_mock.client = MagicMock(host="192.168.1.50")
+        ws_mock.close = AsyncMock()
+
+        self.mgr.register_connection("agent_to_delete_01", ws_mock, {"hostname": "Device1", "is_android": True})
+        self.mgr.register_connection("agent_to_delete_02", ws_mock, {"hostname": "Device2", "is_android": False})
+
+        self.assertEqual(len(self.mgr.list_all_agents()), 2)
+        count = self.mgr.remove_all_agents()
+        self.assertEqual(count, 2)
+        self.assertEqual(len(self.mgr.list_all_agents()), 0)
+        self.assertEqual(len(self.mgr.active_agents), 0)
+        self.assertEqual(len(self.mgr.registered_agents), 0)
+
 if __name__ == "__main__":
     unittest.main()

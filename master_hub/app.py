@@ -256,6 +256,16 @@ async def delete_agent(request: Request, agent_id: str):
     return {"success": True, "message": f"Agent {agent_id} removed"}
 
 
+@app.delete("/api/agents")
+@app.post("/api/agents/delete-all")
+async def delete_all_agents(request: Request):
+    if not _is_authenticated(request):
+        raise HTTPException(status_code=401, detail="Authentication required")
+    count = agent_mgr.remove_all_agents()
+    await broadcast_agent_list()
+    return {"success": True, "message": f"Successfully deleted and unbound {count} device(s)", "count": count}
+
+
 @app.post("/api/agents/generate")
 async def generate_agent(request: Request, req: GenerateAgentRequest):
     if not _is_authenticated(request):

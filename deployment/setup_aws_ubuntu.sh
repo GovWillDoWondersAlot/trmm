@@ -120,3 +120,4 @@ echo "  Optional SSL Setup (Once you point a custom domain):"
 echo "    sudo apt-get install -y certbot python3-certbot-nginx"
 echo "    sudo certbot --nginx -d yourdomain.com"
 echo "=================================================================="
+
