@@ -3,12 +3,14 @@ Tactical RMM — Agent Package History & Registry Manager.
 Tracks, discovers, and retrieves all previously generated agent packages for re-download.
 """
 
+from __future__ import annotations
+
 import os
 import json
 import time
 import zipfile
 import logging
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from urllib.parse import urlsplit
 
 from server_address import http_server_url as download_base_url
