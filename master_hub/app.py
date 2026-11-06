@@ -332,8 +332,8 @@ async def generate_agent(request: Request, req: GenerateAgentRequest):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        logger.error(f"Failed to generate agent package: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Failed to generate agent package: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {str(e)}")
 
 
 @app.api_route("/api/agents/bootstrap/{filename}", methods=["GET", "HEAD"])

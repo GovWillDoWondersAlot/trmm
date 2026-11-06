@@ -154,7 +154,7 @@ class AgentGenerator:
                 raise
             finally:
                 if os.path.isdir(build_dir):
-                    shutil.rmtree(build_dir)
+                    shutil.rmtree(build_dir, ignore_errors=True)
 
     @staticmethod
     def _build_package(config: Dict[str, Any]) -> Dict[str, Any]:
@@ -182,7 +182,7 @@ class AgentGenerator:
 
         build_dir = os.path.join(OUTPUT_DIR, f"build_{agent_id}")
         if os.path.exists(build_dir):
-            shutil.rmtree(build_dir)
+            shutil.rmtree(build_dir, ignore_errors=True)
         os.makedirs(build_dir, exist_ok=True)
 
         # 1. Copy compiled standalone binary if present
@@ -619,7 +619,7 @@ timeout /t 3 /nobreak >nul 2>&1
         # 4. Create offline zip package
         build_dir = os.path.join(OUTPUT_DIR, f"build_{agent_id}")
         if os.path.exists(build_dir):
-            shutil.rmtree(build_dir)
+            shutil.rmtree(build_dir, ignore_errors=True)
         os.makedirs(build_dir, exist_ok=True)
 
         with open(os.path.join(build_dir, "trmm_mobile_agent.py"), "w", encoding="utf-8", newline="\n") as pf:
@@ -662,7 +662,7 @@ timeout /t 3 /nobreak >nul 2>&1
             raise
         finally:
             if os.path.isdir(build_dir):
-                shutil.rmtree(build_dir)
+                shutil.rmtree(build_dir, ignore_errors=True)
 
         # 5. One-liner curl command
         one_liner = f"curl -fsSL '{http_server_url}/api/agents/bootstrap/{sh_filename}' | bash"
