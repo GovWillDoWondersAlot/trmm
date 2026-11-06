@@ -323,9 +323,6 @@ async def generate_agent(request: Request, req: GenerateAgentRequest):
             "vbs_download_url": result.get("vbs_download_url"),
             "one_liner": result.get("one_liner"),
         }
-        agent_mgr._sync_with_package_registry()
-        import asyncio
-        asyncio.create_task(broadcast_agent_list())
         return ret_data
     except BuildStorageError as e:
         raise HTTPException(status_code=507, detail=str(e))

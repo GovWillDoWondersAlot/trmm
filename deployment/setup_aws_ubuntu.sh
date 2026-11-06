@@ -21,7 +21,7 @@ INSTALL_DIR="${INSTALL_HOME}/TRMM"
 
 echo "[1/6] Updating system packages..."
 sudo apt-get update -y
-sudo apt-get install -y python3 python3-pip python3-venv git nginx curl unzip ufw openjdk-17-jdk-headless
+sudo apt-get install -y python3 python3-pip python3-venv git nginx curl unzip ufw openjdk-17-jdk-headless apksigner zipalign
 
 echo "[2/6] Configuring repository at ${INSTALL_DIR}..."
 if [ ! -d "${INSTALL_DIR}" ]; then

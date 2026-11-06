@@ -271,7 +271,7 @@ class ConnectedAgent:
 class AgentManager:
     """Central registry for all active endpoint connections and active remote sessions."""
 
-    def __init__(self, endpoints_file: Optional[str] = None, sync_packages: bool = True):
+    def __init__(self, endpoints_file: Optional[str] = None, sync_packages: bool = False):
         self.active_agents: Dict[str, ConnectedAgent] = {}
         self.registered_agents: Dict[str, Dict[str, Any]] = {}
         self.pending_updates: Dict[str, Dict[str, Any]] = {}
@@ -295,6 +295,9 @@ class AgentManager:
                     if isinstance(data, dict):
                         for aid, endpoint in data.items():
                             if aid not in self.decommissioned_agents:
+                                # Only load real devices that actually connected (exclude phantom un-connected packages)
+                                if endpoint.get("connected_at", 0) == 0 and endpoint.get("management_mode") == "Enrolled (Offline)":
+                                    continue
                                 endpoint["status"] = "offline"
                                 self.registered_agents[aid] = endpoint
                         logger.info(f"Loaded {len(self.registered_agents)} persisted endpoint(s) from {self.endpoints_file}")

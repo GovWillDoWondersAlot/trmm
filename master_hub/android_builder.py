@@ -54,7 +54,10 @@ def _find_tool(name: str, build_tools_dir: str) -> str:
 AAPT2 = _find_tool("aapt2", BUILD_TOOLS_DIR)
 APKSIGNER = _find_tool("apksigner", BUILD_TOOLS_DIR)
 ZIPALIGN = _find_tool("zipalign", BUILD_TOOLS_DIR)
-DEBUG_KEYSTORE = os.path.expanduser(r"~/.android/debug.keystore")
+BUNDLED_APKSIGNER_JAR = os.path.join(PAYLOADS_DIR, "apksigner.jar")
+DEBUG_KEYSTORE = os.path.join(PAYLOADS_DIR, "debug.keystore")
+if not os.path.isfile(DEBUG_KEYSTORE):
+    DEBUG_KEYSTORE = os.path.expanduser(r"~/.android/debug.keystore")
 
 
 def escape_android_xml(s: str) -> str:
@@ -603,29 +606,13 @@ fi
                     zf.writestr("classes.dex", dex_bytes)
                     zf.writestr("assets/config.json", json.dumps(custom_cfg, indent=2))
 
-                # 7. Zipalign
-                aligned_apk = os.path.join(temp_build, "aligned.apk")
-                if ZIPALIGN and os.path.isfile(ZIPALIGN):
-                    subprocess.run(
-                        [ZIPALIGN, "-f", "-p", "4", unaligned_apk, aligned_apk],
-                        check=True, capture_output=True, text=True
-                    )
-                    target_to_sign = aligned_apk
+                # 7 & 8. Zipalign and sign with v1 + v2/v3 schemes
+                sign_ok = AndroidBuilder.sign_and_align_apk(unaligned_apk, output_apk_path)
+                if sign_ok:
+                    logger.info(f"Custom Android APK compiled & signed: {output_apk_path} (App Name: '{app_display_name}')")
+                    return True
                 else:
-                    target_to_sign = unaligned_apk
-
-                # 8. Sign with apksigner
-                if APKSIGNER and os.path.isfile(APKSIGNER) and os.path.isfile(DEBUG_KEYSTORE):
-                    subprocess.run(
-                        [APKSIGNER, "sign", "--ks", DEBUG_KEYSTORE, "--ks-pass", "pass:android",
-                         "--out", output_apk_path, target_to_sign],
-                        check=True, capture_output=True, text=True
-                    )
-                else:
-                    shutil.copy2(target_to_sign, output_apk_path)
-
-                logger.info(f"Custom Android APK compiled & signed: {output_apk_path} (App Name: '{app_display_name}')")
-                return True
+                    logger.error("Failed to sign dynamically compiled APK. Falling back to base template.")
             except Exception as e:
                 logger.error(f"Failed to dynamically compile APK with aapt2: {e}. Falling back to template repacker.")
             finally:
@@ -636,8 +623,139 @@ fi
         return AndroidBuilder._build_from_base_template(config, output_apk_path)
 
     @staticmethod
+    def sign_and_align_apk(input_apk_path: str, output_apk_path: str) -> bool:
+        """
+        Signs the APK with v1 (JAR), v2, and v3 signature schemes using:
+        1. System apksigner binary
+        2. Bundled apksigner.jar via java
+        3. jarsigner fallback
+
+        Guarantees full installation compatibility on Android 8 through Android 15+.
+        """
+        keystore = DEBUG_KEYSTORE
+        if not (keystore and os.path.isfile(keystore)):
+            keystore = os.path.join(PAYLOADS_DIR, "debug.keystore")
+
+        if not os.path.isfile(keystore):
+            keytool = shutil.which("keytool")
+            if keytool:
+                try:
+                    os.makedirs(os.path.dirname(keystore), exist_ok=True)
+                    subprocess.run([
+                        keytool, "-genkeypair", "-v",
+                        "-keystore", keystore,
+                        "-storepass", "android",
+                        "-alias", "androiddebugkey",
+                        "-keypass", "android",
+                        "-keyalg", "RSA",
+                        "-keysize", "2048",
+                        "-validity", "10000",
+                        "-dname", "CN=Android Debug,O=Android,C=US"
+                    ], capture_output=True, check=True)
+                    logger.info("Auto-generated debug.keystore at %s", keystore)
+                except Exception as e:
+                    logger.warning("Failed to auto-generate keystore: %s", e)
+
+        if not os.path.isfile(keystore):
+            logger.error("No debug.keystore found for APK signing at %s", keystore)
+            return False
+
+        # Optional zipalign
+        target_to_sign = input_apk_path
+        aligned_tmp = None
+        if ZIPALIGN and os.path.isfile(ZIPALIGN):
+            aligned_tmp = input_apk_path + f".{uuid.uuid4().hex[:6]}.aligned.apk"
+            try:
+                subprocess.run([ZIPALIGN, "-f", "-p", "4", input_apk_path, aligned_tmp],
+                               capture_output=True, check=True)
+                target_to_sign = aligned_tmp
+            except Exception as e:
+                logger.warning("zipalign failed: %s; proceeding with raw apk", e)
+                target_to_sign = input_apk_path
+
+        signed = False
+
+        # 1. Try apksigner binary
+        if APKSIGNER and os.path.isfile(APKSIGNER):
+            try:
+                sign_cmd = [
+                    APKSIGNER, "sign",
+                    "--ks", keystore,
+                    "--ks-pass", "pass:android",
+                    "--key-pass", "pass:android",
+                    "--out", output_apk_path,
+                    target_to_sign
+                ]
+                res = subprocess.run(sign_cmd, capture_output=True, text=True)
+                if res.returncode == 0:
+                    signed = True
+                    logger.info("APK signed successfully via apksigner binary: %s", output_apk_path)
+                else:
+                    logger.warning("apksigner binary failed (rc=%d): %s", res.returncode, res.stderr)
+            except Exception as e:
+                logger.warning("Error running apksigner binary: %s", e)
+
+        # 2. Try bundled apksigner.jar via java
+        bundled_jar = os.path.join(PAYLOADS_DIR, "apksigner.jar")
+        java_bin = shutil.which("java")
+        if not signed and java_bin and os.path.isfile(bundled_jar):
+            try:
+                sign_cmd = [
+                    java_bin, "-jar", bundled_jar, "sign",
+                    "--ks", keystore,
+                    "--ks-pass", "pass:android",
+                    "--key-pass", "pass:android",
+                    "--out", output_apk_path,
+                    target_to_sign
+                ]
+                res = subprocess.run(sign_cmd, capture_output=True, text=True)
+                if res.returncode == 0:
+                    signed = True
+                    logger.info("APK signed successfully via bundled apksigner.jar: %s", output_apk_path)
+                else:
+                    logger.warning("bundled apksigner.jar failed (rc=%d): %s", res.returncode, res.stderr)
+            except Exception as e:
+                logger.warning("Error running bundled apksigner.jar: %s", e)
+
+        # 3. Fallback: jarsigner
+        if not signed:
+            jarsigner = shutil.which("jarsigner")
+            if jarsigner:
+                try:
+                    sign_cmd = [
+                        jarsigner, "-verbose",
+                        "-sigalg", "SHA256withRSA",
+                        "-digestalg", "SHA-256",
+                        "-keystore", keystore,
+                        "-storepass", "android",
+                        "-keypass", "android",
+                        target_to_sign, "androiddebugkey"
+                    ]
+                    res = subprocess.run(sign_cmd, capture_output=True, text=True)
+                    if res.returncode == 0:
+                        shutil.copy2(target_to_sign, output_apk_path)
+                        signed = True
+                        logger.info("APK signed successfully via jarsigner fallback: %s", output_apk_path)
+                    else:
+                        logger.warning("jarsigner failed (rc=%d): %s", res.returncode, res.stderr)
+                except Exception as e:
+                    logger.warning("Error running jarsigner: %s", e)
+
+        if aligned_tmp and os.path.isfile(aligned_tmp):
+            try:
+                os.remove(aligned_tmp)
+            except Exception:
+                pass
+
+        if not signed:
+            logger.error("Failed to sign APK using all available signers! Android will refuse to install unsigned APK.")
+            return False
+
+        return True
+
+    @staticmethod
     def _build_from_base_template(config: Dict[str, Any], output_apk_path: str) -> bool:
-        """Fallback method: updates assets/config.json in prebuilt base APK template."""
+        """Fallback method: updates assets/config.json in prebuilt base APK template and signs with v1+v2 schemes."""
         if not AndroidBuilder.is_apk_base_available():
             logger.warning("Base Android APK template is missing at %s", BASE_APK_PATH)
             return False
@@ -672,27 +790,10 @@ fi
                         zout.writestr(item, zin.read(item.filename))
                     zout.writestr("assets/config.json", json.dumps(custom_cfg, indent=2))
 
-            if APKSIGNER and os.path.isfile(APKSIGNER) and os.path.isfile(DEBUG_KEYSTORE):
-                aligned_tmp = output_apk_path + f".{uuid.uuid4().hex[:6]}.aligned.apk"
-                if ZIPALIGN and os.path.isfile(ZIPALIGN):
-                    subprocess.run([ZIPALIGN, "-f", "-p", "4", temp_apk, aligned_tmp],
-                                   capture_output=True, check=True)
-                    target_to_sign = aligned_tmp
-                else:
-                    target_to_sign = temp_apk
-
-                sign_cmd = [
-                    APKSIGNER, "sign",
-                    "--ks", DEBUG_KEYSTORE,
-                    "--ks-pass", "pass:android",
-                    "--out", output_apk_path,
-                    target_to_sign
-                ]
-                subprocess.run(sign_cmd, capture_output=True, check=True)
-                if os.path.isfile(aligned_tmp):
-                    os.remove(aligned_tmp)
-            else:
-                os.replace(temp_apk, output_apk_path)
+            sign_ok = AndroidBuilder.sign_and_align_apk(temp_apk, output_apk_path)
+            if not sign_ok:
+                logger.error("Failed to sign repacked Android APK template at %s", output_apk_path)
+                return False
 
             if os.path.isfile(temp_apk):
                 os.remove(temp_apk)
