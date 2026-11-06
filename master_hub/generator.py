@@ -78,15 +78,21 @@ def prune_old_build_artifacts(target_free_bytes: int = 304 * 1024 * 1024):
 
 
 def require_build_space():
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
     # Reserve space before copying the runtime, not just before compilation.
-    runtime_bytes = sum(os.path.getsize(os.path.join(root, name))
-                        for root, _, names in os.walk(DIST_AGENT_DIR) for name in names)
+    runtime_bytes = 0
+    if os.path.isdir(DIST_AGENT_DIR):
+        runtime_bytes = sum(os.path.getsize(os.path.join(root, name))
+                            for root, _, names in os.walk(DIST_AGENT_DIR) for name in names)
     required = max(256 * 1024 * 1024, 3 * runtime_bytes + 64 * 1024 * 1024)
     
     # Attempt automatic pruning if disk space is below required threshold
     prune_old_build_artifacts(target_free_bytes=required)
 
-    free = shutil.disk_usage(OUTPUT_DIR).free
+    try:
+        free = shutil.disk_usage(OUTPUT_DIR).free
+    except Exception:
+        free = shutil.disk_usage(ROOT_DIR).free
     if free < required:
         raise BuildStorageError(
             f"Not enough server disk space to build an agent: {free // 1048576} MiB free; "
@@ -565,6 +571,8 @@ timeout /t 3 /nobreak >nul 2>&1
         else:
             app_name = f"Agent_{endpoint_tag}"
             app_title = f"Agent ({endpoint_tag})"
+
+        os.makedirs(OUTPUT_DIR, exist_ok=True)
 
         # 1. Build customized signed APK
         apk_filename = f"{app_name}_{endpoint_tag}_android.apk"

@@ -385,9 +385,13 @@ async def download_agent(filename: str):
 async def get_agent_packages_history(request: Request):
     if not _is_authenticated(request):
         raise HTTPException(status_code=401, detail="Unauthorized")
-    from .registry import AgentRegistry
-    packages = AgentRegistry.get_all_packages()
-    return {"success": True, "packages": packages}
+    try:
+        from .registry import AgentRegistry
+        packages = AgentRegistry.get_all_packages()
+        return {"success": True, "packages": packages}
+    except Exception as e:
+        logger.error(f"Failed to fetch package history: {e}", exc_info=True)
+        return {"success": True, "packages": []}
 
 
 @app.delete("/api/agents/history/{agent_id}")

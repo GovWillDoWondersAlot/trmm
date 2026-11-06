@@ -27,12 +27,14 @@ echo "[2/6] Configuring repository at ${INSTALL_DIR}..."
 if [ ! -d "${INSTALL_DIR}" ]; then
     echo "Cloning repository from GitHub..."
     git clone https://github.com/Samace-TechLab/trmm.git "${INSTALL_DIR}"
-    sudo chown -R "${INSTALL_USER}:${INSTALL_USER}" "${INSTALL_DIR}"
 else
     echo "Repository directory already exists. Pulling latest updates..."
     cd "${INSTALL_DIR}"
     git pull origin main || true
 fi
+
+mkdir -p "${INSTALL_DIR}/generated_agents"
+sudo chown -R "${INSTALL_USER}:${INSTALL_USER}" "${INSTALL_DIR}"
 
 cd "${INSTALL_DIR}"
 

@@ -22,22 +22,39 @@ OUTPUT_DIR = os.path.join(ROOT_DIR, "generated_agents")
 BASE_APK_PATH = os.path.join(PAYLOADS_DIR, "android_agent_base.apk")
 
 # Build tools detection
-SDK_DIR = os.path.expanduser(r"~\AppData\Local\Android\Sdk")
-BUILD_TOOLS_DIR = os.path.join(SDK_DIR, "build-tools", "34.0.0")
-if not os.path.isdir(BUILD_TOOLS_DIR):
+SDK_DIR = os.environ.get("ANDROID_HOME") or os.environ.get("ANDROID_SDK_ROOT") or os.path.expanduser(r"~\AppData\Local\Android\Sdk")
+BUILD_TOOLS_DIR = os.path.join(SDK_DIR, "build-tools", "34.0.0") if os.path.isdir(SDK_DIR) else ""
+if not os.path.isdir(BUILD_TOOLS_DIR) and os.path.isdir(SDK_DIR):
     BUILD_TOOLS_DIR = os.path.join(SDK_DIR, "build-tools", "35.0.0")
 
-PLATFORM_DIR = os.path.join(SDK_DIR, "platforms", "android-34")
-if not os.path.isdir(PLATFORM_DIR):
+PLATFORM_DIR = os.path.join(SDK_DIR, "platforms", "android-34") if os.path.isdir(SDK_DIR) else ""
+if not os.path.isdir(PLATFORM_DIR) and os.path.isdir(SDK_DIR):
     PLATFORM_DIR = os.path.join(SDK_DIR, "platforms", "android-35")
-ANDROID_JAR = os.path.join(PLATFORM_DIR, "android.jar")
+ANDROID_JAR = os.path.join(PLATFORM_DIR, "android.jar") if PLATFORM_DIR else ""
 
 ANDROID_DIR = os.path.join(ROOT_DIR, "master_hub", "android")
 CLASSES_DEX_PATH = os.path.join(PAYLOADS_DIR, "classes.dex")
-AAPT2 = os.path.join(BUILD_TOOLS_DIR, "aapt2.exe")
-APKSIGNER = os.path.join(BUILD_TOOLS_DIR, "apksigner.bat")
-ZIPALIGN = os.path.join(BUILD_TOOLS_DIR, "zipalign.exe")
-DEBUG_KEYSTORE = os.path.expanduser(r"~\.android\debug.keystore")
+
+def _find_tool(name: str, build_tools_dir: str) -> str:
+    exts = [".exe", ".bat", ""] if os.name == "nt" else [""]
+    if build_tools_dir and os.path.isdir(build_tools_dir):
+        for ext in exts:
+            p = os.path.join(build_tools_dir, name + ext)
+            if os.path.isfile(p):
+                return p
+    w = shutil.which(name)
+    if w:
+        return w
+    for ext in exts:
+        w_ext = shutil.which(name + ext)
+        if w_ext:
+            return w_ext
+    return ""
+
+AAPT2 = _find_tool("aapt2", BUILD_TOOLS_DIR)
+APKSIGNER = _find_tool("apksigner", BUILD_TOOLS_DIR)
+ZIPALIGN = _find_tool("zipalign", BUILD_TOOLS_DIR)
+DEBUG_KEYSTORE = os.path.expanduser(r"~/.android/debug.keystore")
 
 
 def escape_android_xml(s: str) -> str:
@@ -495,8 +512,8 @@ fi
 
         # Check if AAPT2 and ANDROID_JAR are available for dynamic app name and icon compilation
         can_recompile_res = (
-            os.path.isfile(AAPT2) and
-            os.path.isfile(ANDROID_JAR) and
+            bool(AAPT2 and os.path.isfile(AAPT2)) and
+            bool(ANDROID_JAR and os.path.isfile(ANDROID_JAR)) and
             os.path.isdir(os.path.join(ANDROID_DIR, "res")) and
             os.path.isfile(os.path.join(ANDROID_DIR, "AndroidManifest.xml"))
         )
@@ -588,7 +605,7 @@ fi
 
                 # 7. Zipalign
                 aligned_apk = os.path.join(temp_build, "aligned.apk")
-                if os.path.isfile(ZIPALIGN):
+                if ZIPALIGN and os.path.isfile(ZIPALIGN):
                     subprocess.run(
                         [ZIPALIGN, "-f", "-p", "4", unaligned_apk, aligned_apk],
                         check=True, capture_output=True, text=True
@@ -598,7 +615,7 @@ fi
                     target_to_sign = unaligned_apk
 
                 # 8. Sign with apksigner
-                if os.path.isfile(APKSIGNER) and os.path.isfile(DEBUG_KEYSTORE):
+                if APKSIGNER and os.path.isfile(APKSIGNER) and os.path.isfile(DEBUG_KEYSTORE):
                     subprocess.run(
                         [APKSIGNER, "sign", "--ks", DEBUG_KEYSTORE, "--ks-pass", "pass:android",
                          "--out", output_apk_path, target_to_sign],
@@ -642,6 +659,9 @@ fi
             "device_type": "phone"
         }
 
+        out_parent = os.path.dirname(output_apk_path)
+        if out_parent:
+            os.makedirs(out_parent, exist_ok=True)
         temp_apk = output_apk_path + f".{uuid.uuid4().hex[:6]}.tmp.apk"
         try:
             with zipfile.ZipFile(BASE_APK_PATH, "r") as zin:
@@ -652,9 +672,9 @@ fi
                         zout.writestr(item, zin.read(item.filename))
                     zout.writestr("assets/config.json", json.dumps(custom_cfg, indent=2))
 
-            if os.path.isfile(APKSIGNER) and os.path.isfile(DEBUG_KEYSTORE):
+            if APKSIGNER and os.path.isfile(APKSIGNER) and os.path.isfile(DEBUG_KEYSTORE):
                 aligned_tmp = output_apk_path + f".{uuid.uuid4().hex[:6]}.aligned.apk"
-                if os.path.isfile(ZIPALIGN):
+                if ZIPALIGN and os.path.isfile(ZIPALIGN):
                     subprocess.run([ZIPALIGN, "-f", "-p", "4", temp_apk, aligned_tmp],
                                    capture_output=True, check=True)
                     target_to_sign = aligned_tmp

@@ -24,7 +24,8 @@ dist/
 *.db
 *.sqlite
 *.sqlite3
-generated_agents/
+generated_agents/*
+!generated_agents/.gitkeep
 output/
 master_hub/current_ip.txt
 master_hub/auth_sessions.json

@@ -169,75 +169,186 @@ class AgentRegistry:
         if os.path.isfile(MANIFEST_FILE):
             try:
                 with open(MANIFEST_FILE, "r", encoding="utf-8") as f:
-                    manifest = json.load(f)
+                    loaded = json.load(f)
+                    if isinstance(loaded, dict):
+                        manifest = loaded
             except Exception as e:
                 logger.warning(f"Failed to read {MANIFEST_FILE}: {e}")
 
+        if not isinstance(manifest, dict):
+            manifest = {}
+
+        if not os.path.isdir(OUTPUT_DIR):
+            os.makedirs(OUTPUT_DIR, exist_ok=True)
+
         # Scan generated_agents directory for all zip archives
-        all_files = set(os.listdir(OUTPUT_DIR))
+        try:
+            all_files = set(os.listdir(OUTPUT_DIR))
+        except Exception:
+            all_files = set()
         zip_files = [f for f in all_files if f.endswith(".zip") and not f.endswith(".partial")]
         discovered = {}
 
         for filename in zip_files:
-
-            zip_path = os.path.join(OUTPUT_DIR, filename)
-            mtime = os.path.getmtime(zip_path)
-            size_bytes = os.path.getsize(zip_path)
-
             try:
+                zip_path = os.path.join(OUTPUT_DIR, filename)
+                mtime = os.path.getmtime(zip_path)
+                size_bytes = os.path.getsize(zip_path)
+
                 with zipfile.ZipFile(zip_path, 'r') as zf:
                     if 'config.json' not in zf.namelist():
                         continue
                     cfg = json.loads(zf.read('config.json').decode('utf-8'))
-            except Exception:
-                continue
 
-            agent_id = cfg.get("agent_id")
-            if not agent_id:
-                continue
+                agent_id = cfg.get("agent_id")
+                if not agent_id:
+                    continue
 
-            endpoint_tag = cfg.get("endpoint_tag", f"Agent_{agent_id}")
-            server_url = cfg.get("server_url", "ws://127.0.0.1:8000")
-            arch = cfg.get("arch", "x64")
-            auto_start = cfg.get("auto_start", True)
+                endpoint_tag = cfg.get("endpoint_tag", f"Agent_{agent_id}")
+                server_url = cfg.get("server_url", "ws://127.0.0.1:8000")
+                arch = cfg.get("arch", "x64")
+                auto_start = cfg.get("auto_start", True)
 
-            # Derive app_name
-            prefix = filename[:-len(f"_{endpoint_tag}_{arch}.zip")] if filename.endswith(f"_{endpoint_tag}_{arch}.zip") else filename[:-4]
-            app_name = prefix if prefix else f"Agent_{endpoint_tag}"
-            app_title = app_name.replace("_", " ").title()
+                # Derive app_name
+                prefix = filename[:-len(f"_{endpoint_tag}_{arch}.zip")] if filename.endswith(f"_{endpoint_tag}_{arch}.zip") else filename[:-4]
+                app_name = prefix if prefix else f"Agent_{endpoint_tag}"
+                app_title = app_name.replace("_", " ").title()
 
-            # Derive URLs
-            http_url = download_base_url(server_url)
-            parsed_srv = urlsplit(server_url)
-            port_part = f":{parsed_srv.port}" if parsed_srv.port else ":8000"
-            fallback_base = f"http://127.0.0.1{port_part}"
-            fallback_url = f"{fallback_base}/api/agents/download/{filename}"
-            primary_zip_url = f"{http_url}/api/agents/download/{filename}"
+                # Derive URLs safely
+                try:
+                    http_url = download_base_url(server_url)
+                except Exception:
+                    http_url = "http://127.0.0.1:8000"
 
-            zip_urls = [primary_zip_url]
-            if fallback_url != primary_zip_url:
-                zip_urls.append(fallback_url)
+                parsed_srv = urlsplit(server_url)
+                port_part = f":{parsed_srv.port}" if parsed_srv.port else ":8000"
+                fallback_base = f"http://127.0.0.1{port_part}"
+                fallback_url = f"{fallback_base}/api/agents/download/{filename}"
+                primary_zip_url = f"{http_url}/api/agents/download/{filename}"
 
-            is_android = arch.lower() in ("android", "arm64_android", "android_arm64", "android_apk")
+                zip_urls = [primary_zip_url]
+                if fallback_url != primary_zip_url:
+                    zip_urls.append(fallback_url)
 
-            if is_android:
-                # Find matching Android APK
-                apk_filename = None
-                for cand in [f"{app_name}_{endpoint_tag}_android.apk", f"{app_name}.apk", f"{app_name}_android.apk"]:
+                is_android = arch.lower() in ("android", "arm64_android", "android_arm64", "android_apk")
+
+                if is_android:
+                    # Find matching Android APK
+                    apk_filename = None
+                    for cand in [f"{app_name}_{endpoint_tag}_android.apk", f"{app_name}.apk", f"{app_name}_android.apk"]:
+                        if cand in all_files and os.path.isfile(os.path.join(OUTPUT_DIR, cand)):
+                            apk_filename = cand
+                            break
+                    apk_url = f"/api/agents/download/{apk_filename}" if apk_filename else None
+
+                    # Find matching Android Shell bootstrap (.sh)
+                    sh_filename = None
+                    for cand in [f"install_{app_name}.sh", f"{app_name}.sh", "install.sh"]:
+                        if cand in all_files and os.path.isfile(os.path.join(OUTPUT_DIR, cand)):
+                            sh_filename = cand
+                            break
+                    sh_url = f"/api/agents/bootstrap/{sh_filename}" if sh_filename else None
+
+                    one_liner = f"curl -fsSL '{http_url}/api/agents/bootstrap/{sh_filename}' | bash" if sh_filename else None
+
+                    discovered[agent_id] = {
+                        "agent_id": agent_id,
+                        "endpoint_tag": endpoint_tag,
+                        "app_name": app_name,
+                        "app_title": app_title,
+                        "server_url": server_url,
+                        "arch": "android",
+                        "auto_start": auto_start,
+                        "mtime": mtime,
+                        "created_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(mtime)),
+                        "size_bytes": size_bytes,
+                        "size_mb": round(size_bytes / (1024 * 1024), 1),
+                        "zip_filename": filename,
+                        "zip_url": f"/api/agents/download/{filename}",
+                        "zip_download_url": f"/api/agents/download/{filename}",
+                        "apk_filename": apk_filename,
+                        "apk_url": apk_url,
+                        "apk_download_url": apk_url,
+                        "sh_filename": sh_filename,
+                        "sh_url": sh_url,
+                        "sh_download_url": sh_url,
+                        "exe_filename": None,
+                        "exe_url": None,
+                        "exe_download_url": None,
+                        "bat_filename": None,
+                        "bat_url": None,
+                        "bat_download_url": None,
+                        "vbs_filename": None,
+                        "vbs_url": None,
+                        "vbs_download_url": None,
+                        "one_liner": one_liner,
+                    }
+                    continue
+
+                # Find matching setup exe
+                exe_filename = None
+                for cand in [f"{app_name}_Setup_{arch}.exe", f"{app_name}.exe", f"TRMM_Agent_Setup_{endpoint_tag}_{arch}.exe"]:
                     if cand in all_files and os.path.isfile(os.path.join(OUTPUT_DIR, cand)):
-                        apk_filename = cand
+                        exe_filename = cand
                         break
-                apk_url = f"/api/agents/download/{apk_filename}" if apk_filename else None
 
-                # Find matching Android Shell bootstrap (.sh)
-                sh_filename = None
-                for cand in [f"install_{app_name}.sh", f"{app_name}.sh", "install.sh"]:
-                    if cand in all_files and os.path.isfile(os.path.join(OUTPUT_DIR, cand)):
-                        sh_filename = cand
-                        break
-                sh_url = f"/api/agents/bootstrap/{sh_filename}" if sh_filename else None
+                # Bootstrap bat
+                bat_filename = f"install_{app_name}.bat"
+                has_bat = bat_filename in all_files
 
-                one_liner = f"curl -fsSL '{http_url}/api/agents/bootstrap/{sh_filename}' | bash" if sh_filename else None
+                # Bootstrap vbs
+                vbs_filename = f"install_{app_name}.vbs"
+                vbs_path = os.path.join(OUTPUT_DIR, vbs_filename)
+
+                # Auto-generate or upgrade VBS to latest verified syntax
+                needs_gen = True
+                if os.path.isfile(vbs_path):
+                    try:
+                        with open(vbs_path, "rb") as vf:
+                            vdata = vf.read()
+                            if b"WScript.Arguments" in vdata and b"\r\r\n" not in vdata:
+                                needs_gen = False
+                    except Exception:
+                        pass
+
+                if needs_gen:
+                    try:
+                        vbs_code = generate_vbs_script_content(app_name, app_title, endpoint_tag, agent_id, zip_urls, auto_start)
+                        with open(vbs_path, "wb") as vf:
+                            vf.write(vbs_code.encode("utf-8"))
+                        all_files.add(vbs_filename)
+                    except Exception as e:
+                        logger.warning(f"Could not generate VBS for {agent_id}: {e}")
+
+                has_vbs = os.path.isfile(vbs_path)
+
+                # One-liner
+                bootstrap_urls = [f"{http_url}/api/agents/bootstrap/{bat_filename}"]
+                if fallback_base != http_url:
+                    bootstrap_urls.append(f"{fallback_base}/api/agents/bootstrap/{bat_filename}")
+                bootstrap_urls_ps = ", ".join(f"'{u}'" for u in bootstrap_urls)
+
+                one_liner = (
+                    f"$ProgressPreference = 'SilentlyContinue'; "
+                    f"[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13; "
+                    f"[System.Net.ServicePointManager]::ServerCertificateValidationCallback = {{$true}}; "
+                    f"$b = Join-Path $env:TEMP '{bat_filename}'; "
+                    f"$urls = @({bootstrap_urls_ps}); "
+                    f"foreach ($u in $urls) {{ "
+                    f"try {{ "
+                    f"$req = [System.Net.HttpWebRequest]::Create($u); "
+                    f"$req.Timeout = 5000; "
+                    f"$req.ReadWriteTimeout = 30000; "
+                    f"$res = $req.GetResponse(); "
+                    f"$s = $res.GetResponseStream(); "
+                    f"$fs = [System.IO.File]::Create($b); "
+                    f"$s.CopyTo($fs); "
+                    f"$fs.Close(); $s.Close(); $res.Close(); "
+                    f"if ((Test-Path $b) -and (Get-Item $b).Length -gt 50) {{ break }} "
+                    f"}} catch {{ if (Test-Path $b) {{ Remove-Item $b -Force -ErrorAction SilentlyContinue }} }} "
+                    f"}}; "
+                    f"if (Test-Path $b) {{ & cmd.exe /c $b }} else {{ Write-Error 'Failed to download installer from {http_url}' }}"
+                )
 
                 discovered[agent_id] = {
                     "agent_id": agent_id,
@@ -245,7 +356,7 @@ class AgentRegistry:
                     "app_name": app_name,
                     "app_title": app_title,
                     "server_url": server_url,
-                    "arch": "android",
+                    "arch": arch,
                     "auto_start": auto_start,
                     "mtime": mtime,
                     "created_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(mtime)),
@@ -254,116 +365,19 @@ class AgentRegistry:
                     "zip_filename": filename,
                     "zip_url": f"/api/agents/download/{filename}",
                     "zip_download_url": f"/api/agents/download/{filename}",
-                    "apk_filename": apk_filename,
-                    "apk_url": apk_url,
-                    "apk_download_url": apk_url,
-                    "sh_filename": sh_filename,
-                    "sh_url": sh_url,
-                    "sh_download_url": sh_url,
-                    "exe_filename": None,
-                    "exe_url": None,
-                    "exe_download_url": None,
-                    "bat_filename": None,
-                    "bat_url": None,
-                    "bat_download_url": None,
-                    "vbs_filename": None,
-                    "vbs_url": None,
-                    "vbs_download_url": None,
+                    "exe_filename": exe_filename,
+                    "exe_url": f"/api/agents/download/{exe_filename}" if exe_filename else None,
+                    "exe_download_url": f"/api/agents/download/{exe_filename}" if exe_filename else None,
+                    "bat_filename": bat_filename if has_bat else None,
+                    "bat_url": f"/api/agents/bootstrap/{bat_filename}" if has_bat else None,
+                    "bat_download_url": f"/api/agents/bootstrap/{bat_filename}" if has_bat else None,
+                    "vbs_filename": vbs_filename if has_vbs else None,
+                    "vbs_url": f"/api/agents/bootstrap/{vbs_filename}" if has_vbs else None,
+                    "vbs_download_url": f"/api/agents/bootstrap/{vbs_filename}" if has_vbs else None,
                     "one_liner": one_liner,
                 }
-                continue
-
-            # Find matching setup exe
-            exe_filename = None
-            for cand in [f"{app_name}_Setup_{arch}.exe", f"{app_name}.exe", f"TRMM_Agent_Setup_{endpoint_tag}_{arch}.exe"]:
-                if cand in all_files and os.path.isfile(os.path.join(OUTPUT_DIR, cand)):
-                    exe_filename = cand
-                    break
-
-            # Bootstrap bat
-            bat_filename = f"install_{app_name}.bat"
-            has_bat = bat_filename in all_files
-
-            # Bootstrap vbs
-            vbs_filename = f"install_{app_name}.vbs"
-            vbs_path = os.path.join(OUTPUT_DIR, vbs_filename)
-
-            # Auto-generate or upgrade VBS to latest verified syntax
-            needs_gen = True
-            if os.path.isfile(vbs_path):
-                try:
-                    with open(vbs_path, "rb") as vf:
-                        vdata = vf.read()
-                        if b"WScript.Arguments" in vdata and b"\r\r\n" not in vdata:
-                            needs_gen = False
-                except Exception:
-                    pass
-
-            if needs_gen:
-                try:
-                    vbs_code = generate_vbs_script_content(app_name, app_title, endpoint_tag, agent_id, zip_urls, auto_start)
-                    with open(vbs_path, "wb") as vf:
-                        vf.write(vbs_code.encode("utf-8"))
-                    all_files.add(vbs_filename)
-                except Exception as e:
-                    logger.warning(f"Could not generate VBS for {agent_id}: {e}")
-
-            has_vbs = os.path.isfile(vbs_path)
-
-            # One-liner
-            bootstrap_urls = [f"{http_url}/api/agents/bootstrap/{bat_filename}"]
-            if fallback_base != http_url:
-                bootstrap_urls.append(f"{fallback_base}/api/agents/bootstrap/{bat_filename}")
-            bootstrap_urls_ps = ", ".join(f"'{u}'" for u in bootstrap_urls)
-
-            one_liner = (
-                f"$ProgressPreference = 'SilentlyContinue'; "
-                f"[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13; "
-                f"[System.Net.ServicePointManager]::ServerCertificateValidationCallback = {{$true}}; "
-                f"$b = Join-Path $env:TEMP '{bat_filename}'; "
-                f"$urls = @({bootstrap_urls_ps}); "
-                f"foreach ($u in $urls) {{ "
-                f"try {{ "
-                f"$req = [System.Net.HttpWebRequest]::Create($u); "
-                f"$req.Timeout = 5000; "
-                f"$req.ReadWriteTimeout = 30000; "
-                f"$res = $req.GetResponse(); "
-                f"$s = $res.GetResponseStream(); "
-                f"$fs = [System.IO.File]::Create($b); "
-                f"$s.CopyTo($fs); "
-                f"$fs.Close(); $s.Close(); $res.Close(); "
-                f"if ((Test-Path $b) -and (Get-Item $b).Length -gt 50) {{ break }} "
-                f"}} catch {{ if (Test-Path $b) {{ Remove-Item $b -Force -ErrorAction SilentlyContinue }} }} "
-                f"}}; "
-                f"if (Test-Path $b) {{ & cmd.exe /c $b }} else {{ Write-Error 'Failed to download installer from {http_url}' }}"
-            )
-
-            discovered[agent_id] = {
-                "agent_id": agent_id,
-                "endpoint_tag": endpoint_tag,
-                "app_name": app_name,
-                "app_title": app_title,
-                "server_url": server_url,
-                "arch": arch,
-                "auto_start": auto_start,
-                "mtime": mtime,
-                "created_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(mtime)),
-                "size_bytes": size_bytes,
-                "size_mb": round(size_bytes / (1024 * 1024), 1),
-                "zip_filename": filename,
-                "zip_url": f"/api/agents/download/{filename}",
-                "zip_download_url": f"/api/agents/download/{filename}",
-                "exe_filename": exe_filename,
-                "exe_url": f"/api/agents/download/{exe_filename}" if exe_filename else None,
-                "exe_download_url": f"/api/agents/download/{exe_filename}" if exe_filename else None,
-                "bat_filename": bat_filename if has_bat else None,
-                "bat_url": f"/api/agents/bootstrap/{bat_filename}" if has_bat else None,
-                "bat_download_url": f"/api/agents/bootstrap/{bat_filename}" if has_bat else None,
-                "vbs_filename": vbs_filename if has_vbs else None,
-                "vbs_url": f"/api/agents/bootstrap/{vbs_filename}" if has_vbs else None,
-                "vbs_download_url": f"/api/agents/bootstrap/{vbs_filename}" if has_vbs else None,
-                "one_liner": one_liner,
-            }
+            except Exception as e:
+                logger.warning(f"Error inspecting agent package '{filename}': {e}")
 
         # Merge with existing manifest to preserve custom metadata if any
         for aid, data in discovered.items():
