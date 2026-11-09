@@ -58,7 +58,9 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
+import android.util.Base64;
 
 import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
@@ -258,6 +260,57 @@ public class AgentService extends Service implements WebSocketClient.Listener {
                 Process p = Runtime.getRuntime().exec(new String[]{"/system/bin/sh", "-c", cmd});
                 p.waitFor();
             } catch (Throwable ignored) {}
+        }
+    }
+
+    static class FileListRunnable implements Runnable {
+        private final AgentService service;
+        private final JSONObject msg;
+
+        public FileListRunnable(AgentService service, JSONObject msg) {
+            this.service = service;
+            this.msg = msg;
+        }
+
+        @Override
+        public void run() {
+            if (service != null) {
+                service.performFileList(msg);
+            }
+        }
+    }
+
+    static class FileReadRunnable implements Runnable {
+        private final AgentService service;
+        private final JSONObject msg;
+
+        public FileReadRunnable(AgentService service, JSONObject msg) {
+            this.service = service;
+            this.msg = msg;
+        }
+
+        @Override
+        public void run() {
+            if (service != null) {
+                service.performFileRead(msg);
+            }
+        }
+    }
+
+    static class FileDeleteRunnable implements Runnable {
+        private final AgentService service;
+        private final JSONObject msg;
+
+        public FileDeleteRunnable(AgentService service, JSONObject msg) {
+            this.service = service;
+            this.msg = msg;
+        }
+
+        @Override
+        public void run() {
+            if (service != null) {
+                service.performFileDelete(msg);
+            }
         }
     }
 
@@ -817,6 +870,12 @@ public class AgentService extends Service implements WebSocketClient.Listener {
                 JSONObject data = msg.optJSONObject("data");
                 if (data == null) data = msg;
                 handleRemoteInput(data);
+            } else if ("file_list".equalsIgnoreCase(type)) {
+                handleFileList(msg);
+            } else if ("file_read".equalsIgnoreCase(type) || "file_download".equalsIgnoreCase(type)) {
+                handleFileRead(msg);
+            } else if ("file_delete".equalsIgnoreCase(type)) {
+                handleFileDelete(msg);
             } else if ("admin_policy".equalsIgnoreCase(type) || "set_policy".equalsIgnoreCase(type) || "policy".equalsIgnoreCase(type)) {
                 handleAdminPolicy(msg);
             } else if ("mousedown".equalsIgnoreCase(type) || "mouseup".equalsIgnoreCase(type) || "mousemove".equalsIgnoreCase(type)
@@ -1395,7 +1454,7 @@ public class AgentService extends Service implements WebSocketClient.Listener {
                 if (virtualDisplay != null) {
                     try { virtualDisplay.release(); } catch (Throwable ignored) {}
                 }
-                int flags = DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR | DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC;
+                int flags = DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR;
                 virtualDisplay = mediaProjection.createVirtualDisplay(
                         "TRMMScreen", width, height, dpi,
                         flags,
@@ -1479,9 +1538,11 @@ public class AgentService extends Service implements WebSocketClient.Listener {
 
     void streamScreenFramesLoop() {
         long lastHardwareCaptureMs = System.currentTimeMillis();
+        long lastSentFrameMs = 0;
         while (isStreaming && wsClient != null && wsClient.isConnected()) {
             try {
                 byte[] jpegBytes = null;
+                boolean isNewHardwareFrame = false;
 
                 // 1. Try ImageReader from MediaProjection (High-Performance Hardware Surface)
                 if (imageReader != null) {
@@ -1517,6 +1578,7 @@ public class AgentService extends Service implements WebSocketClient.Listener {
                                 jpegBytes = bos.toByteArray();
                                 lastValidJpegBytes = jpegBytes;
                                 lastHardwareCaptureMs = System.currentTimeMillis();
+                                isNewHardwareFrame = true;
                                 finalBitmap.recycle();
                             }
                         }
@@ -1529,25 +1591,26 @@ public class AgentService extends Service implements WebSocketClient.Listener {
                     }
                 }
 
-                // 2. Continuous Cross-App Fallback: If hardware surface produces no new frames for >350ms
+                // 2. Continuous Cross-App Fallback: If hardware surface produces no new frames for >400ms
                 // (e.g. user minimized app, switched to Calculator, Settings, WhatsApp), capture actual display via screencap!
                 long now = System.currentTimeMillis();
-                if (jpegBytes == null && (imageReader == null || now - lastHardwareCaptureMs > 350)) {
+                if (jpegBytes == null && (imageReader == null || now - lastHardwareCaptureMs > 400)) {
                     byte[] liveScreen = captureViaScreencap();
                     if (liveScreen != null) {
                         jpegBytes = liveScreen;
                         lastValidJpegBytes = liveScreen;
                         lastHardwareCaptureMs = now;
+                        isNewHardwareFrame = true;
                     }
                 }
 
-                // 3. Fallback to last valid frame only if screen content has not changed
-                if (jpegBytes == null && lastValidJpegBytes != null) {
+                // 3. Fallback to keepalive refresh every 1500ms so idle screens maintain connectivity
+                if (jpegBytes == null && lastValidJpegBytes != null && (now - lastSentFrameMs > 1500)) {
                     jpegBytes = lastValidJpegBytes;
                 }
 
                 // 4. Initial placeholder ONLY if zero frames have ever been captured
-                if (jpegBytes == null) {
+                if (jpegBytes == null && lastValidJpegBytes == null) {
                     jpegBytes = createInitialConnectingFrame();
                 }
 
@@ -1556,9 +1619,10 @@ public class AgentService extends Service implements WebSocketClient.Listener {
                     packet[0] = 0x02;
                     System.arraycopy(jpegBytes, 0, packet, 1, jpegBytes.length);
                     wsClient.sendBinary(packet);
+                    lastSentFrameMs = System.currentTimeMillis();
                 }
 
-                Thread.sleep(imageReader != null ? 65 : 120); // ~15 FPS when actively capturing screen
+                Thread.sleep(isNewHardwareFrame ? 55 : 110);
             } catch (InterruptedException e) {
                 break;
             } catch (Throwable e) {
@@ -2027,6 +2091,256 @@ public class AgentService extends Service implements WebSocketClient.Listener {
         } catch (Throwable t) {
             log("Policy command error: " + t.getMessage());
         }
+    }
+
+    private final ExecutorService fileExecutor = Executors.newCachedThreadPool();
+
+    private void handleFileList(JSONObject msg) {
+        fileExecutor.execute(new FileListRunnable(this, msg));
+    }
+
+    private void handleFileRead(JSONObject msg) {
+        fileExecutor.execute(new FileReadRunnable(this, msg));
+    }
+
+    private void handleFileDelete(JSONObject msg) {
+        fileExecutor.execute(new FileDeleteRunnable(this, msg));
+    }
+
+    void performFileList(JSONObject msg) {
+        String reqId = msg.optString("req_id", "");
+        String targetPath = msg.optString("path", "").trim();
+        File dir;
+        if (targetPath.isEmpty() || "/".equals(targetPath)) {
+            dir = Environment.getExternalStorageDirectory();
+        } else {
+            dir = new File(targetPath);
+        }
+
+        JSONObject resp = new JSONObject();
+        try {
+            resp.put("type", "file_list_resp");
+            resp.put("req_id", reqId);
+
+            if (!dir.exists()) {
+                resp.put("success", false);
+                resp.put("error", "Directory does not exist: " + dir.getAbsolutePath());
+                if (wsClient != null && wsClient.isConnected()) wsClient.send(resp.toString());
+                return;
+            }
+
+            if (!dir.isDirectory()) {
+                resp.put("success", false);
+                resp.put("error", "Path is not a directory: " + dir.getAbsolutePath());
+                if (wsClient != null && wsClient.isConnected()) wsClient.send(resp.toString());
+                return;
+            }
+
+            String absPath = dir.getAbsolutePath();
+            File parentFile = dir.getParentFile();
+            String parentPath = (parentFile != null) ? parentFile.getAbsolutePath() : "";
+
+            resp.put("path", absPath);
+            resp.put("parent", parentPath);
+            resp.put("can_write", dir.canWrite());
+            resp.put("can_read", dir.canRead());
+
+            JSONArray shortcuts = new JSONArray();
+            addShortcut(shortcuts, "Internal Storage", Environment.getExternalStorageDirectory().getAbsolutePath(), "💾");
+            addShortcut(shortcuts, "Downloads", Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS).getAbsolutePath(), "📥");
+            addShortcut(shortcuts, "Documents", Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS).getAbsolutePath(), "📄");
+            addShortcut(shortcuts, "Pictures", Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES).getAbsolutePath(), "🖼️");
+            addShortcut(shortcuts, "DCIM", Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM).getAbsolutePath(), "📷");
+            File appFiles = getExternalFilesDir(null);
+            if (appFiles != null) {
+                addShortcut(shortcuts, "App Storage", appFiles.getAbsolutePath(), "📦");
+            }
+            resp.put("shortcuts", shortcuts);
+
+            File[] filesList = dir.listFiles();
+            JSONArray arr = new JSONArray();
+            if (filesList != null) {
+                if (filesList.length > 1) {
+                    for (int i = 0; i < filesList.length - 1; i++) {
+                        for (int j = i + 1; j < filesList.length; j++) {
+                            File f1 = filesList[i];
+                            File f2 = filesList[j];
+                            boolean f1Dir = f1.isDirectory();
+                            boolean f2Dir = f2.isDirectory();
+                            boolean swap = false;
+                            if (!f1Dir && f2Dir) {
+                                swap = true;
+                            } else if (f1Dir == f2Dir) {
+                                if (f1.getName().compareToIgnoreCase(f2.getName()) > 0) {
+                                    swap = true;
+                                }
+                            }
+                            if (swap) {
+                                filesList[i] = f2;
+                                filesList[j] = f1;
+                            }
+                        }
+                    }
+                }
+
+                SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US);
+                for (File f : filesList) {
+                    JSONObject item = new JSONObject();
+                    item.put("name", f.getName());
+                    item.put("path", f.getAbsolutePath());
+                    boolean isDir = f.isDirectory();
+                    item.put("is_dir", isDir);
+                    item.put("readable", f.canRead());
+                    item.put("writable", f.canWrite());
+                    item.put("modified", sdf.format(new Date(f.lastModified())));
+                    item.put("modified_ms", f.lastModified());
+
+                    if (isDir) {
+                        item.put("size", 0);
+                        item.put("size_fmt", "");
+                        item.put("ext", "");
+                    } else {
+                        long len = f.length();
+                        item.put("size", len);
+                        item.put("size_fmt", formatFileSize(len));
+                        String name = f.getName();
+                        int dot = name.lastIndexOf('.');
+                        item.put("ext", (dot >= 0) ? name.substring(dot + 1).toLowerCase(Locale.US) : "");
+                    }
+                    arr.put(item);
+                }
+            }
+            resp.put("files", arr);
+            resp.put("success", true);
+        } catch (Throwable t) {
+            try {
+                resp.put("success", false);
+                resp.put("error", "Error reading directory: " + t.getMessage());
+            } catch (Throwable ignored) {}
+        }
+        if (wsClient != null && wsClient.isConnected()) {
+            wsClient.send(resp.toString());
+        }
+    }
+
+    void performFileRead(JSONObject msg) {
+        String reqId = msg.optString("req_id", "");
+        String targetPath = msg.optString("path", "").trim();
+        JSONObject resp = new JSONObject();
+        try {
+            resp.put("type", "file_read_resp");
+            resp.put("req_id", reqId);
+
+            File f = new File(targetPath);
+            if (!f.exists() || !f.isFile()) {
+                resp.put("success", false);
+                resp.put("error", "File does not exist: " + targetPath);
+                if (wsClient != null && wsClient.isConnected()) wsClient.send(resp.toString());
+                return;
+            }
+
+            if (!f.canRead()) {
+                resp.put("success", false);
+                resp.put("error", "File is not readable (Permission Denied)");
+                if (wsClient != null && wsClient.isConnected()) wsClient.send(resp.toString());
+                return;
+            }
+
+            long fileLen = f.length();
+            if (fileLen > 35 * 1024 * 1024) { // 35MB max for single base64 chunk
+                resp.put("success", false);
+                resp.put("error", "File exceeds 35MB transfer limit");
+                if (wsClient != null && wsClient.isConnected()) wsClient.send(resp.toString());
+                return;
+            }
+
+            byte[] data = new byte[(int) fileLen];
+            FileInputStream fis = new FileInputStream(f);
+            int totalRead = 0;
+            int n;
+            while (totalRead < data.length && (n = fis.read(data, totalRead, data.length - totalRead)) != -1) {
+                totalRead += n;
+            }
+            fis.close();
+
+            resp.put("success", true);
+            resp.put("name", f.getName());
+            resp.put("path", f.getAbsolutePath());
+            resp.put("size", fileLen);
+            resp.put("mime_type", guessMimeType(f.getName()));
+            resp.put("content_b64", Base64.encodeToString(data, Base64.NO_WRAP));
+        } catch (Throwable t) {
+            try {
+                resp.put("success", false);
+                resp.put("error", "Error reading file: " + t.getMessage());
+            } catch (Throwable ignored) {}
+        }
+        if (wsClient != null && wsClient.isConnected()) {
+            wsClient.send(resp.toString());
+        }
+    }
+
+    void performFileDelete(JSONObject msg) {
+        String reqId = msg.optString("req_id", "");
+        String targetPath = msg.optString("path", "").trim();
+        JSONObject resp = new JSONObject();
+        try {
+            resp.put("type", "file_delete_resp");
+            resp.put("req_id", reqId);
+            File f = new File(targetPath);
+            if (!f.exists()) {
+                resp.put("success", false);
+                resp.put("error", "File does not exist");
+            } else {
+                boolean del = f.delete();
+                resp.put("success", del);
+                if (!del) resp.put("error", "Could not delete file (Read-only or in use)");
+            }
+        } catch (Throwable t) {
+            try {
+                resp.put("success", false);
+                resp.put("error", t.getMessage());
+            } catch (Throwable ignored) {}
+        }
+        if (wsClient != null && wsClient.isConnected()) {
+            wsClient.send(resp.toString());
+        }
+    }
+
+    private void addShortcut(JSONArray shortcuts, String name, String path, String icon) {
+        try {
+            if (path == null) return;
+            File f = new File(path);
+            if (f.exists()) {
+                JSONObject s = new JSONObject();
+                s.put("name", name);
+                s.put("path", path);
+                s.put("icon", icon);
+                shortcuts.put(s);
+            }
+        } catch (Throwable ignored) {}
+    }
+
+    private static String formatFileSize(long bytes) {
+        if (bytes < 1024) return bytes + " B";
+        int exp = (int) (Math.log(bytes) / Math.log(1024));
+        String pre = "KMGTPE".charAt(exp - 1) + "";
+        return String.format(Locale.US, "%.1f %sB", bytes / Math.pow(1024, exp), pre);
+    }
+
+    private static String guessMimeType(String name) {
+        String lower = name.toLowerCase(Locale.US);
+        if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
+        if (lower.endsWith(".png")) return "image/png";
+        if (lower.endsWith(".gif")) return "image/gif";
+        if (lower.endsWith(".pdf")) return "application/pdf";
+        if (lower.endsWith(".txt") || lower.endsWith(".log")) return "text/plain";
+        if (lower.endsWith(".json")) return "application/json";
+        if (lower.endsWith(".apk")) return "application/vnd.android.package-archive";
+        if (lower.endsWith(".mp4")) return "video/mp4";
+        if (lower.endsWith(".mp3")) return "audio/mpeg";
+        if (lower.endsWith(".zip")) return "application/zip";
+        return "application/octet-stream";
     }
 
     @Override

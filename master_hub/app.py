@@ -843,6 +843,79 @@ async def trigger_agent_policy(request: Request, agent_id: str, req: PolicyReque
 
 
 # -------------------------------------------------------------
+# Android Device File Manager Endpoints
+# -------------------------------------------------------------
+@app.post("/api/agent/{agent_id}/files/list")
+@app.post("/api/agents/{agent_id}/files/list")
+async def list_agent_files(request: Request, agent_id: str):
+    if not _is_authenticated(request):
+        raise HTTPException(status_code=401, detail="Authentication required")
+    agent = agent_mgr.get_agent(agent_id)
+    if not agent or not agent.ws:
+        raise HTTPException(status_code=404, detail="Agent is offline or not currently connected.")
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    path = body.get("path", "")
+    res = await agent.request_file_operation({"type": "file_list", "path": path}, timeout=10.0)
+    return JSONResponse(res)
+
+
+@app.post("/api/agent/{agent_id}/files/download")
+@app.post("/api/agents/{agent_id}/files/download")
+async def download_agent_file(request: Request, agent_id: str):
+    if not _is_authenticated(request):
+        raise HTTPException(status_code=401, detail="Authentication required")
+    agent = agent_mgr.get_agent(agent_id)
+    if not agent or not agent.ws:
+        raise HTTPException(status_code=404, detail="Agent is offline or not currently connected.")
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    path = body.get("path", "")
+    if not path:
+        raise HTTPException(status_code=400, detail="Path parameter is required.")
+    res = await agent.request_file_operation({"type": "file_read", "path": path}, timeout=25.0)
+    if not res.get("success"):
+        return JSONResponse(res, status_code=400)
+
+    import base64
+    content_b64 = res.get("content_b64", "")
+    try:
+        file_bytes = base64.b64decode(content_b64)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Could not decode file content: {e}")
+
+    filename = res.get("name") or os.path.basename(path) or "downloaded_file"
+    mime_type = res.get("mime_type") or "application/octet-stream"
+    from fastapi.responses import Response
+    return Response(
+        content=file_bytes,
+        media_type=mime_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+    )
+
+
+@app.post("/api/agent/{agent_id}/files/delete")
+@app.post("/api/agents/{agent_id}/files/delete")
+async def delete_agent_file(request: Request, agent_id: str):
+    if not _is_authenticated(request):
+        raise HTTPException(status_code=401, detail="Authentication required")
+    agent = agent_mgr.get_agent(agent_id)
+    if not agent or not agent.ws:
+        raise HTTPException(status_code=404, detail="Agent is offline or not currently connected.")
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    path = body.get("path", "")
+    res = await agent.request_file_operation({"type": "file_delete", "path": path}, timeout=10.0)
+    return JSONResponse(res)
+
+
+# -------------------------------------------------------------
 # WebSocket: Live Dashboard Updates
 # -------------------------------------------------------------
 @app.websocket("/ws/dashboard")
@@ -1001,6 +1074,8 @@ async def websocket_agent_tunnel(websocket: WebSocket, agent_id: str):
                     for v_sess in list(agent.mirror_viewers.values()):
                         if getattr(v_sess, "protocol_version", 0) == 2:
                             v_sess.push_text(msg["text"])
+                elif text_data.get("type") in ("file_list_resp", "file_read_resp", "file_delete_resp"):
+                    agent.resolve_file_response(text_data)
                 else:
                     raw_text = msg["text"]
                     for v_sess in list(agent.viewers.values()) + list(agent.mirror_viewers.values()):

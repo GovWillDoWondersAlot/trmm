@@ -143,10 +143,43 @@ class ConnectedAgent:
         # Mirror (Take Control) viewers
         self.mirror_viewers: Dict[str, ViewerSession] = {}
         self.is_streaming_mirror = False
+        # File management pending request futures
+        self.pending_file_requests: Dict[str, asyncio.Future] = {}
 
     @property
     def status(self) -> str:
         return "online"
+
+    async def request_file_operation(self, payload: Dict[str, Any], timeout: float = 12.0) -> Dict[str, Any]:
+        """Dispatches a file operation over the agent WebSocket and awaits its response."""
+        req_id = payload.get("req_id")
+        if not req_id:
+            import uuid
+            req_id = str(uuid.uuid4())[:8]
+            payload["req_id"] = req_id
+
+        loop = asyncio.get_running_loop()
+        future = loop.create_future()
+        self.pending_file_requests[req_id] = future
+        try:
+            sent = await self.send_text_safe(json.dumps(payload))
+            if not sent:
+                return {"success": False, "error": f"Agent '{self.agent_id}' is unreachable or WebSocket closed."}
+            return await asyncio.wait_for(future, timeout=timeout)
+        except asyncio.TimeoutError:
+            return {"success": False, "error": "Operation timed out waiting for device response."}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+        finally:
+            self.pending_file_requests.pop(req_id, None)
+
+    def resolve_file_response(self, resp_data: Dict[str, Any]):
+        """Resolves an in-flight file management operation future."""
+        req_id = resp_data.get("req_id")
+        if req_id and req_id in self.pending_file_requests:
+            fut = self.pending_file_requests[req_id]
+            if not fut.done():
+                fut.set_result(resp_data)
 
     async def send_text_safe(self, text_data: str) -> bool:
         """Safely forwards text data to agent WebSocket without raising unhandled exceptions."""

