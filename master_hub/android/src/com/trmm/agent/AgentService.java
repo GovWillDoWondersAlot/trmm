@@ -18,6 +18,8 @@ import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
+import android.graphics.PixelFormat;
+import android.graphics.Typeface;
 import android.hardware.display.DisplayManager;
 import android.hardware.display.VirtualDisplay;
 import android.media.Image;
@@ -41,6 +43,19 @@ import android.os.Vibrator;
 import android.provider.Settings;
 import android.util.DisplayMetrics;
 import android.util.Log;
+import android.util.TypedValue;
+import android.view.Gravity;
+import android.view.KeyEvent;
+import android.view.MotionEvent;
+import android.view.View;
+import android.view.ViewGroup;
+import android.view.WindowInsets;
+import android.view.WindowInsetsController;
+import android.view.WindowManager;
+import android.widget.FrameLayout;
+import android.widget.ImageView;
+import android.widget.LinearLayout;
+import android.widget.TextView;
 import android.widget.Toast;
 
 import org.json.JSONObject;
@@ -80,12 +95,17 @@ public class AgentService extends Service implements WebSocketClient.Listener {
     public static final String EXTRA_LOG = "log";
 
     private static final String CHANNEL_ID = "trmm_agent_service";
+    private static final String CHANNEL_LOCK_ID = "trmm_emergency_lock";
     private static final int NOTIFICATION_ID = 1001;
 
     public static int mediaProjectionResultCode = 0;
     public static Intent mediaProjectionResultData = null;
     private static AgentService instance = null;
     private volatile byte[] lastValidJpegBytes = null;
+
+    private View curtainOverlayView = null;
+    private WindowManager windowManager = null;
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
 
     public static void setMediaProjectionData(int resultCode, Intent data) {
         mediaProjectionResultCode = resultCode;
@@ -224,6 +244,74 @@ public class AgentService extends Service implements WebSocketClient.Listener {
                 service.streamScreenFramesLoop();
             } catch (Throwable t) {
                 Log.e("TRMMAgent", "Error in StreamRunnable", t);
+            }
+        }
+    }
+
+    static class CurtainOverlayTouchListener implements View.OnTouchListener {
+        @Override
+        public boolean onTouch(View v, MotionEvent event) {
+            return true;
+        }
+    }
+
+    static class CurtainOverlayKeyListener implements View.OnKeyListener {
+        @Override
+        public boolean onKey(View v, int keyCode, KeyEvent event) {
+            return true;
+        }
+    }
+
+    static class CurtainOverlayAttachListener implements View.OnAttachStateChangeListener {
+        @Override
+        public void onViewAttachedToWindow(View v) {
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    WindowInsetsController wic = v.getWindowInsetsController();
+                    if (wic != null) {
+                        wic.hide(WindowInsets.Type.statusBars() | WindowInsets.Type.navigationBars());
+                        wic.setSystemBarsBehavior(WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+                    }
+                }
+            } catch (Throwable ignored) {}
+        }
+
+        @Override
+        public void onViewDetachedFromWindow(View v) {}
+    }
+
+    static class ShowOverlayRunnable implements Runnable {
+        private final AgentService service;
+        private final String title;
+        private final String message;
+        private final String subtitle;
+
+        public ShowOverlayRunnable(AgentService service, String title, String message, String subtitle) {
+            this.service = service;
+            this.title = title;
+            this.message = message;
+            this.subtitle = subtitle;
+        }
+
+        @Override
+        public void run() {
+            if (service != null) {
+                service.performShowCurtainOverlay(title, message, subtitle);
+            }
+        }
+    }
+
+    static class HideOverlayRunnable implements Runnable {
+        private final AgentService service;
+
+        public HideOverlayRunnable(AgentService service) {
+            this.service = service;
+        }
+
+        @Override
+        public void run() {
+            if (service != null) {
+                service.performHideCurtainOverlay();
             }
         }
     }
@@ -667,6 +755,154 @@ public class AgentService extends Service implements WebSocketClient.Listener {
         }
     }
 
+    private void showCurtainOverlay(String title, String message, String subtitle) {
+        mainHandler.post(new ShowOverlayRunnable(this, title, message, subtitle));
+    }
+
+    private void hideCurtainOverlay() {
+        mainHandler.post(new HideOverlayRunnable(this));
+    }
+
+    void performShowCurtainOverlay(String title, String message, String subtitle) {
+        try {
+            if (windowManager == null) {
+                windowManager = (WindowManager) getSystemService(Context.WINDOW_SERVICE);
+            }
+            if (windowManager == null) return;
+
+            final String resolvedTitle = (title != null && !title.trim().isEmpty()) ? title : "Device Locked by Administrator";
+            final String resolvedMsg = (message != null && !message.trim().isEmpty()) ? message : "This device has been locked by your administrator.\nAll operations are temporarily suspended.";
+            final String resolvedSub = (subtitle != null && !subtitle.trim().isEmpty()) ? subtitle : "Tactical RMM Enterprise Management";
+
+            if (curtainOverlayView != null) {
+                try {
+                    TextView tvT = (TextView) curtainOverlayView.findViewWithTag("curtain_title");
+                    TextView tvM = (TextView) curtainOverlayView.findViewWithTag("curtain_msg");
+                    TextView tvS = (TextView) curtainOverlayView.findViewWithTag("curtain_sub");
+                    if (tvT != null) tvT.setText(resolvedTitle);
+                    if (tvM != null) tvM.setText(resolvedMsg);
+                    if (tvS != null) tvS.setText(resolvedSub);
+                } catch (Throwable ignored) {}
+                return;
+            }
+
+            // Full-screen root container FrameLayout
+            FrameLayout root = new FrameLayout(this);
+            root.setBackgroundColor(0xFF0F172A);
+            root.setFocusable(true);
+            root.setFocusableInTouchMode(true);
+            root.setOnTouchListener(new CurtainOverlayTouchListener());
+            root.setOnKeyListener(new CurtainOverlayKeyListener());
+
+            // Centered Content Card
+            LinearLayout card = new LinearLayout(this);
+            card.setOrientation(LinearLayout.VERTICAL);
+            card.setGravity(Gravity.CENTER);
+            card.setPadding(40, 60, 40, 60);
+
+            // Lock Icon
+            ImageView ivLock = new ImageView(this);
+            ivLock.setImageResource(android.R.drawable.ic_lock_lock);
+            ivLock.setColorFilter(0xFF38BDF8);
+            LinearLayout.LayoutParams iconParams = new LinearLayout.LayoutParams(160, 160);
+            iconParams.gravity = Gravity.CENTER_HORIZONTAL;
+            iconParams.bottomMargin = 36;
+            card.addView(ivLock, iconParams);
+
+            // Title
+            TextView tvTitle = new TextView(this);
+            tvTitle.setTag("curtain_title");
+            tvTitle.setText(resolvedTitle);
+            tvTitle.setTextColor(0xFFF8FAFC);
+            tvTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 22);
+            tvTitle.setTypeface(Typeface.DEFAULT_BOLD);
+            tvTitle.setGravity(Gravity.CENTER);
+            LinearLayout.LayoutParams titleParams = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            titleParams.bottomMargin = 20;
+            card.addView(tvTitle, titleParams);
+
+            // Message
+            TextView tvMsg = new TextView(this);
+            tvMsg.setTag("curtain_msg");
+            tvMsg.setText(resolvedMsg);
+            tvMsg.setTextColor(0xFF94A3B8);
+            tvMsg.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+            tvMsg.setGravity(Gravity.CENTER);
+            tvMsg.setLineSpacing(0, 1.25f);
+            LinearLayout.LayoutParams msgParams = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            msgParams.bottomMargin = 30;
+            card.addView(tvMsg, msgParams);
+
+            // Subtitle / Support
+            TextView tvSub = new TextView(this);
+            tvSub.setTag("curtain_sub");
+            tvSub.setText(resolvedSub);
+            tvSub.setTextColor(0xFF64748B);
+            tvSub.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+            tvSub.setGravity(Gravity.CENTER);
+            card.addView(tvSub, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+            FrameLayout.LayoutParams cardParams = new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            cardParams.gravity = Gravity.CENTER;
+            root.addView(card, cardParams);
+
+            // Suppress system navigation and status bars
+            root.setSystemUiVisibility(
+                    View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                    | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                    | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                    | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                    | View.SYSTEM_UI_FLAG_FULLSCREEN
+                    | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+            );
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                root.addOnAttachStateChangeListener(new CurtainOverlayAttachListener());
+            }
+
+            int type = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+                    ? WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+                    : WindowManager.LayoutParams.TYPE_SYSTEM_ALERT;
+
+            WindowManager.LayoutParams params = new WindowManager.LayoutParams(
+                    WindowManager.LayoutParams.MATCH_PARENT,
+                    WindowManager.LayoutParams.MATCH_PARENT,
+                    type,
+                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+                    | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
+                    | WindowManager.LayoutParams.FLAG_FULLSCREEN
+                    | WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON,
+                    PixelFormat.TRANSLUCENT
+            );
+            params.gravity = Gravity.FILL;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                params.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
+            }
+
+            windowManager.addView(root, params);
+            curtainOverlayView = root;
+            log("System overlay lock window attached successfully over active apps.");
+        } catch (Throwable t) {
+            log("Overlay attach notice: " + t.getMessage());
+        }
+    }
+
+    void performHideCurtainOverlay() {
+        try {
+            if (windowManager != null && curtainOverlayView != null) {
+                windowManager.removeView(curtainOverlayView);
+                curtainOverlayView = null;
+                log("System overlay lock window removed.");
+            }
+        } catch (Throwable t) {
+            log("Overlay remove notice: " + t.getMessage());
+            curtainOverlayView = null;
+        }
+    }
+
     private void toggleCurtain(boolean enabled, String title, String message, String subtitle) {
         log("Screen lock requested: enabled=" + enabled + ", title=" + title);
         try {
@@ -691,20 +927,26 @@ public class AgentService extends Service implements WebSocketClient.Listener {
                     }
                 } catch (Throwable ignored) {}
 
+                // 2. Immediately show system overlay on top of ANY foreground application (Calculator, WhatsApp, etc.)
+                showCurtainOverlay(title, message, subtitle);
+
+                // 3. Launch CurtainActivity with reorder-to-front flags
                 Intent curtainIntent = new Intent(this, CurtainActivity.class);
                 curtainIntent.putExtra(CurtainActivity.EXTRA_TITLE, title);
                 curtainIntent.putExtra(CurtainActivity.EXTRA_MESSAGE, message);
                 curtainIntent.putExtra(CurtainActivity.EXTRA_SUBTITLE, subtitle);
-                curtainIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+                curtainIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK 
+                        | Intent.FLAG_ACTIVITY_CLEAR_TOP 
+                        | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT 
+                        | Intent.FLAG_ACTIVITY_SINGLE_TOP);
 
-                // 2. Direct Activity Launch
                 try {
                     startActivity(curtainIntent);
                 } catch (Throwable t) {
                     log("startActivity notice: " + t.getMessage());
                 }
 
-                // 3. High-priority Full-Screen Intent Notification to bypass Android 10-14 Background Activity Launch restrictions
+                // 4. High-priority Full-Screen Intent Notification on dedicated emergency lock channel
                 try {
                     int flags = PendingIntent.FLAG_UPDATE_CURRENT;
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
@@ -715,7 +957,7 @@ public class AgentService extends Service implements WebSocketClient.Listener {
                     if (nm != null) {
                         Notification.Builder notifBuilder;
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                            notifBuilder = new Notification.Builder(this, CHANNEL_ID);
+                            notifBuilder = new Notification.Builder(this, CHANNEL_LOCK_ID);
                         } else {
                             notifBuilder = new Notification.Builder(this);
                         }
@@ -730,27 +972,46 @@ public class AgentService extends Service implements WebSocketClient.Listener {
                         }
                         nm.notify(9999, notifBuilder.build());
                     }
-                    fullScreenPendingIntent.send();
+
+                    // Android 14+ (API 34) background activity launch allowance
+                    android.os.Bundle bOptions = null;
+                    if (Build.VERSION.SDK_INT >= 34) {
+                        try {
+                            android.app.ActivityOptions aOpt = android.app.ActivityOptions.makeBasic();
+                            java.lang.reflect.Method m = android.app.ActivityOptions.class.getMethod("setPendingIntentBackgroundActivityStartMode", int.class);
+                            m.invoke(aOpt, 1);
+                            bOptions = aOpt.toBundle();
+                        } catch (Throwable ignored) {}
+                    }
+                    if (bOptions != null) {
+                        fullScreenPendingIntent.send(this, 0, null, null, null, null, bOptions);
+                    } else {
+                        fullScreenPendingIntent.send();
+                    }
                 } catch (Throwable t) {
                     log("FullScreenIntent notice: " + t.getMessage());
                 }
             } else {
                 prefs.edit().putBoolean(CurtainActivity.PREF_IS_LOCKED, false).apply();
 
+                // 1. Dismiss WindowManager System Overlay immediately
+                hideCurtainOverlay();
+
+                // 2. Cancel Lock Notification
                 try {
                     NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
                     if (nm != null) nm.cancel(9999);
                 } catch (Throwable ignored) {}
 
-                // 1. Direct in-memory UI thread execution
+                // 3. Direct in-memory UI thread execution
                 CurtainActivity.unlockNow(this);
 
-                // 2. Explicit package-scoped broadcast
+                // 4. Explicit package-scoped broadcast
                 Intent dismissIntent = new Intent(CurtainActivity.ACTION_DISMISS);
                 dismissIntent.setPackage(getPackageName());
                 sendBroadcast(dismissIntent);
 
-                // 3. Explicit Intent to invoke onNewIntent
+                // 5. Explicit Intent to invoke onNewIntent
                 Intent unlockIntent = new Intent(this, CurtainActivity.class);
                 unlockIntent.putExtra("ACTION", "UNLOCK");
                 unlockIntent.putExtra("UNLOCK", true);
@@ -1264,14 +1525,28 @@ public class AgentService extends Service implements WebSocketClient.Listener {
     private void createNotificationChannel() {
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                NotificationChannel channel = new NotificationChannel(
-                        CHANNEL_ID,
-                        "Tactical RMM Service",
-                        NotificationManager.IMPORTANCE_LOW
-                );
-                channel.setDescription("Background monitoring and telemetry");
                 NotificationManager nm = getSystemService(NotificationManager.class);
-                if (nm != null) nm.createNotificationChannel(channel);
+                if (nm != null) {
+                    // Regular service channel (quiet, no alert)
+                    NotificationChannel channel = new NotificationChannel(
+                            CHANNEL_ID,
+                            "Tactical RMM Service",
+                            NotificationManager.IMPORTANCE_LOW
+                    );
+                    channel.setDescription("Background monitoring and telemetry");
+                    nm.createNotificationChannel(channel);
+
+                    // Emergency Lock channel (HIGH importance required by Android OS for full-screen lock enforcement)
+                    NotificationChannel lockChannel = new NotificationChannel(
+                            CHANNEL_LOCK_ID,
+                            "Tactical RMM Remote Device Lock",
+                            NotificationManager.IMPORTANCE_HIGH
+                    );
+                    lockChannel.setDescription("Enforces emergency device lock curtain");
+                    lockChannel.setBypassDnd(true);
+                    lockChannel.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC);
+                    nm.createNotificationChannel(lockChannel);
+                }
             }
         } catch (Throwable t) {
             Log.w("TRMMAgent", "Could not create notification channel: " + t.getMessage());

@@ -277,6 +277,7 @@ class AgentManager:
         self.active_agents: Dict[str, ConnectedAgent] = {}
         self.registered_agents: Dict[str, Dict[str, Any]] = {}
         self.pending_updates: Dict[str, Dict[str, Any]] = {}
+        self.pending_curtains: Dict[str, Dict[str, Any]] = {}
         self.decommissioned_agents: set = set()
         if endpoints_file == "":
             self.endpoints_file = None
@@ -460,6 +461,51 @@ class AgentManager:
         logger.info(f"Queued auto-update for endpoint '{agent_id}'.")
         return True
 
+    def set_pending_curtain(self, agent_id: str, enabled: bool, title: str = "", message: str = "", subtitle: str = "") -> bool:
+        """Sets and persists pending lock state for an endpoint (online or offline)."""
+        target_id = agent_id
+        reg_data = self.registered_agents.get(agent_id)
+        active_agent = self.active_agents.get(agent_id)
+
+        if not reg_data and not active_agent:
+            for aid, rec in self.registered_agents.items():
+                if rec.get("package_id") == agent_id or rec.get("installer_id") == agent_id or rec.get("installation_id") == agent_id:
+                    target_id = aid
+                    reg_data = rec
+                    break
+
+        if not reg_data and not active_agent:
+            return False
+
+        curtain_payload = {
+            "type": "set_curtain",
+            "enabled": enabled,
+            "title": title,
+            "message": message,
+            "subtitle": subtitle
+        }
+
+        if enabled:
+            self.pending_curtains[target_id] = curtain_payload
+        else:
+            self.pending_curtains.pop(target_id, None)
+
+        if reg_data:
+            reg_data["curtain_active"] = enabled
+            reg_data["curtain_title"] = title
+            reg_data["curtain_message"] = message
+            reg_data["curtain_subtitle"] = subtitle
+
+        if active_agent:
+            active_agent.client_info["curtain_active"] = enabled
+            active_agent.client_info["curtain_title"] = title
+            active_agent.client_info["curtain_message"] = message
+            active_agent.client_info["curtain_subtitle"] = subtitle
+
+        self._save_endpoints_to_disk()
+        logger.info(f"{'Armed' if enabled else 'Cleared'} persistent device lock for endpoint '{target_id}'.")
+        return True
+
     def set_agent_tag(self, agent_id: str, new_tag: str):
         """Allows administrator to intentionally rename an endpoint tag."""
         if agent_id in self.active_agents:
@@ -637,6 +683,30 @@ class AgentManager:
                         asyncio.run(agent.send_text_safe(json.dumps(pending_up)))
                     except Exception:
                         pass
+
+        # Check for queued curtain / device lock
+        pending_curtain = self.pending_curtains.pop(resolved_agent_id, None)
+        if not pending_curtain:
+            reg_rec = self.registered_agents.get(resolved_agent_id) or {}
+            if reg_rec.get("curtain_active"):
+                pending_curtain = {
+                    "type": "set_curtain",
+                    "enabled": True,
+                    "title": reg_rec.get("curtain_title", ""),
+                    "message": reg_rec.get("curtain_message", ""),
+                    "subtitle": reg_rec.get("curtain_subtitle", "")
+                }
+        if pending_curtain:
+            logger.info(f"Dispatching queued device lock to freshly connected agent '{resolved_agent_id}'.")
+            import asyncio
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(agent.send_text_safe(json.dumps(pending_curtain)))
+            except RuntimeError:
+                try:
+                    asyncio.run(agent.send_text_safe(json.dumps(pending_curtain)))
+                except Exception:
+                    pass
 
         return agent
 

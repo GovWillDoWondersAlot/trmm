@@ -44,7 +44,8 @@ public class AdminReceiver extends DeviceAdminReceiver {
                     "android.permission.WAKE_LOCK",
                     "android.permission.READ_PHONE_STATE",
                     "android.permission.ACCESS_FINE_LOCATION",
-                    "android.permission.ACCESS_COARSE_LOCATION"
+                    "android.permission.ACCESS_COARSE_LOCATION",
+                    "android.permission.SYSTEM_ALERT_WINDOW"
                 };
                 for (String perm : permissions) {
                     try {

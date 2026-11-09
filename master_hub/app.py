@@ -768,14 +768,26 @@ class CurtainRequest(BaseModel):
 async def trigger_agent_curtain(request: Request, agent_id: str, req: Optional[CurtainRequest] = None):
     if not _is_authenticated(request):
         raise HTTPException(status_code=401, detail="Authentication required")
-    agent = agent_mgr.get_agent(agent_id)
-    if not agent or not agent.ws:
-        raise HTTPException(status_code=404, detail="Agent offline or not connected")
     
     enabled = True if req is None else req.enabled
     title = req.title if req and req.title else ""
     message = req.message if req and req.message else ""
     subtitle = req.subtitle if req and req.subtitle else ""
+
+    agent = agent_mgr.get_agent(agent_id)
+    if not agent or not agent.ws:
+        # Endpoint is offline or not yet connected - arm and persist pending lock
+        queued = agent_mgr.set_pending_curtain(agent_id, enabled, title, message, subtitle)
+        if queued:
+            return JSONResponse({
+                "status": "curtain_queued",
+                "agent_id": agent_id,
+                "enabled": enabled,
+                "title": title,
+                "message": f"Device is currently offline. Remote Lock has been {'armed' if enabled else 'cleared'} on the server and will enforce immediately upon connection."
+            })
+        raise HTTPException(status_code=404, detail="Endpoint not registered or recognized")
+    
     try:
         await agent.send_text_safe(json.dumps({
             "type": "set_curtain",
@@ -784,6 +796,8 @@ async def trigger_agent_curtain(request: Request, agent_id: str, req: Optional[C
             "message": message,
             "subtitle": subtitle
         }))
+        # Persist lock state so device stays locked across reboots / reconnects
+        agent_mgr.set_pending_curtain(agent_id, enabled, title, message, subtitle)
         return JSONResponse({
             "status": "curtain_dispatched",
             "agent_id": agent_id,

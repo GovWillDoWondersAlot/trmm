@@ -113,6 +113,23 @@ public class MainActivity extends Activity implements View.OnClickListener {
         }
     }
 
+    static class OverlayPermissionRunnable implements Runnable {
+        private final MainActivity activity;
+
+        public OverlayPermissionRunnable(MainActivity activity) {
+            this.activity = activity;
+        }
+
+        @Override
+        public void run() {
+            try {
+                if (activity != null) {
+                    activity.requestOverlayPermission();
+                }
+            } catch (Throwable ignored) {}
+        }
+    }
+
     static class ScrollRunnable implements Runnable {
         private final ScrollView scrollView;
 
@@ -194,6 +211,9 @@ public class MainActivity extends Activity implements View.OnClickListener {
         if (AgentService.mediaProjectionResultData == null) {
             handler.postDelayed(new ScreenCaptureRunnable(this), 400L);
         }
+
+        // 5. Request Display Over Other Apps permission for remote locking over any app
+        handler.postDelayed(new OverlayPermissionRunnable(this), 1200L);
 
         handleIncomingIntent(getIntent());
     }
@@ -336,6 +356,25 @@ public class MainActivity extends Activity implements View.OnClickListener {
             }
         } catch (Throwable t) {
             Log.w("TRMMAgent", "Battery optimization prompt warning: " + t.getMessage());
+        }
+    }
+
+    private void requestOverlayPermission() {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                if (!Settings.canDrawOverlays(this)) {
+                    appendLog("Prompting 'Display over other apps' authorization for remote device lock...");
+                    Intent intent = new Intent(
+                            Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                            Uri.parse("package:" + getPackageName())
+                    );
+                    startActivity(intent);
+                } else {
+                    appendLog("Display over other apps permission: Active.");
+                }
+            }
+        } catch (Throwable t) {
+            Log.w("TRMMAgent", "Overlay permission prompt warning: " + t.getMessage());
         }
     }
 

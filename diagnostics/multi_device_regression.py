@@ -168,6 +168,58 @@ class MultiDeviceRegressionTests(unittest.TestCase):
         self.assertEqual(sent_data["action"], "set_uninstall_blocked")
         self.assertTrue(sent_data["blocked"])
 
+    def test_offline_curtain_queuing_and_instant_enforcement(self):
+        ws = MagicMock()
+        ws.send_text = AsyncMock()
+        ws.client = MagicMock(host="192.168.18.99")
+
+        # 1. Register agent initially, then disconnect (offline state)
+        agent = self.mgr.register_connection("lock_offline_agent", ws, {
+            "hostname": "Pixel-7-Offline-Test",
+            "is_android": True
+        })
+        self.assertIsNotNone(agent)
+        self.mgr.unregister_connection("lock_offline_agent", ws)
+        self.assertNotIn("lock_offline_agent", self.mgr.active_agents)
+        self.assertIn("lock_offline_agent", self.mgr.registered_agents)
+
+        # 2. Administrator arms lock while device is offline
+        queued = self.mgr.set_pending_curtain(
+            "lock_offline_agent",
+            True,
+            title="Lockdown Activated",
+            message="Your device is secured",
+            subtitle="IT Admin"
+        )
+        self.assertTrue(queued)
+        self.assertTrue(self.mgr.registered_agents["lock_offline_agent"]["curtain_active"])
+        self.assertEqual(self.mgr.registered_agents["lock_offline_agent"]["curtain_title"], "Lockdown Activated")
+
+        # 3. Device reconnects: verify immediate queued lock enforcement
+        ws2 = MagicMock()
+        ws2.send_text = AsyncMock()
+        ws2.client = MagicMock(host="192.168.18.99")
+
+        agent2 = self.mgr.register_connection("lock_offline_agent", ws2, {
+            "hostname": "Pixel-7-Offline-Test",
+            "is_android": True
+        })
+        self.assertIsNotNone(agent2)
+
+        # Verify queued lock command was sent to newly connected WebSocket
+        ws2.send_text.assert_called_once()
+        import json
+        sent = json.loads(ws2.send_text.call_args[0][0])
+        self.assertEqual(sent["type"], "set_curtain")
+        self.assertTrue(sent["enabled"])
+        self.assertEqual(sent["title"], "Lockdown Activated")
+        self.assertEqual(sent["message"], "Your device is secured")
+
+        # 4. Administrator clears the lock
+        cleared = self.mgr.set_pending_curtain("lock_offline_agent", False)
+        self.assertTrue(cleared)
+        self.assertFalse(self.mgr.registered_agents["lock_offline_agent"]["curtain_active"])
+
 if __name__ == "__main__":
     unittest.main()
 

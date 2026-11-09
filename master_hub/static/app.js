@@ -458,7 +458,7 @@ function renderAgentTable() {
                         <span>Control</span>
                     </button>
                     ${isAndroidAgent ? `
-                    <button class="btn-action-control btn-action-lock ${isCurtainLocked ? 'btn-active-curtain' : ''}" ${!isOnline ? 'disabled' : ''} onclick="${isCurtainLocked ? `unlockAndroidDevice('${agent.agent_id}', event)` : `openLockDeviceModal('${agent.agent_id}', event)`}" title="${isCurtainLocked ? 'Unlock Android Device (Restore Home Screen)' : 'Lock Android Device (Display Custom Message)'}">
+                    <button class="btn-action-control btn-action-lock ${isCurtainLocked ? 'btn-active-curtain' : ''}" onclick="${isCurtainLocked ? `unlockAndroidDevice('${agent.agent_id}', event)` : `openLockDeviceModal('${agent.agent_id}', event)`}" title="${isCurtainLocked ? 'Unlock Android Device (Restore Home Screen)' : (isOnline ? 'Lock Android Device (Display Custom Message)' : 'Queue Device Lock (Will automatically lock when device connects)')}">
                         <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
                         <span>${isCurtainLocked ? 'Unlock' : 'Lock Device'}</span>
                     </button>
@@ -702,7 +702,11 @@ async function submitLockDevice() {
         if (res.ok) {
             agentCurtainStates[agentId] = true;
             closeLockDeviceModal();
-            showToast("Device Locked", `Lock activated with custom message on [${agentId}].`, "success");
+            if (data.status === "curtain_queued") {
+                showToast("Device Lock Armed", data.message || `Lock armed for [${agentId}]. Will enforce immediately upon connection.`, "warning");
+            } else {
+                showToast("Device Locked", `Lock activated with custom message on [${agentId}].`, "success");
+            }
             renderAgentTable();
         } else {
             showToast("Lock Error", data.detail || "Failed to dispatch lock command.", "error");
@@ -726,7 +730,11 @@ async function unlockAndroidDevice(agentId, event) {
         const data = await res.json();
         if (res.ok) {
             agentCurtainStates[agentId] = false;
-            showToast("Device Unlocked", `Lock dismissed on [${agentId}]. User taken to Android Home Screen.`, "info");
+            if (data.status === "curtain_queued") {
+                showToast("Lock Cleared", data.message || `Pending lock cleared on [${agentId}].`, "info");
+            } else {
+                showToast("Device Unlocked", `Lock dismissed on [${agentId}]. User restored to normal screen.`, "info");
+            }
             renderAgentTable();
         } else {
             showToast("Unlock Error", data.detail || "Failed to unlock device.", "error");
