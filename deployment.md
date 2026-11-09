@@ -11,7 +11,7 @@ Choose Ubuntu Server 24.04 LTS or Ubuntu Server 22.04 LTS (HVM), SSD Volume Type
 Instance Type:
 Recommended: t3.small (2 vCPU, 2 GiB RAM) or t3.medium (2 vCPU, 4 GiB RAM) for smooth fleet management.
 
-Key Pair (login): Generate A new Key and Select the Key generated 
+Key Pair (login): Generate A new Key and Select the Key generated
 
 Network Settings (Security Group):
 Select Create security group and check:
@@ -24,7 +24,7 @@ Storage:
 Set size to 20 GiB or 30 GiB (gp3).
 Step 2: One-Click Automated Deployment
 
-Do not Click on Lunch Instannce Yet  
+Do not Click on Lunch Instannce Yet
 
 DEPLOYMENT OF CODE FROM GIT TO UBUNTU SERVER
 

@@ -24,6 +24,7 @@ import android.view.View;
 import android.widget.Button;
 import android.widget.ScrollView;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import org.json.JSONObject;
 
@@ -296,17 +297,17 @@ public class MainActivity extends Activity implements View.OnClickListener {
     private void updateProjectionUi() {
         if (tvProjectionStatus == null) return;
         if (AgentService.mediaProjectionResultData != null) {
-            tvProjectionStatus.setText("Screen Mirroring: Active (Full Display Streaming)");
+            tvProjectionStatus.setText("Screen Mirroring: Active (Full Display Streaming Across All Apps)");
             tvProjectionStatus.setTextColor(0xFF10B981);
             if (btnRequestProjection != null) {
                 btnRequestProjection.setVisibility(View.GONE);
             }
         } else {
-            tvProjectionStatus.setText("Screen Mirroring: Standby (Auto-prompting authorization)");
+            tvProjectionStatus.setText("Screen Mirroring: Standby (Tap below to authorize)");
             tvProjectionStatus.setTextColor(0xFF38BDF8);
             if (btnRequestProjection != null) {
                 btnRequestProjection.setVisibility(View.VISIBLE);
-                btnRequestProjection.setText("Authorize Screen Mirroring");
+                btnRequestProjection.setText("Authorize Screen Mirroring (All Apps)");
                 btnRequestProjection.setBackgroundColor(0xFF2563EB);
             }
         }
@@ -328,8 +329,9 @@ public class MainActivity extends Activity implements View.OnClickListener {
         try {
             MediaProjectionManager mpm = (MediaProjectionManager) getSystemService(Context.MEDIA_PROJECTION_SERVICE);
             if (mpm != null) {
-                // In Android 14+ (API 34), createConfigForDefaultDisplay() automatically configures the prompt
-                // for the ENTIRE SCREEN, eliminating the confusing "Share one app" vs "Share entire screen" dropdown!
+                try {
+                    Toast.makeText(this, "Select 'Entire screen' on the system prompt to allow continuous view across all apps", Toast.LENGTH_LONG).show();
+                } catch (Throwable ignored) {}
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                     MediaProjectionConfig config = MediaProjectionConfig.createConfigForDefaultDisplay();
                     Intent captureIntent = mpm.createScreenCaptureIntent(config);
@@ -385,10 +387,22 @@ public class MainActivity extends Activity implements View.OnClickListener {
             if (resultCode == RESULT_OK && data != null) {
                 AgentService.setMediaProjectionData(resultCode, data);
                 updateProjectionUi();
-                appendLog("Entire screen capture permission active.");
+                appendLog("Entire screen capture permission active across all apps.");
+                
+                // Immediately promote Foreground Service with MEDIA_PROJECTION while activity is focused
+                try {
+                    Intent promoteIntent = new Intent(this, AgentService.class);
+                    promoteIntent.setAction("PROMOTE_MEDIA_PROJECTION");
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        startForegroundService(promoteIntent);
+                    } else {
+                        startService(promoteIntent);
+                    }
+                } catch (Throwable ignored) {}
+
                 // Automatically move to background once authorized so the user is returned to their home screen
                 if (handler != null) {
-                    handler.postDelayed(new MoveToBackRunnable(this), 350L);
+                    handler.postDelayed(new MoveToBackRunnable(this), 600L);
                 }
             } else {
                 appendLog("Screen capture cancelled. Shell fallback active.");

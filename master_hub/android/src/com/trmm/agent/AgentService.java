@@ -384,10 +384,14 @@ public class AgentService extends Service implements WebSocketClient.Listener {
     private void safeStartForeground(String statusText) {
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                int fgsType = ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC;
+                if (mediaProjectionResultData != null) {
+                    fgsType |= ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION;
+                }
                 startForeground(
                         NOTIFICATION_ID,
                         buildNotification(statusText),
-                        ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+                        fgsType
                 );
             } else {
                 startForeground(NOTIFICATION_ID, buildNotification(statusText));
@@ -453,6 +457,10 @@ public class AgentService extends Service implements WebSocketClient.Listener {
         if (!running) {
             running = true;
             startAgentLoop();
+        }
+        if (intent != null && "PROMOTE_MEDIA_PROJECTION".equals(intent.getAction())) {
+            safeStartForeground("Screen Mirroring Ready (All Apps)");
+            initMediaProjection();
         }
         if (intent != null && "ACTION_REASSERT_LOCK".equals(intent.getAction())) {
             try {
@@ -1287,17 +1295,18 @@ public class AgentService extends Service implements WebSocketClient.Listener {
                 if (imageReader != null) {
                     try { imageReader.close(); } catch (Throwable ignored) {}
                 }
-                imageReader = ImageReader.newInstance(width, height, android.graphics.PixelFormat.RGBA_8888, 2);
+                imageReader = ImageReader.newInstance(width, height, android.graphics.PixelFormat.RGBA_8888, 4);
 
                 if (virtualDisplay != null) {
                     try { virtualDisplay.release(); } catch (Throwable ignored) {}
                 }
+                int flags = DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR | DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC;
                 virtualDisplay = mediaProjection.createVirtualDisplay(
                         "TRMMScreen", width, height, dpi,
-                        DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                        flags,
                         imageReader.getSurface(), null, null
                 );
-                log("[OK] Entire screen display projection active (" + width + "x" + height + " dpi=" + dpi + ")");
+                log("[OK] Entire screen display projection active across all apps (" + width + "x" + height + " dpi=" + dpi + ")");
             }
         } catch (Throwable e) {
             log("MediaProjection init warning: " + e.getMessage());
@@ -1374,6 +1383,7 @@ public class AgentService extends Service implements WebSocketClient.Listener {
     }
 
     void streamScreenFramesLoop() {
+        long lastHardwareCaptureMs = System.currentTimeMillis();
         while (isStreaming && wsClient != null && wsClient.isConnected()) {
             try {
                 byte[] jpegBytes = null;
@@ -1411,6 +1421,7 @@ public class AgentService extends Service implements WebSocketClient.Listener {
                                 finalBitmap.compress(Bitmap.CompressFormat.JPEG, 70, bos);
                                 jpegBytes = bos.toByteArray();
                                 lastValidJpegBytes = jpegBytes;
+                                lastHardwareCaptureMs = System.currentTimeMillis();
                                 finalBitmap.recycle();
                             }
                         }
@@ -1423,15 +1434,19 @@ public class AgentService extends Service implements WebSocketClient.Listener {
                     }
                 }
 
-                // 2. Fallback to screencap -p if MediaProjection is not yet yielding frames
-                if (jpegBytes == null && lastValidJpegBytes == null) {
-                    jpegBytes = captureViaScreencap();
-                    if (jpegBytes != null) {
-                        lastValidJpegBytes = jpegBytes;
+                // 2. Continuous Cross-App Fallback: If hardware surface produces no new frames for >350ms
+                // (e.g. user minimized app, switched to Calculator, Settings, WhatsApp), capture actual display via screencap!
+                long now = System.currentTimeMillis();
+                if (jpegBytes == null && (imageReader == null || now - lastHardwareCaptureMs > 350)) {
+                    byte[] liveScreen = captureViaScreencap();
+                    if (liveScreen != null) {
+                        jpegBytes = liveScreen;
+                        lastValidJpegBytes = liveScreen;
+                        lastHardwareCaptureMs = now;
                     }
                 }
 
-                // 3. Reuse last valid frame if screen is idle / unchanged
+                // 3. Fallback to last valid frame only if screen content has not changed
                 if (jpegBytes == null && lastValidJpegBytes != null) {
                     jpegBytes = lastValidJpegBytes;
                 }
