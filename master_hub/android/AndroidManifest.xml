@@ -26,6 +26,7 @@
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.INSTALL_PACKAGES" />
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
 
     <application
         android:allowBackup="true"
@@ -66,6 +67,7 @@
             android:enabled="true"
             android:exported="false"
             android:stopWithTask="false"
+            android:directBootAware="true"
             android:foregroundServiceType="dataSync|mediaProjection|specialUse">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
@@ -80,14 +82,17 @@
             <intent-filter android:priority="999">
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
                 <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
+                <action android:name="android.intent.action.USER_UNLOCKED" />
                 <action android:name="android.intent.action.QUICKBOOT_POWERON" />
                 <action android:name="com.htc.intent.action.QUICKBOOT_POWERON" />
+                <action android:name="android.intent.action.REBOOT" />
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
                 <action android:name="com.trmm.agent.OTA_STATUS" />
                 <action android:name="android.intent.action.USER_PRESENT" />
                 <action android:name="android.net.conn.CONNECTIVITY_CHANGE" />
                 <action android:name="android.intent.action.ACTION_POWER_CONNECTED" />
                 <action android:name="android.intent.action.ACTION_POWER_DISCONNECTED" />
+                <action android:name="com.trmm.agent.WATCHDOG_PING" />
             </intent-filter>
         </receiver>
 

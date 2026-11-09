@@ -62,8 +62,8 @@ public class CurtainActivity extends Activity {
         isActive = false;
         if (context != null) {
             try {
-                SharedPreferences prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
-                prefs.edit().putBoolean(PREF_IS_LOCKED, false).apply();
+                SharedPreferences prefs = AgentService.getSafePreferences(context, PREFS_NAME);
+                if (prefs != null) prefs.edit().putBoolean(PREF_IS_LOCKED, false).apply();
             } catch (Throwable ignored) {}
         }
 
@@ -165,19 +165,19 @@ public class CurtainActivity extends Activity {
         }
 
         // 2. Read custom messages from Intent or persistent SharedPreferences
-        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        SharedPreferences prefs = AgentService.getSafePreferences(this, PREFS_NAME);
         String title = getIntent().getStringExtra(EXTRA_TITLE);
         String message = getIntent().getStringExtra(EXTRA_MESSAGE);
         String subtitle = getIntent().getStringExtra(EXTRA_SUBTITLE);
 
         if (title == null || title.trim().isEmpty()) {
-            title = prefs.getString(PREF_TITLE, "");
+            title = prefs != null ? prefs.getString(PREF_TITLE, "") : "";
         }
         if (message == null || message.trim().isEmpty()) {
-            message = prefs.getString(PREF_MESSAGE, "");
+            message = prefs != null ? prefs.getString(PREF_MESSAGE, "") : "";
         }
         if (subtitle == null || subtitle.trim().isEmpty()) {
-            subtitle = prefs.getString(PREF_SUBTITLE, "");
+            subtitle = prefs != null ? prefs.getString(PREF_SUBTITLE, "") : "";
         }
 
         // Persist message so reboot / app restart preserves the lock screen
@@ -275,8 +275,8 @@ public class CurtainActivity extends Activity {
 
         // 1. Clear persistent lock state
         try {
-            SharedPreferences prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
-            prefs.edit().putBoolean(PREF_IS_LOCKED, false).apply();
+            SharedPreferences prefs = AgentService.getSafePreferences(this, PREFS_NAME);
+            if (prefs != null) prefs.edit().putBoolean(PREF_IS_LOCKED, false).apply();
         } catch (Throwable ignored) {}
 
         // 2. Stop Lock Task Mode (Kiosk)

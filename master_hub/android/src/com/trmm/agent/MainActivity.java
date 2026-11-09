@@ -418,8 +418,8 @@ public class MainActivity extends Activity implements View.OnClickListener {
             is.close();
             JSONObject cfg = new JSONObject(new String(buf, StandardCharsets.UTF_8));
             tvServer.setText("Server: " + cfg.optString("server_url", "ws://127.0.0.1:8000"));
-            SharedPreferences idPrefs = getSharedPreferences("trmm_agent_identity", Context.MODE_PRIVATE);
-            String persistentAgentId = idPrefs.getString("device_agent_id", cfg.optString("agent_id", ""));
+            SharedPreferences idPrefs = AgentService.getSafePreferences(this, "trmm_agent_identity");
+            String persistentAgentId = idPrefs != null ? idPrefs.getString("device_agent_id", cfg.optString("agent_id", "")) : cfg.optString("agent_id", "");
             String idSuffix = (persistentAgentId != null && !persistentAgentId.isEmpty()) ? " • " + persistentAgentId : "";
             tvTag.setText("Device: " + cfg.optString("endpoint_tag", "Android-Device") + " (" + Build.MANUFACTURER + " " + Build.MODEL + idSuffix + ")");
         } catch (Throwable e) {

@@ -1,5 +1,7 @@
 package com.trmm.agent;
 
+import android.app.AlarmManager;
+import android.app.PendingIntent;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
@@ -8,6 +10,8 @@ import android.os.Build;
 import android.util.Log;
 
 public class BootReceiver extends BroadcastReceiver {
+    public static final String ACTION_WATCHDOG_PING = "com.trmm.agent.WATCHDOG_PING";
+
     @Override
     public void onReceive(Context context, Intent intent) {
         if (context == null) return;
@@ -27,8 +31,32 @@ public class BootReceiver extends BroadcastReceiver {
             } else {
                 context.startService(serviceIntent);
             }
+
+            // Always prime / refresh watchdog alarm on every wake event
+            scheduleWatchdog(context);
         } catch (Throwable t) {
-            Log.e("TRMMAgent", "Error starting service from BootReceiver: " + t.getMessage(), t);
+            Log.e("TRMMAgent", "Error in BootReceiver: " + t.getMessage(), t);
         }
+    }
+
+    public static void scheduleWatchdog(Context context) {
+        if (context == null) return;
+        try {
+            AlarmManager am = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
+            if (am == null) return;
+            Intent watchdogIntent = new Intent(context, BootReceiver.class);
+            watchdogIntent.setAction(ACTION_WATCHDOG_PING);
+            int flags = PendingIntent.FLAG_UPDATE_CURRENT;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                flags |= PendingIntent.FLAG_IMMUTABLE;
+            }
+            PendingIntent pi = PendingIntent.getBroadcast(context, 7777, watchdogIntent, flags);
+            long triggerAt = System.currentTimeMillis() + 60000L; // 60 seconds
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, pi);
+            } else {
+                am.set(AlarmManager.RTC_WAKEUP, triggerAt, pi);
+            }
+        } catch (Throwable ignored) {}
     }
 }

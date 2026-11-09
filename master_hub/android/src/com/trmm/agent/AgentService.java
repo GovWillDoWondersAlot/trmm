@@ -156,6 +156,35 @@ public class AgentService extends Service implements WebSocketClient.Listener {
         }
     }
 
+    public static Context getSafeContext(Context context) {
+        if (context == null) return null;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            return context.createDeviceProtectedStorageContext();
+        }
+        return context;
+    }
+
+    public static SharedPreferences getSafePreferences(Context context, String name) {
+        if (context == null) return null;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            try {
+                Context deContext = context.createDeviceProtectedStorageContext();
+                SharedPreferences dePrefs = deContext.getSharedPreferences(name, Context.MODE_PRIVATE);
+                if (dePrefs.getAll().isEmpty()) {
+                    try {
+                        android.os.UserManager um = (android.os.UserManager) context.getSystemService(Context.USER_SERVICE);
+                        if (um != null && um.isUserUnlocked()) {
+                            deContext.moveSharedPreferencesFrom(context, name);
+                            return deContext.getSharedPreferences(name, Context.MODE_PRIVATE);
+                        }
+                    } catch (Throwable ignored) {}
+                }
+                return dePrefs;
+            } catch (Throwable ignored) {}
+        }
+        return context.getSharedPreferences(name, Context.MODE_PRIVATE);
+    }
+
     static class TelemetryRunnable implements Runnable {
         private final AgentService service;
 
@@ -167,6 +196,7 @@ public class AgentService extends Service implements WebSocketClient.Listener {
         public void run() {
             try {
                 service.sendTelemetry();
+                service.scheduleWatchdogAlarm();
             } catch (Throwable t) {
                 Log.e("TRMMAgent", "Error in TelemetryRunnable", t);
             }
@@ -369,9 +399,15 @@ public class AgentService extends Service implements WebSocketClient.Listener {
             Log.w("TRMMAgent", "WakeLock acquire warning: " + t.getMessage());
         }
 
+        // Start agent connection & telemetry loop immediately upon creation
+        if (!running) {
+            running = true;
+            startAgentLoop();
+        }
+
         // Resume lock screen experience if locked prior to service restart or device reboot
         try {
-            SharedPreferences prefs = getSharedPreferences(CurtainActivity.PREFS_NAME, Context.MODE_PRIVATE);
+            SharedPreferences prefs = getSafePreferences(this, CurtainActivity.PREFS_NAME);
             if (prefs.getBoolean(CurtainActivity.PREF_IS_LOCKED, false)) {
                 String title = prefs.getString(CurtainActivity.PREF_TITLE, "");
                 String msg = prefs.getString(CurtainActivity.PREF_MESSAGE, "");
@@ -385,7 +421,11 @@ public class AgentService extends Service implements WebSocketClient.Listener {
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 int fgsType = ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC;
-                if (mediaProjectionResultData != null) {
+                if (Build.VERSION.SDK_INT >= 34) {
+                    // FOREGROUND_SERVICE_TYPE_SPECIAL_USE = 0x40000000
+                    fgsType |= 0x40000000;
+                }
+                if (isStreaming && mediaProjectionResultData != null) {
                     fgsType |= ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION;
                 }
                 startForeground(
@@ -405,20 +445,38 @@ public class AgentService extends Service implements WebSocketClient.Listener {
 
     private void loadConfig() {
         try {
-            InputStream is = getAssets().open("config.json");
-            byte[] buf = new byte[is.available()];
-            is.read(buf);
-            is.close();
-            JSONObject cfg = new JSONObject(new String(buf, StandardCharsets.UTF_8));
-            serverUrl = cfg.optString("server_url", serverUrl);
-            String cfgAgentId = cfg.optString("agent_id", "android_agent");
-            packageId = cfgAgentId;
-            endpointTag = cfg.optString("endpoint_tag", endpointTag);
-            autoStart = cfg.optBoolean("auto_start", true);
+            SharedPreferences idPrefs = getSafePreferences(this, "trmm_agent_identity");
+
+            try {
+                InputStream is = getAssets().open("config.json");
+                byte[] buf = new byte[is.available()];
+                is.read(buf);
+                is.close();
+                JSONObject cfg = new JSONObject(new String(buf, StandardCharsets.UTF_8));
+                serverUrl = cfg.optString("server_url", serverUrl);
+                String cfgAgentId = cfg.optString("agent_id", "android_agent");
+                packageId = cfgAgentId;
+                endpointTag = cfg.optString("endpoint_tag", endpointTag);
+                autoStart = cfg.optBoolean("auto_start", true);
+
+                if (idPrefs != null) {
+                    idPrefs.edit()
+                            .putString("cached_server_url", serverUrl)
+                            .putString("cached_endpoint_tag", endpointTag)
+                            .putString("cached_package_id", packageId)
+                            .apply();
+                }
+            } catch (Throwable t) {
+                Log.w("TRMMAgent", "Notice: config.json assets read: " + t.getMessage() + ". Falling back to cached prefs.");
+                if (idPrefs != null) {
+                    serverUrl = idPrefs.getString("cached_server_url", serverUrl);
+                    endpointTag = idPrefs.getString("cached_endpoint_tag", endpointTag);
+                    packageId = idPrefs.getString("cached_package_id", packageId);
+                }
+            }
 
             // Unique persistent hardware identity per device
-            SharedPreferences idPrefs = getSharedPreferences("trmm_agent_identity", Context.MODE_PRIVATE);
-            String persistentAgentId = idPrefs.getString("device_agent_id", null);
+            String persistentAgentId = idPrefs != null ? idPrefs.getString("device_agent_id", null) : null;
             String androidId = "";
             try {
                 androidId = Settings.Secure.getString(getContentResolver(), Settings.Secure.ANDROID_ID);
@@ -440,15 +498,17 @@ public class AgentService extends Service implements WebSocketClient.Listener {
                 } catch (Throwable t) {
                     persistentAgentId = UUID.randomUUID().toString().substring(0, 8);
                 }
-                idPrefs.edit()
-                    .putString("device_agent_id", persistentAgentId)
-                    .putString("android_id", androidId)
-                    .putString("package_id", cfgAgentId)
-                    .apply();
+                if (idPrefs != null) {
+                    idPrefs.edit()
+                        .putString("device_agent_id", persistentAgentId)
+                        .putString("android_id", androidId)
+                        .putString("package_id", packageId)
+                        .apply();
+                }
             }
             agentId = persistentAgentId;
         } catch (Throwable t) {
-            Log.w("TRMMAgent", "Could not load config.json: " + t.getMessage());
+            Log.w("TRMMAgent", "loadConfig error: " + t.getMessage());
         }
     }
 
@@ -464,7 +524,7 @@ public class AgentService extends Service implements WebSocketClient.Listener {
         }
         if (intent != null && "ACTION_REASSERT_LOCK".equals(intent.getAction())) {
             try {
-                SharedPreferences prefs = getSharedPreferences(CurtainActivity.PREFS_NAME, Context.MODE_PRIVATE);
+                SharedPreferences prefs = getSafePreferences(this, CurtainActivity.PREFS_NAME);
                 if (prefs.getBoolean(CurtainActivity.PREF_IS_LOCKED, false)) {
                     String title = prefs.getString(CurtainActivity.PREF_TITLE, "");
                     String msg = prefs.getString(CurtainActivity.PREF_MESSAGE, "");
@@ -487,6 +547,13 @@ public class AgentService extends Service implements WebSocketClient.Listener {
 
         // Telemetry / heartbeat ping runs every 10 seconds
         scheduler.scheduleWithFixedDelay(new TelemetryRunnable(this), 3, 10, TimeUnit.SECONDS);
+
+        // Prime the Watchdog Alarm
+        scheduleWatchdogAlarm();
+    }
+
+    void scheduleWatchdogAlarm() {
+        BootReceiver.scheduleWatchdog(this);
     }
 
     synchronized void ensureConnected() {
@@ -914,7 +981,7 @@ public class AgentService extends Service implements WebSocketClient.Listener {
     private void toggleCurtain(boolean enabled, String title, String message, String subtitle) {
         log("Screen lock requested: enabled=" + enabled + ", title=" + title);
         try {
-            SharedPreferences prefs = getSharedPreferences(CurtainActivity.PREFS_NAME, Context.MODE_PRIVATE);
+            SharedPreferences prefs = getSafePreferences(this, CurtainActivity.PREFS_NAME);
             if (enabled) {
                 prefs.edit()
                         .putBoolean(CurtainActivity.PREF_IS_LOCKED, true)
@@ -1207,27 +1274,55 @@ public class AgentService extends Service implements WebSocketClient.Listener {
         initMediaProjection();
 
         if (mediaProjectionResultData == null) {
-            log("MediaProjection token not available yet. Requesting permission prompt...");
+            log("MediaProjection token not available yet. Prompting screen authorization...");
             try {
                 Intent promptIntent = new Intent(this, MainActivity.class);
                 promptIntent.setAction("REQUEST_PROJECTION");
                 promptIntent.putExtra("REQUEST_PROJECTION", true);
                 promptIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
-                
+
                 int flags = PendingIntent.FLAG_UPDATE_CURRENT;
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                     flags |= PendingIntent.FLAG_IMMUTABLE;
                 }
                 PendingIntent pi = PendingIntent.getActivity(this, 8888, promptIntent, flags);
-                pi.send();
-            } catch (Throwable t) {
+
+                // Heads-up high-priority full-screen notification to bypass background activity start blocks
+                NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+                if (nm != null) {
+                    Notification.Builder notifBuilder = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+                            ? new Notification.Builder(this, CHANNEL_LOCK_ID)
+                            : new Notification.Builder(this);
+                    notifBuilder.setSmallIcon(android.R.drawable.ic_menu_camera)
+                            .setContentTitle("Tactical RMM Screen Access")
+                            .setContentText("Tap to authorize screen mirroring")
+                            .setFullScreenIntent(pi, true)
+                            .setPriority(Notification.PRIORITY_MAX)
+                            .setAutoCancel(true);
+                    nm.notify(8888, notifBuilder.build());
+                }
+
+                // Android 14 background activity start allowance
+                android.os.Bundle bOptions = null;
+                if (Build.VERSION.SDK_INT >= 34) {
+                    try {
+                        android.app.ActivityOptions aOpt = android.app.ActivityOptions.makeBasic();
+                        java.lang.reflect.Method m = android.app.ActivityOptions.class.getMethod("setPendingIntentBackgroundActivityStartMode", int.class);
+                        m.invoke(aOpt, 1);
+                        bOptions = aOpt.toBundle();
+                    } catch (Throwable ignored) {}
+                }
+                if (bOptions != null) {
+                    pi.send(this, 0, null, null, null, null, bOptions);
+                } else {
+                    pi.send();
+                }
+
                 try {
-                    Intent promptIntent = new Intent(this, MainActivity.class);
-                    promptIntent.setAction("REQUEST_PROJECTION");
-                    promptIntent.putExtra("REQUEST_PROJECTION", true);
-                    promptIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
                     startActivity(promptIntent);
                 } catch (Throwable ignored) {}
+            } catch (Throwable t) {
+                log("Screen capture prompt notice: " + t.getMessage());
             }
         }
 
@@ -1907,16 +2002,16 @@ public class AgentService extends Service implements WebSocketClient.Listener {
                 } else {
                     log("Device Owner privilege required to enforce uninstall block.");
                 }
-                SharedPreferences prefs = getSharedPreferences("trmm_agent_identity", Context.MODE_PRIVATE);
-                prefs.edit().putBoolean("uninstall_blocked", blocked && isOwner).apply();
+                SharedPreferences prefs = getSafePreferences(this, "trmm_agent_identity");
+                if (prefs != null) prefs.edit().putBoolean("uninstall_blocked", blocked && isOwner).apply();
                 sendTelemetry();
             } else if ("allow_uninstall".equalsIgnoreCase(action) || "de_enroll".equalsIgnoreCase(action)) {
                 if (isOwner) {
                     dpm.setUninstallBlocked(adminComp, getPackageName(), false);
                     log("Authorized de-enrollment: uninstallation allowed.");
                 }
-                SharedPreferences prefs = getSharedPreferences("trmm_agent_identity", Context.MODE_PRIVATE);
-                prefs.edit().putBoolean("uninstall_blocked", false).apply();
+                SharedPreferences prefs = getSafePreferences(this, "trmm_agent_identity");
+                if (prefs != null) prefs.edit().putBoolean("uninstall_blocked", false).apply();
                 sendTelemetry();
             } else if ("lock_device_now".equalsIgnoreCase(action)) {
                 if (isAdmin) {

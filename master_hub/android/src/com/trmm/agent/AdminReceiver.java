@@ -22,16 +22,16 @@ public class AdminReceiver extends DeviceAdminReceiver {
             ComponentName admin = getComponentName(context);
             if (dpm == null) return;
 
-            SharedPreferences prefs = context.getSharedPreferences("trmm_agent_identity", Context.MODE_PRIVATE);
+            SharedPreferences prefs = AgentService.getSafePreferences(context, "trmm_agent_identity");
 
             if (dpm.isDeviceOwnerApp(context.getPackageName())) {
                 Log.i("TRMMAgent", "Device Owner detected. Applying corporate RMM policies...");
-                prefs.edit().putBoolean("is_device_owner", true).apply();
+                if (prefs != null) prefs.edit().putBoolean("is_device_owner", true).apply();
 
                 // 1. Block Unauthorized Uninstallation on fully managed devices
                 try {
                     dpm.setUninstallBlocked(admin, context.getPackageName(), true);
-                    prefs.edit().putBoolean("uninstall_blocked", true).apply();
+                    if (prefs != null) prefs.edit().putBoolean("uninstall_blocked", true).apply();
                     Log.i("TRMMAgent", "[OK] Uninstall protection active: user removal blocked.");
                 } catch (Throwable t) {
                     Log.w("TRMMAgent", "Could not set uninstall blocked: " + t.getMessage());
@@ -113,12 +113,14 @@ public class AdminReceiver extends DeviceAdminReceiver {
         Log.i("TRMMAgent", "Device Admin disabled.");
         if (context == null) return;
         try {
-            SharedPreferences prefs = context.getSharedPreferences("trmm_agent_identity", Context.MODE_PRIVATE);
-            prefs.edit()
-                .putBoolean("is_device_owner", false)
-                .putBoolean("is_device_admin", false)
-                .putBoolean("uninstall_blocked", false)
-                .apply();
+            SharedPreferences prefs = AgentService.getSafePreferences(context, "trmm_agent_identity");
+            if (prefs != null) {
+                prefs.edit()
+                    .putBoolean("is_device_owner", false)
+                    .putBoolean("is_device_admin", false)
+                    .putBoolean("uninstall_blocked", false)
+                    .apply();
+            }
         } catch (Throwable ignored) {}
     }
 }
