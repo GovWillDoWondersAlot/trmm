@@ -29,6 +29,9 @@ generated_agents/*
 output/
 master_hub/current_ip.txt
 master_hub/auth_sessions.json
+master_hub/endpoints.backup.json
+master_hub/endpoints.json.bak
+master_hub/trmm_endpoints.db
 *.log
 trmm_agent.log
 

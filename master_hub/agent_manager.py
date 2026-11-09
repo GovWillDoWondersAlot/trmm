@@ -8,6 +8,8 @@ import json
 import logging
 import os
 import hashlib
+import sqlite3
+import contextlib
 from .mirror_delivery import LowLatencyMirrorViewerSession
 from typing import Dict, Any, Optional
 from fastapi import WebSocket
@@ -278,114 +280,175 @@ class AgentManager:
         self.decommissioned_agents: set = set()
         if endpoints_file == "":
             self.endpoints_file = None
+            self.backup_file = None
+            self.db_file = None
         else:
             self.endpoints_file = endpoints_file or os.path.join(ROOT_DIR, "master_hub", "endpoints.json")
+            base_dir = os.path.dirname(self.endpoints_file)
+            self.backup_file = os.path.join(base_dir, "endpoints.backup.json")
+            self.db_file = os.path.join(base_dir, "trmm_endpoints.db")
+            self._init_sqlite()
             self._load_endpoints_from_disk()
             if sync_packages:
                 self._sync_with_package_registry()
 
-    def _load_endpoints_from_disk(self):
-        """Loads previously registered endpoints from disk so offline devices are never lost."""
-        if not self.endpoints_file:
+    @contextlib.contextmanager
+    def _db_connection(self):
+        """Yields an SQLite connection that is guaranteed to be closed upon block exit."""
+        if not self.db_file:
+            yield None
+            return
+        conn = sqlite3.connect(self.db_file, timeout=5)
+        try:
+            yield conn
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+    def _init_sqlite(self):
+        """Initializes durable SQLite table for persistent endpoint survivability across git operations."""
+        if not self.db_file:
             return
         try:
-            if os.path.isfile(self.endpoints_file):
+            with self._db_connection() as conn:
+                if conn:
+                    conn.execute("""
+                        CREATE TABLE IF NOT EXISTS persisted_endpoints (
+                            agent_id TEXT PRIMARY KEY,
+                            endpoint_tag TEXT,
+                            data_json TEXT NOT NULL,
+                            updated_at REAL NOT NULL
+                        )
+                    """)
+                    conn.commit()
+        except Exception as e:
+            logger.warning(f"Could not initialize SQLite endpoints store: {e}")
+
+    def _load_endpoints_from_disk(self):
+        """
+        Loads registered endpoints using a 3-tier resilient survivability pipeline:
+        1. Primary endpoints.json
+        2. Persistent endpoints.backup.json (untracked backup)
+        3. Durable SQLite database trmm_endpoints.db (survives git pull & git reset)
+        """
+        if not self.endpoints_file:
+            return
+
+        loaded_any = False
+
+        # Tier 1: Try primary JSON
+        if os.path.isfile(self.endpoints_file):
+            try:
                 with open(self.endpoints_file, "r", encoding="utf-8") as f:
                     data = json.load(f)
                     if isinstance(data, dict):
                         for aid, endpoint in data.items():
                             if aid not in self.decommissioned_agents:
-                                # Only load real devices that actually connected (exclude phantom un-connected packages)
                                 if endpoint.get("connected_at", 0) == 0 and endpoint.get("management_mode") == "Enrolled (Offline)":
                                     continue
                                 endpoint["status"] = "offline"
                                 self.registered_agents[aid] = endpoint
-                        logger.info(f"Loaded {len(self.registered_agents)} persisted endpoint(s) from {self.endpoints_file}")
-        except Exception as e:
-            logger.warning(f"Could not load endpoints from disk: {e}")
+                        if self.registered_agents:
+                            loaded_any = True
+                            logger.info(f"Loaded {len(self.registered_agents)} persisted endpoint(s) from primary {self.endpoints_file}")
+            except Exception as e:
+                logger.warning(f"Could not load endpoints from primary disk file: {e}")
+
+        # Tier 2: If primary is empty or wiped, try backup JSON
+        if not self.registered_agents and self.backup_file and os.path.isfile(self.backup_file):
+            try:
+                with open(self.backup_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    if isinstance(data, dict):
+                        for aid, endpoint in data.items():
+                            if aid not in self.decommissioned_agents:
+                                if endpoint.get("connected_at", 0) == 0 and endpoint.get("management_mode") == "Enrolled (Offline)":
+                                    continue
+                                endpoint["status"] = "offline"
+                                self.registered_agents[aid] = endpoint
+                        if self.registered_agents:
+                            loaded_any = True
+                            logger.info(f"Auto-recovered {len(self.registered_agents)} persisted endpoint(s) from backup {self.backup_file}")
+            except Exception as e:
+                logger.warning(f"Could not load endpoints from backup file: {e}")
+
+        # Tier 3: If still empty, recover from durable SQLite database
+        if not self.registered_agents and self.db_file and os.path.isfile(self.db_file):
+            try:
+                with self._db_connection() as conn:
+                    if conn:
+                        cursor = conn.cursor()
+                        cursor.execute("SELECT agent_id, data_json FROM persisted_endpoints")
+                        rows = cursor.fetchall()
+                        for aid, d_json in rows:
+                            if aid not in self.decommissioned_agents:
+                                endpoint = json.loads(d_json)
+                                if endpoint.get("connected_at", 0) == 0 and endpoint.get("management_mode") == "Enrolled (Offline)":
+                                    continue
+                                endpoint["status"] = "offline"
+                                self.registered_agents[aid] = endpoint
+                        if self.registered_agents:
+                            loaded_any = True
+                            logger.info(f"Auto-recovered {len(self.registered_agents)} persisted endpoint(s) from durable SQLite database {self.db_file}")
+            except Exception as e:
+                logger.warning(f"Could not load endpoints from SQLite: {e}")
+
+        # Synchronize all tiers with the latest state
+        if self.registered_agents:
+            self._save_endpoints_to_disk()
 
     def _save_endpoints_to_disk(self):
-        """Atomically persists registered endpoints to disk."""
+        """Atomically persists registered endpoints across JSON, Backup JSON, and durable SQLite."""
         if not self.endpoints_file:
             return
+        now = time.time()
+
+        # 1. Primary JSON file
         try:
             temp_file = self.endpoints_file + ".tmp"
             with open(temp_file, "w", encoding="utf-8") as f:
                 json.dump(self.registered_agents, f, indent=2)
             os.replace(temp_file, self.endpoints_file)
         except Exception as e:
-            logger.warning(f"Could not persist endpoints to disk: {e}")
+            logger.warning(f"Could not persist endpoints to primary disk: {e}")
+
+        # 2. Backup JSON file (keep synced whenever endpoints exist)
+        if self.backup_file and self.registered_agents:
+            try:
+                b_tmp = self.backup_file + ".tmp"
+                with open(b_tmp, "w", encoding="utf-8") as f:
+                    json.dump(self.registered_agents, f, indent=2)
+                os.replace(b_tmp, self.backup_file)
+            except Exception:
+                pass
+
+        # 3. Durable SQLite store
+        if self.db_file:
+            try:
+                with self._db_connection() as conn:
+                    if conn:
+                        for aid, endpoint in self.registered_agents.items():
+                            conn.execute("""
+                                INSERT INTO persisted_endpoints (agent_id, endpoint_tag, data_json, updated_at)
+                                VALUES (?, ?, ?, ?)
+                                ON CONFLICT(agent_id) DO UPDATE SET
+                                    endpoint_tag=excluded.endpoint_tag,
+                                    data_json=excluded.data_json,
+                                    updated_at=excluded.updated_at
+                            """, (aid, endpoint.get("endpoint_tag", aid), json.dumps(endpoint), now))
+
+                        if self.decommissioned_agents:
+                            placeholders = ",".join("?" for _ in self.decommissioned_agents)
+                            conn.execute(f"DELETE FROM persisted_endpoints WHERE agent_id IN ({placeholders})", list(self.decommissioned_agents))
+                        conn.commit()
+            except Exception as e:
+                logger.warning(f"Could not persist endpoints to SQLite: {e}")
 
     def _sync_with_package_registry(self):
-        """Synchronizes with AgentRegistry so all generated packages (Android and Windows) appear as enrolled offline endpoints."""
-        try:
-            from .registry import AgentRegistry
-            packages = AgentRegistry.get_all_packages()
-            from .ota_manager import OTAManager
-            android_manifest = OTAManager.get_android_manifest()
-            windows_manifest = OTAManager.get_code_manifest()
-
-            for pkg in packages:
-                aid = pkg.get("agent_id")
-                if not aid or aid in self.decommissioned_agents or aid in self.registered_agents:
-                    continue
-                is_android = (
-                    pkg.get("arch") == "android" or
-                    bool(pkg.get("apk_filename")) or
-                    bool(pkg.get("sh_filename"))
-                )
-                endpoint_tag = pkg.get("endpoint_tag", f"Agent_{aid}")
-                app_title = pkg.get("app_title") or pkg.get("app_name") or endpoint_tag
-                dev_name = f"{endpoint_tag} (Phone)" if is_android else endpoint_tag
-
-                if is_android:
-                    srv_hash = android_manifest.get("overall_hash", "")
-                    up_ver = android_manifest.get("version", "3.7.0")
-                    up_desc = android_manifest.get("description", "A new Android agent update is available.")
-                else:
-                    srv_hash = windows_manifest.get("overall_hash", "")
-                    up_ver = windows_manifest.get("version", "2.8.0")
-                    up_desc = windows_manifest.get("description", "A new OTA update is available.")
-
-                self.registered_agents[aid] = {
-                    "agent_id": aid,
-                    "device_id": "",
-                    "installation_id": aid,
-                    "package_id": aid,
-                    "endpoint_tag": endpoint_tag,
-                    "status": "offline",
-                    "hostname": dev_name,
-                    "username": "Android" if is_android else "SYSTEM",
-                    "os": "Android device" if is_android else "Windows",
-                    "arch": "android" if is_android else pkg.get("arch", "x64"),
-                    "platform": "android" if is_android else "windows",
-                    "is_android": is_android,
-                    "device_name": dev_name,
-                    "device_type": "phone" if is_android else "desktop",
-                    "battery": None,
-                    "battery_charging": None,
-                    "ram_gb": 0,
-                    "cpu": "ARM64" if is_android else "Unknown",
-                    "local_ip": "Offline",
-                    "public_ip": "",
-                    "connected_at": 0,
-                    "last_heartbeat": pkg.get("mtime", 0),
-                    "is_streaming": False,
-                    "is_mirroring": False,
-                    "curtain_active": False,
-                    "is_device_owner": False,
-                    "is_device_admin": False,
-                    "uninstall_blocked": False,
-                    "management_mode": "Enrolled (Offline)",
-                    "code_hash": "",
-                    "server_hash": srv_hash,
-                    "has_update": False,
-                    "update_version": up_ver,
-                    "update_description": up_desc
-                }
-            self._save_endpoints_to_disk()
-        except Exception as e:
-            logger.warning(f"Could not sync with package registry: {e}")
+        """No-op: Generated agent packages stay in History and must NEVER be added to Managed Endpoints."""
+        pass
 
     def queue_update(self, agent_id: str, payload: Dict[str, Any]):
         """Queues an OTA update for an endpoint so it applies automatically upon connection."""
@@ -712,6 +775,14 @@ class AgentManager:
                 pass
         if agent_id in self.registered_agents:
             self.registered_agents.pop(agent_id, None)
+            if self.db_file and os.path.isfile(self.db_file):
+                try:
+                    with self._db_connection() as conn:
+                        if conn:
+                            conn.execute("DELETE FROM persisted_endpoints WHERE agent_id = ?", (agent_id,))
+                            conn.commit()
+                except Exception:
+                    pass
             self._save_endpoints_to_disk()
             logger.info(f"Agent '{agent_id}' terminated and removed by administrator.")
             return True
@@ -726,6 +797,25 @@ class AgentManager:
             self.remove_agent(aid)
         self.registered_agents.clear()
         self.pending_updates.clear()
+        
+        # Clear backup file on intentional wipe
+        if self.backup_file and os.path.isfile(self.backup_file):
+            try:
+                with open(self.backup_file, "w", encoding="utf-8") as f:
+                    json.dump({}, f)
+            except Exception:
+                pass
+
+        # Clear SQLite store on intentional wipe
+        if self.db_file and os.path.isfile(self.db_file):
+            try:
+                with self._db_connection() as conn:
+                    if conn:
+                        conn.execute("DELETE FROM persisted_endpoints")
+                        conn.commit()
+            except Exception:
+                pass
+
         self._save_endpoints_to_disk()
 
         # Also wipe historical packages manifest so old test packages do not resurrect on reboot
