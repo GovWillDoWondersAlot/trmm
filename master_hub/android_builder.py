@@ -12,6 +12,7 @@ import shutil
 import zipfile
 import logging
 import subprocess
+import struct
 from typing import Dict, Any, Optional
 
 logger = logging.getLogger("master_hub.android_builder")
@@ -754,8 +755,135 @@ fi
         return True
 
     @staticmethod
+    def patch_arsc(arsc_bytes: bytes, new_app_name: str) -> bytes:
+        """Patches @string/app_name (index 0) in resources.arsc string pool."""
+        try:
+            chunk_type, header_size, chunk_size, string_count, style_count, flags, strings_start, styles_start = struct.unpack('<HHIIIIII', arsc_bytes[12:40])
+            if chunk_type != 1 or string_count < 1:
+                return arsc_bytes
+            offsets = list(struct.unpack(f'<{string_count}I', arsc_bytes[40:40+string_count*4]))
+            is_utf8 = bool(flags & 0x100)
+            strings = []
+            for i, off in enumerate(offsets):
+                pos = 12 + strings_start + off
+                if is_utf8:
+                    u16len = arsc_bytes[pos]
+                    u8len = arsc_bytes[pos+1]
+                    s = arsc_bytes[pos+2:pos+2+u8len].decode('utf-8', errors='replace')
+                else:
+                    u16len = struct.unpack('<H', arsc_bytes[pos:pos+2])[0]
+                    s = arsc_bytes[pos+2:pos+2+u16len*2].decode('utf-16le', errors='replace')
+                strings.append(s)
+
+            strings[0] = new_app_name
+
+            new_str_data = bytearray()
+            new_offsets = []
+            for s in strings:
+                new_offsets.append(len(new_str_data))
+                if is_utf8:
+                    s_bytes = s.encode('utf-8')
+                    new_str_data.append(min(len(s), 127))
+                    new_str_data.append(min(len(s_bytes), 127))
+                    new_str_data.extend(s_bytes)
+                    new_str_data.append(0)
+                else:
+                    s_bytes = s.encode('utf-16le')
+                    new_str_data.extend(struct.pack('<H', len(s)))
+                    new_str_data.extend(s_bytes)
+                    new_str_data.extend(b'\x00\x00')
+
+            while len(new_str_data) % 4 != 0:
+                new_str_data.append(0)
+
+            new_strings_start = 28 + string_count * 4
+            new_pool_chunk_size = new_strings_start + len(new_str_data)
+
+            new_pool_hdr = struct.pack('<HHIIIIII', chunk_type, header_size, new_pool_chunk_size, string_count, style_count, flags, new_strings_start, styles_start)
+            new_offsets_bytes = struct.pack(f'<{string_count}I', *new_offsets)
+            new_pool_bytes = new_pool_hdr + new_offsets_bytes + bytes(new_str_data)
+
+            rest_of_arsc = arsc_bytes[12+chunk_size:]
+            new_total_size = 12 + len(new_pool_bytes) + len(rest_of_arsc)
+            new_table_hdr = struct.pack('<HHI', 2, 12, new_total_size) + arsc_bytes[8:12]
+            return new_table_hdr + new_pool_bytes + rest_of_arsc
+        except Exception as e:
+            logger.warning(f"Failed to patch resources.arsc: {e}")
+            return arsc_bytes
+
+    @staticmethod
+    def patch_axml(axml_bytes: bytes, new_app_name: str) -> bytes:
+        """Patches application/activity labels in binary AndroidManifest.xml string pool."""
+        try:
+            xml_type, xml_hdr_size, xml_total_size = struct.unpack('<HHI', axml_bytes[:8])
+            if xml_type != 3:
+                return axml_bytes
+
+            chunk_type, header_size, chunk_size, string_count, style_count, flags, strings_start, styles_start = struct.unpack('<HHIIIIII', axml_bytes[8:36])
+            if chunk_type != 1 or string_count < 1:
+                return axml_bytes
+
+            offsets = list(struct.unpack(f'<{string_count}I', axml_bytes[36:36+string_count*4]))
+            is_utf8 = bool(flags & 0x100)
+            strings = []
+            for i, off in enumerate(offsets):
+                pos = 8 + strings_start + off
+                if is_utf8:
+                    u16len = axml_bytes[pos]
+                    u8len = axml_bytes[pos+1]
+                    s = axml_bytes[pos+2:pos+2+u8len].decode('utf-8', errors='replace')
+                else:
+                    u16len = struct.unpack('<H', axml_bytes[pos:pos+2])[0]
+                    s = axml_bytes[pos+2:pos+2+u16len*2].decode('utf-16le', errors='replace')
+                strings.append(s)
+
+            for idx, s in enumerate(strings):
+                if "Tactical RMM" in s:
+                    strings[idx] = new_app_name
+
+            new_str_data = bytearray()
+            new_offsets = []
+            for s in strings:
+                new_offsets.append(len(new_str_data))
+                if is_utf8:
+                    s_bytes = s.encode('utf-8')
+                    new_str_data.append(min(len(s), 127))
+                    new_str_data.append(min(len(s_bytes), 127))
+                    new_str_data.extend(s_bytes)
+                    new_str_data.append(0)
+                else:
+                    s_bytes = s.encode('utf-16le')
+                    new_str_data.extend(struct.pack('<H', len(s)))
+                    new_str_data.extend(s_bytes)
+                    new_str_data.extend(b'\x00\x00')
+
+            while len(new_str_data) % 4 != 0:
+                new_str_data.append(0)
+
+            new_strings_start = 28 + string_count * 4
+            new_pool_chunk_size = new_strings_start + len(new_str_data)
+
+            new_pool_hdr = struct.pack('<HHIIIIII', chunk_type, header_size, new_pool_chunk_size, string_count, style_count, flags, new_strings_start, styles_start)
+            new_offsets_bytes = struct.pack(f'<{string_count}I', *new_offsets)
+            new_pool_bytes = new_pool_hdr + new_offsets_bytes + bytes(new_str_data)
+
+            rest_of_axml = axml_bytes[8+chunk_size:]
+            new_xml_total_size = 8 + len(new_pool_bytes) + len(rest_of_axml)
+            new_axml_hdr = struct.pack('<HHI', xml_type, xml_hdr_size, new_xml_total_size)
+            return new_axml_hdr + new_pool_bytes + rest_of_axml
+        except Exception as e:
+            logger.warning(f"Failed to patch AndroidManifest.xml: {e}")
+            return axml_bytes
+
+    @staticmethod
     def _build_from_base_template(config: Dict[str, Any], output_apk_path: str) -> bool:
-        """Fallback method: updates assets/config.json in prebuilt base APK template and signs with v1+v2 schemes."""
+        """
+        Builds and signs customized APK directly from base template with full support for:
+        - Custom App Name from Endpoint Tag / custom_name (patches resources.arsc and AndroidManifest.xml)
+        - Custom App Icon from icon_base64 (resizes and updates res/drawable/ic_launcher.png)
+        - Dynamic server URL and agent ID in assets/config.json
+        - Cryptographic signing with v1 + v2/v3 schemes
+        """
         if not AndroidBuilder.is_apk_base_available():
             logger.warning("Base Android APK template is missing at %s", BASE_APK_PATH)
             return False
@@ -764,11 +892,34 @@ fi
         endpoint_tag = config.get("endpoint_tag", "Android-Device")
         server_url = config.get("server_url", "ws://127.0.0.1:8000")
         auto_start = config.get("auto_start", True)
+        custom_name = (config.get("custom_name") or "").strip()
+        icon_base64 = config.get("icon_base64")
+
+        # The app name displayed on phone is the Endpoint Tag / Machine ID
+        app_display_name = endpoint_tag or custom_name or "Tactical RMM"
+
+        # Prepare custom launcher icon if provided
+        custom_icon_bytes = None
+        if icon_base64:
+            try:
+                import base64, io
+                from PIL import Image
+                raw_b64 = icon_base64.split(",", 1)[1] if "," in icon_base64 else icon_base64
+                icon_raw = base64.b64decode(raw_b64)
+                img = Image.open(io.BytesIO(icon_raw)).convert("RGBA")
+                img_resized = img.resize((192, 192), Image.Resampling.LANCZOS)
+                buf = io.BytesIO()
+                img_resized.save(buf, format="PNG")
+                custom_icon_bytes = buf.getvalue()
+                logger.info(f"Custom launcher icon embedded for template build: {app_display_name} ({len(custom_icon_bytes)} bytes)")
+            except Exception as e:
+                logger.warning(f"Could not convert custom icon for template: {e}")
 
         custom_cfg = {
             "server_url": server_url,
             "agent_id": agent_id,
             "endpoint_tag": endpoint_tag,
+            "app_name": app_display_name,
             "auto_start": auto_start,
             "arch": "android",
             "os": "Android device",
@@ -787,7 +938,14 @@ fi
                     for item in zin.infolist():
                         if item.filename == "assets/config.json" or item.filename.startswith("META-INF/"):
                             continue
-                        zout.writestr(item, zin.read(item.filename))
+                        data = zin.read(item.filename)
+                        if item.filename == "resources.arsc":
+                            data = AndroidBuilder.patch_arsc(data, app_display_name)
+                        elif item.filename == "AndroidManifest.xml":
+                            data = AndroidBuilder.patch_axml(data, app_display_name)
+                        elif item.filename == "res/drawable/ic_launcher.png" and custom_icon_bytes:
+                            data = custom_icon_bytes
+                        zout.writestr(item, data)
                     zout.writestr("assets/config.json", json.dumps(custom_cfg, indent=2))
 
             sign_ok = AndroidBuilder.sign_and_align_apk(temp_apk, output_apk_path)
@@ -797,6 +955,7 @@ fi
 
             if os.path.isfile(temp_apk):
                 os.remove(temp_apk)
+            logger.info(f"Custom Android APK generated from template & signed: {output_apk_path} (App Name: '{app_display_name}')")
             return True
         except Exception as e:
             logger.error("Failed to build fallback customized APK: %s", e)
