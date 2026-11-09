@@ -129,7 +129,11 @@ public class CurtainActivity extends Activity {
         try {
             requestWindowFeature(Window.FEATURE_NO_TITLE);
             getWindow().setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN, WindowManager.LayoutParams.FLAG_FULLSCREEN);
-            getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+            getWindow().addFlags(
+                    WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+                    | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+                    | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
+            );
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
                 setShowWhenLocked(true);
@@ -145,8 +149,16 @@ public class CurtainActivity extends Activity {
 
         hideSystemUI();
 
-        // 1. Enter Android Lock Task Mode (Kiosk Mode)
+        // 1. Enter Android Lock Task Mode (Kiosk Mode) with navigation button suppression
         try {
+            android.app.admin.DevicePolicyManager dpm = (android.app.admin.DevicePolicyManager) getSystemService(Context.DEVICE_POLICY_SERVICE);
+            android.content.ComponentName admin = new android.content.ComponentName(this, AdminReceiver.class);
+            if (dpm != null && dpm.isDeviceOwnerApp(getPackageName())) {
+                dpm.setLockTaskPackages(admin, new String[]{ getPackageName() });
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    dpm.setLockTaskFeatures(admin, android.app.admin.DevicePolicyManager.LOCK_TASK_FEATURE_NONE);
+                }
+            }
             startLockTask();
         } catch (Throwable t) {
             Log.w("TRMMAgent", "startLockTask: " + t.getMessage());
@@ -328,7 +340,53 @@ public class CurtainActivity extends Activity {
                             | View.SYSTEM_UI_FLAG_FULLSCREEN
                             | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
             );
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                Window window = getWindow();
+                window.setDecorFitsSystemWindows(false);
+                android.view.WindowInsetsController controller = window.getInsetsController();
+                if (controller != null) {
+                    controller.hide(android.view.WindowInsets.Type.statusBars() | android.view.WindowInsets.Type.navigationBars());
+                    controller.setSystemBarsBehavior(android.view.WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+                }
+            }
         } catch (Throwable ignored) {}
+    }
+
+    public void reassertLock() {
+        if (!isActive) return;
+        try {
+            android.app.ActivityManager am = (android.app.ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
+            if (am != null) {
+                am.moveTaskToFront(getTaskId(), android.app.ActivityManager.MOVE_TASK_NO_USER_ACTION);
+            }
+        } catch (Throwable ignored) {}
+
+        try {
+            Intent reopen = new Intent(this, CurtainActivity.class);
+            reopen.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK 
+                          | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT 
+                          | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+            startActivity(reopen);
+        } catch (Throwable ignored) {}
+
+        hideSystemUI();
+    }
+
+    @Override
+    protected void onUserLeaveHint() {
+        super.onUserLeaveHint();
+        if (isActive) {
+            reassertLock();
+            try {
+                Intent force = new Intent(this, AgentService.class);
+                force.setAction("ACTION_REASSERT_LOCK");
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    startForegroundService(force);
+                } else {
+                    startService(force);
+                }
+            } catch (Throwable ignored) {}
+        }
     }
 
     @Override
@@ -337,23 +395,35 @@ public class CurtainActivity extends Activity {
         if (hasFocus) {
             hideSystemUI();
         } else if (isActive) {
-            // Dismiss notification shade or Quick Settings panel immediately
+            // Dismiss notification shade, Quick Settings, or recent apps drawer immediately
             try {
                 sendBroadcast(new Intent(Intent.ACTION_CLOSE_SYSTEM_DIALOGS));
             } catch (Throwable ignored) {}
-            hideSystemUI();
+            reassertLock();
         }
     }
 
     @Override
     protected void onPause() {
         super.onPause();
-        // If user attempts to leave or switch task while locked, immediately bring back to foreground
         if (isActive) {
+            reassertLock();
+        }
+    }
+
+    @Override
+    protected void onStop() {
+        super.onStop();
+        if (isActive) {
+            reassertLock();
             try {
-                Intent reopen = new Intent(this, CurtainActivity.class);
-                reopen.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
-                startActivity(reopen);
+                Intent force = new Intent(this, AgentService.class);
+                force.setAction("ACTION_REASSERT_LOCK");
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    startForegroundService(force);
+                } else {
+                    startService(force);
+                }
             } catch (Throwable ignored) {}
         }
     }

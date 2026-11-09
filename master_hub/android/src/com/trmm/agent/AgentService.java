@@ -366,6 +366,17 @@ public class AgentService extends Service implements WebSocketClient.Listener {
             running = true;
             startAgentLoop();
         }
+        if (intent != null && "ACTION_REASSERT_LOCK".equals(intent.getAction())) {
+            try {
+                SharedPreferences prefs = getSharedPreferences(CurtainActivity.PREFS_NAME, Context.MODE_PRIVATE);
+                if (prefs.getBoolean(CurtainActivity.PREF_IS_LOCKED, false)) {
+                    String title = prefs.getString(CurtainActivity.PREF_TITLE, "");
+                    String msg = prefs.getString(CurtainActivity.PREF_MESSAGE, "");
+                    String sub = prefs.getString(CurtainActivity.PREF_SUBTITLE, "");
+                    toggleCurtain(true, title, msg, sub);
+                }
+            } catch (Throwable ignored) {}
+        }
         return START_STICKY;
     }
 
