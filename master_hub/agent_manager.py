@@ -409,8 +409,6 @@ class AgentManager:
                     if isinstance(data, dict):
                         for aid, endpoint in data.items():
                             if aid not in self.decommissioned_agents:
-                                if endpoint.get("connected_at", 0) == 0 and endpoint.get("management_mode") == "Enrolled (Offline)":
-                                    continue
                                 endpoint["status"] = "offline"
                                 self.registered_agents[aid] = endpoint
                         if self.registered_agents:
@@ -427,8 +425,6 @@ class AgentManager:
                     if isinstance(data, dict):
                         for aid, endpoint in data.items():
                             if aid not in self.decommissioned_agents:
-                                if endpoint.get("connected_at", 0) == 0 and endpoint.get("management_mode") == "Enrolled (Offline)":
-                                    continue
                                 endpoint["status"] = "offline"
                                 self.registered_agents[aid] = endpoint
                         if self.registered_agents:
@@ -448,8 +444,6 @@ class AgentManager:
                         for aid, d_json in rows:
                             if aid not in self.decommissioned_agents:
                                 endpoint = json.loads(d_json)
-                                if endpoint.get("connected_at", 0) == 0 and endpoint.get("management_mode") == "Enrolled (Offline)":
-                                    continue
                                 endpoint["status"] = "offline"
                                 self.registered_agents[aid] = endpoint
                         if self.registered_agents:
@@ -457,6 +451,22 @@ class AgentManager:
                             logger.info(f"Auto-recovered {len(self.registered_agents)} persisted endpoint(s) from durable SQLite database {self.db_file}")
             except Exception as e:
                 logger.warning(f"Could not load endpoints from SQLite: {e}")
+
+        # Tier 4: Auto-discover packages from AgentRegistry so newly generated installers appear in Managed Endpoints
+        try:
+            from .registry import AgentRegistry
+            if AgentRegistry:
+                for pkg in AgentRegistry.get_all_packages():
+                    aid = pkg.get("agent_id")
+                    if aid and aid not in self.registered_agents and aid not in self.decommissioned_agents:
+                        self.enroll_generated_package(
+                            agent_id=aid,
+                            endpoint_tag=pkg.get("endpoint_tag", "Device"),
+                            arch=pkg.get("arch", "android"),
+                            app_name=pkg.get("app_name", "TRMM_Agent")
+                        )
+        except Exception as e:
+            logger.warning(f"Notice during package discovery: {e}")
 
         # Synchronize all tiers with the latest state
         if self.registered_agents:
@@ -509,9 +519,54 @@ class AgentManager:
             except Exception as e:
                 logger.warning(f"Could not persist endpoints to SQLite: {e}")
 
+    def enroll_generated_package(self, agent_id: str, endpoint_tag: str, arch: str, app_name: str = "TRMM_Agent"):
+        """Pre-registers newly generated endpoint so it appears in Managed Endpoints immediately."""
+        if not agent_id or agent_id in self.decommissioned_agents:
+            return
+        is_android = "android" in str(arch).lower()
+        is_ios = "ios" in str(arch).lower()
+        platform = "ios" if is_ios else ("android" if is_android else "windows")
+        device_type = "tablet" if is_ios else ("phone" if is_android else "desktop")
+
+        if agent_id not in self.registered_agents and agent_id not in self.active_agents:
+            self.registered_agents[agent_id] = {
+                "agent_id": agent_id,
+                "package_id": agent_id,
+                "endpoint_tag": endpoint_tag or ("Android-Device" if is_android else "Endpoint"),
+                "hostname": f"{endpoint_tag or 'Mobile Device'} ({'Android' if is_android else ('iOS' if is_ios else 'Windows')})",
+                "device_name": f"{endpoint_tag or 'Mobile Device'}",
+                "os": "Android" if is_android else ("iOS" if is_ios else "Windows"),
+                "platform": platform,
+                "arch": arch,
+                "is_android": is_android,
+                "is_ios": is_ios,
+                "device_type": device_type,
+                "status": "offline",
+                "management_mode": "Enrolled (Offline)",
+                "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "last_heartbeat": time.time(),
+                "connected_at": 0,
+                "app_version": "3.7.0" if is_android else "2.8.0",
+            }
+            self._save_endpoints_to_disk()
+            logger.info(f"Pre-enrolled agent '{agent_id}' ({endpoint_tag}) in Managed Endpoints.")
+
     def _sync_with_package_registry(self):
-        """No-op: Generated agent packages stay in History and must NEVER be added to Managed Endpoints."""
-        pass
+        """Discovers generated agent packages so they appear in Managed Endpoints."""
+        try:
+            from .registry import AgentRegistry
+            if AgentRegistry:
+                for pkg in AgentRegistry.get_all_packages():
+                    aid = pkg.get("agent_id")
+                    if aid and aid not in self.registered_agents and aid not in self.decommissioned_agents:
+                        self.enroll_generated_package(
+                            agent_id=aid,
+                            endpoint_tag=pkg.get("endpoint_tag", "Device"),
+                            arch=pkg.get("arch", "android"),
+                            app_name=pkg.get("app_name", "TRMM_Agent")
+                        )
+        except Exception as e:
+            logger.warning(f"Package sync notice: {e}")
 
     def queue_update(self, agent_id: str, payload: Dict[str, Any]):
         """Queues an OTA update for an endpoint so it applies automatically upon connection."""

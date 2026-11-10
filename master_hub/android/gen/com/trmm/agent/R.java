@@ -13,7 +13,8 @@ public final class R {
   }
   public static final class id {
     public static final int pbLoader=0x7f020000;
-    public static final int tvLoadingStatus=0x7f020001;
+    public static final int rootLayout=0x7f020001;
+    public static final int tvLoadingStatus=0x7f020002;
   }
   public static final class layout {
     public static final int activity_main=0x7f030000;

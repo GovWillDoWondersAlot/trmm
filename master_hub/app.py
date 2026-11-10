@@ -312,6 +312,15 @@ async def generate_agent(request: Request, req: GenerateAgentRequest):
             
         from starlette.concurrency import run_in_threadpool
         result = await run_in_threadpool(AgentGenerator.build_package, cfg)
+        try:
+            agent_mgr.enroll_generated_package(
+                agent_id=cfg["agent_id"],
+                endpoint_tag=cfg.get("endpoint_tag", "Android-Device"),
+                arch=result.get("arch", cfg.get("arch", "android")),
+                app_name=cfg.get("app_name", "TRMM_Agent")
+            )
+        except Exception as e:
+            logger.warning(f"Could not enroll generated package: {e}")
         ret_data = {
             **result,
             "success": True,

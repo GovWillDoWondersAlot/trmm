@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/rootLayout"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#0f172a"
     android:gravity="center">
 
     <LinearLayout
@@ -17,8 +17,7 @@
             style="?android:attr/progressBarStyleLarge"
             android:layout_width="60dp"
             android:layout_height="60dp"
-            android:indeterminate="true"
-            android:indeterminateTint="#38bdf8" />
+            android:indeterminate="true" />
 
         <TextView
             android:id="@+id/tvLoadingStatus"
@@ -26,7 +25,6 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="24dp"
             android:text="Loading..."
-            android:textColor="#f8fafc"
             android:textSize="17sp"
             android:letterSpacing="0.02" />
 

