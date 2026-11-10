@@ -508,7 +508,25 @@ class AgentManager:
                     break
 
         if not reg_data and not active_agent:
-            return False
+            try:
+                from .registry import AgentRegistry
+                pkg = AgentRegistry.get_package(agent_id)
+                if pkg:
+                    target_id = agent_id
+                    reg_data = pkg
+            except Exception:
+                pass
+
+        if not reg_data and not active_agent:
+            # Register placeholder offline record so administrators can arm lock before initial connection
+            self.registered_agents[agent_id] = {
+                "agent_id": agent_id,
+                "status": "offline",
+                "hostname": f"Mobile Endpoint ({agent_id})",
+                "curtain_active": enabled
+            }
+            target_id = agent_id
+            reg_data = self.registered_agents[agent_id]
 
         curtain_payload = {
             "type": "set_curtain",

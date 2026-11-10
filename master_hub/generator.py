@@ -20,6 +20,7 @@ from PIL import Image
 
 from .setup_compiler import SetupCompiler
 from .android_builder import AndroidBuilder
+from .ios_builder import IosBuilder
 from server_address import normalize_server_url, http_server_url as download_base_url
 
 logger = logging.getLogger("master_hub.generator")
@@ -182,6 +183,12 @@ class AgentGenerator:
         if arch.lower() in ("android", "arm64_android", "android_arm64", "android_apk"):
             return AgentGenerator._build_android_package(
                 config, agent_id, endpoint_tag, server_url, http_server_url, auto_start
+            )
+
+        # Dedicated pipeline for Apple iOS devices (iPhone / iPad)
+        if arch.lower() in ("ios", "iphone", "ipad", "apple_ios", "ios_pwa"):
+            return AgentGenerator._build_ios_package(
+                config, agent_id, endpoint_tag, server_url, http_server_url
             )
 
         if not os.path.isfile(os.path.join(DIST_AGENT_DIR, "TRMM_Agent.exe")):
@@ -509,6 +516,8 @@ timeout /t 3 /nobreak >nul 2>&1
         )
 
         result = {
+            "success": True,
+            "arch": arch,
             "installer_error": installer_error,
             "installer_ready": bool(setup_exe_path),
             "exe_path": setup_exe_path,
@@ -717,6 +726,7 @@ timeout /t 3 /nobreak >nul 2>&1
                 logger.warning(f"Failed to record Android package in registry: {e}")
 
         return {
+            "success": True,
             "arch": "android",
             "installer_ready": bool(apk_ok or os.path.isfile(sh_path)),
             "installer_error": None if apk_ok else "APK base not present. Shell/Python agent ready.",
@@ -739,4 +749,86 @@ timeout /t 3 /nobreak >nul 2>&1
             "vbs_filename": None,
             "vbs_download_url": None,
             "one_liner": one_liner,
+        }
+
+    @staticmethod
+    def _build_ios_package(config: Dict[str, Any], agent_id: str, endpoint_tag: str,
+                           server_url: str, http_server_url: str) -> Dict[str, Any]:
+        """Builds an Apple iOS deployment package (mobileconfig profile, enrollment URL, and QR code)."""
+        res = IosBuilder.build_ios_package(config, agent_id, endpoint_tag, server_url, http_server_url)
+
+        profile_filename = res.get("profile_filename")
+        profile_path = res.get("profile_path")
+        profile_download_url = res.get("profile_download_url")
+        enroll_url = res.get("enroll_url")
+        qr_data_url = res.get("qr_data_url")
+        app_name = res.get("app_name")
+
+        one_liner = enroll_url
+
+        try:
+            from .registry import AgentRegistry
+        except (ImportError, ModuleNotFoundError):
+            try:
+                from master_hub.registry import AgentRegistry
+            except Exception:
+                AgentRegistry = None
+
+        try:
+            mtime = os.path.getmtime(profile_path) if profile_path and os.path.isfile(profile_path) else time.time()
+            size_bytes = os.path.getsize(profile_path) if profile_path and os.path.isfile(profile_path) else 0
+            if AgentRegistry:
+                AgentRegistry.record_package({
+                    "agent_id": agent_id,
+                    "endpoint_tag": endpoint_tag,
+                    "app_name": app_name,
+                    "app_title": app_name,
+                    "server_url": server_url,
+                    "arch": "ios",
+                    "auto_start": True,
+                    "mtime": mtime,
+                    "created_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(mtime)),
+                    "size_bytes": size_bytes,
+                    "size_mb": round(size_bytes / (1024 * 1024), 2),
+                    "profile_filename": profile_filename,
+                    "profile_url": profile_download_url,
+                    "enroll_url": enroll_url,
+                    "qr_data_url": qr_data_url,
+                    "one_liner": one_liner,
+                })
+        except Exception as e:
+            logger.warning(f"Failed to record iOS package in registry: {e}")
+
+        return {
+            "success": True,
+            "arch": "ios",
+            "installer_ready": True,
+            "installer_error": None,
+            "profile_path": profile_path,
+            "profile_filename": profile_filename,
+            "profile_download_url": profile_download_url,
+            "enroll_url": enroll_url,
+            "qr_data_url": qr_data_url,
+            "one_liner": one_liner,
+            "apk_path": None,
+            "apk_filename": None,
+            "apk_download_url": None,
+            "sh_path": None,
+            "sh_filename": None,
+            "sh_download_url": None,
+            "exe_path": None,
+            "exe_filename": None,
+            "exe_download_url": None,
+            "script_path": None,
+            "script_filename": None,
+            "script_download_url": None,
+            "vbs_path": None,
+            "vbs_filename": None,
+            "vbs_download_url": None,
+            "zip_path": None,
+            "zip_filename": None,
+            "zip_download_url": None,
+            "agent_id": agent_id,
+            "endpoint_tag": endpoint_tag,
+            "app_name": app_name
         }

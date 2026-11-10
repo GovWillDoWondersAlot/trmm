@@ -1,0 +1,22 @@
+{
+  "name": "Tactical RMM Mobile Agent",
+  "short_name": "RMM Agent",
+  "start_url": "/ios",
+  "display": "standalone",
+  "background_color": "#030712",
+  "theme_color": "#080d1a",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/static/favicon.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/static/favicon.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
+

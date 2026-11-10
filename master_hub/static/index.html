@@ -224,6 +224,9 @@
                         <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 13px; color: #10b981; font-weight: 500;">
                             <input type="radio" name="genArch" value="android" onchange="onArchChanged(this.value)"> 🤖 Android Mobile (APK / ARM64)
                         </label>
+                        <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 13px; color: #38bdf8; font-weight: 500;">
+                            <input type="radio" name="genArch" value="ios" onchange="onArchChanged(this.value)"> 🍎 Apple iOS (iPhone / iPad)
+                        </label>
                     </div>
                 </div>
 
@@ -276,6 +279,30 @@
                         <a id="downloadAndroidZipLink" class="btn btn-outline" href="#" style="text-align: center; justify-content: center; font-size: 12px;">
                             📦 Offline Package (.zip)
                         </a>
+                    </div>
+
+                    <!-- Download Actions Grid (Apple iOS) -->
+                    <div id="iosDownloadGrid" style="display: none; flex-direction: column; gap: 12px; margin-bottom: 12px;">
+                        <div style="display: flex; gap: 16px; align-items: center; background: rgba(30, 41, 59, 0.6); padding: 12px; border-radius: 8px; border: 1px solid rgba(56, 189, 248, 0.25);">
+                            <div style="background: #fff; padding: 6px; border-radius: 6px; display: inline-flex; flex-shrink: 0;">
+                                <img id="iosQrCodeImg" src="" alt="Scan with iPhone Camera" style="width: 100px; height: 100px; display: block;">
+                            </div>
+                            <div style="flex: 1; display: flex; flex-direction: column; gap: 6px;">
+                                <div style="font-size: 13px; font-weight: 700; color: #38bdf8;">📲 Scan with iPhone Camera</div>
+                                <div style="font-size: 11px; color: #cbd5e1; line-height: 1.4;">
+                                    Point your iPhone or iPad camera at this QR code to connect and auto-enroll the device instantly.
+                                </div>
+                                <a id="openIosLink" class="btn btn-sm btn-outline" href="#" target="_blank" style="padding: 4px 8px; font-size: 11px; align-self: flex-start; margin-top: 4px;">
+                                    Open Web Agent Link ↗
+                                </a>
+                            </div>
+                        </div>
+
+                        <div style="display: grid; grid-template-columns: 1fr; gap: 8px;">
+                            <a id="downloadIosProfileLink" class="btn btn-primary" href="#" style="text-align: center; justify-content: center; font-size: 13px; font-weight: 600; padding: 10px; background: #0284c7; border-color: #38bdf8; box-shadow: 0 0 12px rgba(56, 189, 248, 0.3);">
+                                ⬇ Download Apple Configuration Profile (.mobileconfig)
+                            </a>
+                        </div>
                     </div>
 
                     <!-- Android Enterprise Device Owner Provisioning Hint -->
@@ -333,7 +360,7 @@
             <div class="modal-header">
                 <h3>
                     <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" style="vertical-align: text-bottom; margin-right: 6px; color: #fbbf24;"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
-                    Lock Android Device
+                    Lock Mobile Device (Android / iOS)
                 </h3>
                 <button class="close-btn" onclick="closeLockDeviceModal()">✕</button>
             </div>

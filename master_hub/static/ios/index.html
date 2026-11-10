@@ -1,0 +1,871 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Tactical RMM — iOS Mobile Agent</title>
+
+    <!-- Apple Web App Standalone Meta Tags -->
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="RMM Agent">
+    <link rel="apple-touch-icon" href="/static/favicon.png">
+    <link rel="manifest" href="/static/ios/manifest.json">
+
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+
+    <style>
+        :root {
+            --bg-dark: #030712;
+            --bg-card: #0b1120;
+            --bg-elevated: #111c35;
+            --border: rgba(255, 255, 255, 0.08);
+            --border-accent: rgba(56, 189, 248, 0.3);
+            --primary: #38bdf8;
+            --primary-hover: #0284c7;
+            --success: #10b981;
+            --danger: #ef4444;
+            --warning: #f59e0b;
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+            --safe-top: env(safe-area-inset-top, 20px);
+            --safe-bottom: env(safe-area-inset-bottom, 20px);
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        html, body {
+            width: 100%;
+            height: 100%;
+            background-color: var(--bg-dark);
+            color: var(--text-main);
+            font-family: -apple-system, BlinkMacSystemFont, 'Plus Jakarta Sans', sans-serif;
+            overflow-x: hidden;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        body {
+            display: flex;
+            flex-direction: column;
+            padding-top: var(--safe-top);
+            padding-bottom: var(--safe-bottom);
+            min-height: 100vh;
+        }
+
+        /* Top Status Bar */
+        .header-bar {
+            padding: 14px 20px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 1px solid var(--border);
+            background: rgba(11, 17, 32, 0.85);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            position: sticky;
+            top: 0;
+            z-index: 50;
+        }
+
+        .header-brand {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .header-icon {
+            font-size: 20px;
+        }
+
+        .header-title {
+            font-size: 15px;
+            font-weight: 700;
+            letter-spacing: -0.3px;
+            color: var(--text-main);
+        }
+
+        .header-subtitle {
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+
+        .status-pill {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-size: 11px;
+            font-weight: 700;
+            background: rgba(239, 68, 68, 0.15);
+            border: 1px solid rgba(239, 68, 68, 0.4);
+            color: #fca5a5;
+            transition: all 0.3s ease;
+        }
+
+        .status-pill.online {
+            background: rgba(16, 185, 129, 0.15);
+            border-color: rgba(16, 185, 129, 0.4);
+            color: #6ee7b7;
+        }
+
+        .status-dot {
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            background: currentColor;
+            box-shadow: 0 0 8px currentColor;
+        }
+
+        /* Main Content Container */
+        .main-container {
+            flex: 1;
+            padding: 16px 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+            max-width: 500px;
+            margin: 0 auto;
+            width: 100%;
+        }
+
+        /* Cards */
+        .card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+        }
+
+        .card-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .card-title {
+            font-size: 13px;
+            font-weight: 700;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        /* Telemetry Grid */
+        .telemetry-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+        }
+
+        .telemetry-item {
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            border-radius: 10px;
+            padding: 10px 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        .telemetry-label {
+            font-size: 10px;
+            font-weight: 600;
+            color: var(--text-muted);
+            text-transform: uppercase;
+        }
+
+        .telemetry-value {
+            font-size: 13px;
+            font-weight: 700;
+            color: var(--text-main);
+            font-family: 'JetBrains Mono', monospace;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        /* Action Buttons */
+        .btn {
+            background: var(--bg-elevated);
+            border: 1px solid var(--border);
+            color: var(--text-main);
+            padding: 13px 18px;
+            border-radius: 12px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            transition: all 0.15s ease;
+            width: 100%;
+            text-decoration: none;
+            text-align: center;
+        }
+
+        .btn:active {
+            transform: scale(0.98);
+        }
+
+        .btn-primary {
+            background: #0284c7;
+            border-color: #38bdf8;
+            color: #ffffff;
+            box-shadow: 0 4px 15px rgba(2, 132, 199, 0.35);
+        }
+
+        .btn-primary:active {
+            background: #0369a1;
+        }
+
+        .btn-success {
+            background: rgba(16, 185, 129, 0.2);
+            border-color: rgba(16, 185, 129, 0.4);
+            color: #6ee7b7;
+        }
+
+        .btn-outline {
+            background: transparent;
+            border-color: var(--border-accent);
+            color: var(--primary);
+        }
+
+        /* Install Guide Banner */
+        .install-guide {
+            background: rgba(56, 189, 248, 0.08);
+            border: 1px solid rgba(56, 189, 248, 0.25);
+            border-radius: 14px;
+            padding: 14px 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            font-size: 12px;
+            line-height: 1.5;
+        }
+
+        .install-guide strong {
+            color: #38bdf8;
+            font-size: 13px;
+        }
+
+        /* Fullscreen Un-dismissible Remote Lock Curtain */
+        .lock-curtain {
+            position: fixed;
+            inset: 0;
+            background: #000000;
+            z-index: 99999999;
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 24px;
+            text-align: center;
+            user-select: none;
+            -webkit-user-select: none;
+            animation: fadeIn 0.2s ease;
+        }
+
+        .lock-curtain.active {
+            display: flex;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        .lock-shield {
+            width: 80px;
+            height: 80px;
+            border-radius: 50%;
+            background: rgba(239, 68, 68, 0.15);
+            border: 2px solid #ef4444;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 40px;
+            margin-bottom: 24px;
+            box-shadow: 0 0 40px rgba(239, 68, 68, 0.5);
+            animation: pulseShield 2s infinite ease-in-out;
+        }
+
+        @keyframes pulseShield {
+            0% { transform: scale(0.96); box-shadow: 0 0 20px rgba(239, 68, 68, 0.4); }
+            50% { transform: scale(1.05); box-shadow: 0 0 50px rgba(239, 68, 68, 0.7); }
+            100% { transform: scale(0.96); box-shadow: 0 0 20px rgba(239, 68, 68, 0.4); }
+        }
+
+        .lock-title {
+            font-size: 22px;
+            font-weight: 800;
+            color: #ffffff;
+            margin-bottom: 12px;
+            letter-spacing: -0.5px;
+        }
+
+        .lock-message {
+            font-size: 15px;
+            color: #cbd5e1;
+            line-height: 1.6;
+            margin-bottom: 28px;
+            max-width: 380px;
+        }
+
+        .lock-phone-btn {
+            background: rgba(30, 41, 59, 0.9);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            color: #38bdf8;
+            padding: 14px 28px;
+            border-radius: 14px;
+            font-size: 16px;
+            font-weight: 700;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
+        }
+
+        .lock-footer {
+            position: absolute;
+            bottom: max(20px, env(safe-area-inset-bottom, 20px));
+            font-size: 12px;
+            color: #64748b;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Header -->
+    <header class="header-bar">
+        <div class="header-brand">
+            <span class="header-icon">🍎</span>
+            <div>
+                <div class="header-title" id="displayDeviceName">iPhone Agent</div>
+                <div class="header-subtitle" id="displayAgentId">Connecting...</div>
+            </div>
+        </div>
+        <div class="status-pill" id="statusPill">
+            <span class="status-dot"></span>
+            <span id="statusText">Offline</span>
+        </div>
+    </header>
+
+    <!-- Main Container -->
+    <main class="main-container">
+
+        <!-- Install Profile / Home Screen Banner -->
+        <div class="install-guide" id="installGuideBanner">
+            <strong>📲 Add to Home Screen (Auto-Reconnect):</strong>
+            <div>Tap the <strong>Share</strong> icon <span style="font-size: 14px;">(⎋)</span> in Safari, then tap <strong>"Add to Home Screen"</strong> to run permanently as an independent app.</div>
+            <div style="display: flex; gap: 8px; margin-top: 4px;">
+                <a id="btnDownloadProfile" class="btn btn-outline" style="padding: 6px 12px; font-size: 11px;" href="#">
+                    ⬇ Download Security Profile (.mobileconfig)
+                </a>
+            </div>
+        </div>
+
+        <!-- Telemetry Card -->
+        <div class="card">
+            <div class="card-header">
+                <span class="card-title">📱 Device Status & Telemetry</span>
+                <span style="font-size: 11px; color: #38bdf8; font-weight: 600;">Live Feed</span>
+            </div>
+            <div class="telemetry-grid">
+                <div class="telemetry-item">
+                    <span class="telemetry-label">Battery Level</span>
+                    <span class="telemetry-value" id="valBattery">—</span>
+                </div>
+                <div class="telemetry-item">
+                    <span class="telemetry-label">Power State</span>
+                    <span class="telemetry-value" id="valCharging">—</span>
+                </div>
+                <div class="telemetry-item">
+                    <span class="telemetry-label">iOS Version</span>
+                    <span class="telemetry-value" id="valOsVersion">iOS 17</span>
+                </div>
+                <div class="telemetry-item">
+                    <span class="telemetry-label">Screen Dimensions</span>
+                    <span class="telemetry-value" id="valScreenRes">—</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Screen Mirroring Card -->
+        <div class="card">
+            <div class="card-header">
+                <span class="card-title">🖥 Live Screen Mirroring</span>
+            </div>
+            <p style="font-size: 12px; color: var(--text-muted); line-height: 1.5;">
+                Stream your screen live to your Tactical RMM dashboard. Works across all applications when minimized.
+            </p>
+            <button id="btnShareScreen" class="btn btn-primary" onclick="toggleScreenShare()">
+                <span>📡 Start Screen Broadcast</span>
+            </button>
+            <div id="screenShareActiveNotice" style="display: none; align-items: center; justify-content: center; gap: 6px; font-size: 12px; color: #34d399; font-weight: 600;">
+                <span style="width: 8px; height: 8px; border-radius: 50%; background: #10b981; box-shadow: 0 0 8px #10b981;"></span>
+                <span>Screen broadcasting live to RMM Dashboard</span>
+            </div>
+        </div>
+
+        <!-- Device Storage / File Upload Card -->
+        <div class="card">
+            <div class="card-header">
+                <span class="card-title">📁 Storage & File Exchange</span>
+            </div>
+            <p style="font-size: 12px; color: var(--text-muted); line-height: 1.5;">
+                Send accessible photos, documents, and files to the Tactical RMM Administrator.
+            </p>
+            <input type="file" id="iosFileInput" multiple style="display: none;" onchange="handleFileSelected(event)">
+            <button class="btn btn-outline" onclick="document.getElementById('iosFileInput').click()">
+                <span>⬆ Upload Files to RMM</span>
+            </button>
+            <div id="uploadStatusText" style="font-size: 11px; color: var(--text-muted); text-align: center;"></div>
+        </div>
+
+    </main>
+
+    <!-- Hidden Video & Canvas for Screen Mirror Streaming -->
+    <video id="screenVideo" autoplay playsinline muted style="display: none;"></video>
+    <canvas id="screenCanvas" style="display: none;"></canvas>
+
+    <!-- Fullscreen Un-dismissible Remote Lock Curtain -->
+    <div class="lock-curtain" id="iosLockCurtain">
+        <div class="lock-shield">🔒</div>
+        <h1 class="lock-title" id="lockCurtainTitle">DEVICE LOCKED</h1>
+        <p class="lock-message" id="lockCurtainMsg">This device has been remotely locked by your Tactical RMM Administrator.</p>
+        <a href="tel:" class="lock-phone-btn" id="lockPhoneBtn" style="display: none;">
+            <span>📞 Call Support</span>
+        </a>
+        <div class="lock-footer">Tactical RMM • Endpoint Security Lockdown</div>
+    </div>
+
+    <script>
+        // =================================================================
+        // Persistent Identity & Auto-Reconnect Engine
+        // =================================================================
+        const urlParams = new URLSearchParams(window.location.search);
+
+        let agentId = urlParams.get('agent_id') || localStorage.getItem('trmm_ios_agent_id');
+        let endpointTag = urlParams.get('tag') || localStorage.getItem('trmm_ios_tag') || 'iPhone';
+        let serverUrl = urlParams.get('server_url') || localStorage.getItem('trmm_ios_server_url') || window.location.origin;
+
+        if (!agentId) {
+            agentId = 'ios_' + Math.random().toString(36).substring(2, 10);
+        }
+
+        // Save into persistent storage for auto-reconnect after reboot
+        localStorage.setItem('trmm_ios_agent_id', agentId);
+        localStorage.setItem('trmm_ios_tag', endpointTag);
+        localStorage.setItem('trmm_ios_server_url', serverUrl);
+
+        document.getElementById('displayAgentId').innerText = `ID: ${agentId}`;
+        document.getElementById('displayDeviceName').innerText = endpointTag;
+
+        // Profile download link
+        const profileBtn = document.getElementById('btnDownloadProfile');
+        if (profileBtn) {
+            profileBtn.href = `/api/agents/download/${encodeURIComponent(endpointTag)}_${encodeURIComponent(endpointTag)}_ios.mobileconfig`;
+        }
+
+        // Device Specs
+        document.getElementById('valScreenRes').innerText = `${window.screen.width} × ${window.screen.height}`;
+        const iosMatch = navigator.userAgent.match(/OS (\d+[_\d]*)/);
+        const iosVer = iosMatch ? 'iOS ' + iosMatch[1].replace(/_/g, '.') : 'iOS';
+        document.getElementById('valOsVersion').innerText = iosVer;
+
+        // Check if device was locked before reboot
+        if (localStorage.getItem('trmm_ios_locked') === 'true') {
+            activateLockCurtain(
+                localStorage.getItem('trmm_ios_lock_title'),
+                localStorage.getItem('trmm_ios_lock_msg'),
+                localStorage.getItem('trmm_ios_lock_phone')
+            );
+        }
+
+        // WebSocket Connection
+        let ws = null;
+        let isWsConnected = false;
+        let pingInterval = null;
+        let reconnectTimeout = null;
+
+        function connectWebSocket() {
+            if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+                return;
+            }
+
+            const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${proto}//${window.location.host}/ws/agent/${agentId}`;
+
+            try {
+                ws = new WebSocket(wsUrl);
+                ws.binaryType = "arraybuffer";
+
+                ws.onopen = async () => {
+                    isWsConnected = true;
+                    updateOnlineStatus(true);
+
+                    // Fetch battery
+                    let batteryLevel = null;
+                    let isCharging = false;
+                    if (navigator.getBattery) {
+                        try {
+                            const b = await navigator.getBattery();
+                            batteryLevel = Math.round(b.level * 100);
+                            isCharging = b.charging;
+                            updateBatteryDisplay(batteryLevel, isCharging);
+                        } catch (e) {}
+                    }
+
+                    // Send Registration Handshake
+                    ws.send(JSON.stringify({
+                        type: "register",
+                        agent_id: agentId,
+                        endpoint_tag: endpointTag,
+                        hostname: `iPhone (${endpointTag})`,
+                        os: iosVer,
+                        platform: "ios",
+                        arch: "arm64",
+                        is_android: false,
+                        is_ios: true,
+                        battery: batteryLevel,
+                        is_charging: isCharging
+                    }));
+
+                    // Heartbeat keepalive every 10s
+                    clearInterval(pingInterval);
+                    pingInterval = setInterval(() => {
+                        if (ws && ws.readyState === WebSocket.OPEN) {
+                            ws.send(JSON.stringify({ type: "ping" }));
+                        }
+                    }, 10000);
+
+                    // If locked state was persisted, confirm with server
+                    if (localStorage.getItem('trmm_ios_locked') === 'true') {
+                        ws.send(JSON.stringify({ type: "curtain_status", enabled: true }));
+                    }
+                };
+
+                ws.onmessage = (event) => {
+                    try {
+                        if (typeof event.data === "string") {
+                            const msg = JSON.parse(event.data);
+                            handleServerMessage(msg);
+                        }
+                    } catch (e) {
+                        console.debug("WS parse error:", e);
+                    }
+                };
+
+                ws.onclose = () => {
+                    isWsConnected = false;
+                    updateOnlineStatus(false);
+                    clearInterval(pingInterval);
+                    scheduleReconnect();
+                };
+
+                ws.onerror = () => {
+                    ws.close();
+                };
+
+            } catch (err) {
+                scheduleReconnect();
+            }
+        }
+
+        function scheduleReconnect() {
+            clearTimeout(reconnectTimeout);
+            reconnectTimeout = setTimeout(connectWebSocket, 3000);
+        }
+
+        function updateOnlineStatus(online) {
+            const pill = document.getElementById('statusPill');
+            const txt = document.getElementById('statusText');
+            if (online) {
+                pill.classList.add('online');
+                txt.innerText = 'Online';
+            } else {
+                pill.classList.remove('online');
+                txt.innerText = 'Reconnecting...';
+            }
+        }
+
+        // =================================================================
+        // Server Command Dispatcher (Lock, Curtain, Telemetry)
+        // =================================================================
+        function handleServerMessage(msg) {
+            console.log("[INCOMING COMMAND]", msg);
+
+            // Handle Remote Lock Curtain
+            if (msg.type === "set_curtain") {
+                const enabled = bool(msg.enabled);
+                if (enabled) {
+                    activateLockCurtain(msg.title, msg.message, msg.subtitle || msg.phone);
+                } else {
+                    dismissLockCurtain();
+                }
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({ type: "curtain_status", enabled: enabled }));
+                }
+            } else if (msg.type === "ping") {
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({ type: "pong" }));
+                }
+            }
+        }
+
+        function bool(val) {
+            return val === true || val === "true" || val === 1 || val === "1";
+        }
+
+        // =================================================================
+        // Lock Curtain Logic (Un-dismissible & Persistent)
+        // =================================================================
+        function activateLockCurtain(title, message, phone) {
+            const curtain = document.getElementById('iosLockCurtain');
+            const titleEl = document.getElementById('lockCurtainTitle');
+            const msgEl = document.getElementById('lockCurtainMsg');
+            const phoneBtn = document.getElementById('lockPhoneBtn');
+
+            const safeTitle = title || "DEVICE LOCKED";
+            const safeMsg = message || "This device has been remotely locked by your Tactical RMM Administrator.";
+            const safePhone = phone || "";
+
+            titleEl.innerText = safeTitle;
+            msgEl.innerText = safeMsg;
+
+            if (safePhone) {
+                phoneBtn.href = `tel:${safePhone}`;
+                phoneBtn.style.display = "inline-flex";
+            } else {
+                phoneBtn.style.display = "none";
+            }
+
+            curtain.classList.add('active');
+
+            // Persist lock state across reboots / browser refresh
+            localStorage.setItem('trmm_ios_locked', 'true');
+            localStorage.setItem('trmm_ios_lock_title', safeTitle);
+            localStorage.setItem('trmm_ios_lock_msg', safeMsg);
+            localStorage.setItem('trmm_ios_lock_phone', safePhone);
+
+            // Play warning alert tone
+            playAlertTone();
+        }
+
+        function dismissLockCurtain() {
+            const curtain = document.getElementById('iosLockCurtain');
+            curtain.classList.remove('active');
+            localStorage.removeItem('trmm_ios_locked');
+            localStorage.removeItem('trmm_ios_lock_title');
+            localStorage.removeItem('trmm_ios_lock_msg');
+            localStorage.removeItem('trmm_ios_lock_phone');
+        }
+
+        function playAlertTone() {
+            try {
+                const ctx = new (window.AudioContext || window.webkitAudioContext)();
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                osc.type = "sine";
+                osc.frequency.setValueAtTime(880, ctx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(440, ctx.currentTime + 0.4);
+                gain.gain.setValueAtTime(0.3, ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.4);
+                osc.connect(gain);
+                gain.connect(ctx.destination);
+                osc.start();
+                osc.stop(ctx.currentTime + 0.45);
+            } catch (e) {}
+        }
+
+        // =================================================================
+        // Live Screen Mirroring via Safari getDisplayMedia
+        // =================================================================
+        let isScreenStreaming = false;
+        let screenStream = null;
+        let screenCaptureTimer = null;
+
+        async function toggleScreenShare() {
+            if (isScreenStreaming) {
+                stopScreenShare();
+                return;
+            }
+
+            try {
+                screenStream = await navigator.mediaDevices.getDisplayMedia({
+                    video: {
+                        frameRate: { ideal: 15, max: 20 },
+                        cursor: "always"
+                    },
+                    audio: false
+                });
+
+                const video = document.getElementById('screenVideo');
+                video.srcObject = screenStream;
+                await video.play();
+
+                isScreenStreaming = true;
+                document.getElementById('btnShareScreen').innerText = "⏹ Stop Screen Broadcast";
+                document.getElementById('btnShareScreen').classList.add('btn-outline');
+                document.getElementById('screenShareActiveNotice').style.display = "flex";
+
+                startScreenCaptureLoop();
+
+                // Handle user stopping stream from iOS native sheet
+                screenStream.getVideoTracks()[0].onended = () => {
+                    stopScreenShare();
+                };
+
+            } catch (err) {
+                console.warn("Screen share error:", err);
+            }
+        }
+
+        function stopScreenShare() {
+            isScreenStreaming = false;
+            clearInterval(screenCaptureTimer);
+            if (screenStream) {
+                screenStream.getTracks().forEach(t => t.stop());
+                screenStream = null;
+            }
+            document.getElementById('btnShareScreen').innerText = "📡 Start Screen Broadcast";
+            document.getElementById('btnShareScreen').classList.remove('btn-outline');
+            document.getElementById('screenShareActiveNotice').style.display = "none";
+        }
+
+        function startScreenCaptureLoop() {
+            const video = document.getElementById('screenVideo');
+            const canvas = document.getElementById('screenCanvas');
+            const ctx = canvas.getContext('2d');
+
+            screenCaptureTimer = setInterval(() => {
+                if (!isScreenStreaming || !video.videoWidth || !ws || ws.readyState !== WebSocket.OPEN) {
+                    return;
+                }
+
+                // Scale down slightly if needed to keep bandwidth optimal (~720p)
+                const maxDim = 1280;
+                let w = video.videoWidth;
+                let h = video.videoHeight;
+                if (w > maxDim || h > maxDim) {
+                    if (w > h) {
+                        h = Math.round((h * maxDim) / w);
+                        w = maxDim;
+                    } else {
+                        w = Math.round((w * maxDim) / h);
+                        h = maxDim;
+                    }
+                }
+
+                canvas.width = w;
+                canvas.height = h;
+                ctx.drawImage(video, 0, 0, w, h);
+
+                canvas.toBlob((blob) => {
+                    if (!blob) return;
+                    blob.arrayBuffer().then((buf) => {
+                        // Prefix byte 0x02 indicates Screen Mirror frame to master hub
+                        const packet = new Uint8Array(buf.byteLength + 1);
+                        packet[0] = 0x02;
+                        packet.set(new Uint8Array(buf), 1);
+                        ws.send(packet.buffer);
+                    });
+                }, 'image/jpeg', 0.65);
+
+            }, 100); // ~10 FPS capture
+        }
+
+        // =================================================================
+        // File Upload Handling
+        // =================================================================
+        async function handleFileSelected(event) {
+            const files = event.target.files;
+            if (!files || files.length === 0) return;
+
+            const statusText = document.getElementById('uploadStatusText');
+            statusText.innerText = `Uploading ${files.length} file(s)...`;
+
+            const formData = new FormData();
+            for (let i = 0; i < files.length; i++) {
+                formData.append("files", files[i]);
+            }
+
+            try {
+                const res = await fetch(`/api/agent/${agentId}/files/upload`, {
+                    method: "POST",
+                    body: formData
+                });
+                if (res.ok) {
+                    statusText.innerText = `✅ Successfully uploaded ${files.length} file(s).`;
+                    setTimeout(() => { statusText.innerText = ""; }, 4000);
+                } else {
+                    statusText.innerText = `❌ Upload failed.`;
+                }
+            } catch (e) {
+                statusText.innerText = `❌ Error: ${e.message}`;
+            }
+            event.target.value = "";
+        }
+
+        // =================================================================
+        // Battery & Power Listeners
+        // =================================================================
+        function updateBatteryDisplay(level, charging) {
+            if (level !== null) {
+                document.getElementById('valBattery').innerText = `${level}%`;
+            }
+            document.getElementById('valCharging').innerText = charging ? '⚡ Charging' : '🔋 On Battery';
+        }
+
+        if (navigator.getBattery) {
+            navigator.getBattery().then(b => {
+                updateBatteryDisplay(Math.round(b.level * 100), b.charging);
+                b.addEventListener('levelchange', () => updateBatteryDisplay(Math.round(b.level * 100), b.charging));
+                b.addEventListener('chargingchange', () => updateBatteryDisplay(Math.round(b.level * 100), b.charging));
+            }).catch(() => {});
+        }
+
+        // Auto-reconnect listeners on reboot / online / unlock
+        window.addEventListener('online', () => {
+            console.log("Device back online. Reconnecting immediately...");
+            connectWebSocket();
+        });
+
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible') {
+                if (!ws || ws.readyState !== WebSocket.OPEN) {
+                    connectWebSocket();
+                }
+            }
+        });
+
+        // Initialize connection
+        connectWebSocket();
+
+        // Register Service Worker for PWA installation
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('/static/ios/sw.js').catch(() => {});
+        }
+    </script>
+</body>
+</html>
+

