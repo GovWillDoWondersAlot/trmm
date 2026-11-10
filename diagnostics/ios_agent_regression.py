@@ -109,7 +109,7 @@ class TestIosAgentSuite(unittest.TestCase):
         profile_fn = builder_res["profile_filename"]
         res_dl = self.client.get(f"/api/agents/download/{profile_fn}")
         self.assertEqual(res_dl.status_code, 200)
-        self.assertEqual(res_dl.headers.get("content-type"), "application/x-apple-as-config")
+        self.assertIn(res_dl.headers.get("content-type"), ("application/x-apple-aspen-config", "application/x-apple-as-config"))
         self.assertIn("com.apple.webClip.managed", res_dl.text)
 
     def test_05_ios_file_upload_and_management(self):

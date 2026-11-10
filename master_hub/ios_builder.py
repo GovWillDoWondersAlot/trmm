@@ -16,6 +16,10 @@ from urllib.parse import urlparse
 
 try:
     import qrcode
+    try:
+        import qrcode.image.svg
+    except Exception:
+        pass
 except ImportError:
     qrcode = None
 
@@ -110,27 +114,49 @@ class IosBuilder:
 
     @staticmethod
     def generate_qr_code_base64(url: str) -> str:
-        """Generates a high-contrast base64 PNG data URL of a QR code."""
-        if not qrcode:
-            logger.warning("qrcode package not installed. Skipping QR code generation.")
-            return ""
-        try:
-            qr = qrcode.QRCode(
-                version=1,
-                error_correction=qrcode.constants.ERROR_CORRECT_M,
-                box_size=8,
-                border=2,
-            )
-            qr.add_data(url)
-            qr.make(fit=True)
-            img = qr.make_image(fill_color="black", back_color="white")
-            buf = io.BytesIO()
-            img.save(buf, format="PNG")
-            b64_str = base64.b64encode(buf.getvalue()).decode("utf-8")
-            return f"data:image/png;base64,{b64_str}"
-        except Exception as e:
-            logger.warning(f"Error generating QR code: {e}")
-            return ""
+        """Generates a high-contrast base64 PNG or SVG data URL of a QR code."""
+        if qrcode:
+            # 1. Try raster PNG with PIL
+            try:
+                qr = qrcode.QRCode(
+                    version=1,
+                    error_correction=qrcode.constants.ERROR_CORRECT_M,
+                    box_size=8,
+                    border=2,
+                )
+                qr.add_data(url)
+                qr.make(fit=True)
+                img = qr.make_image(fill_color="black", back_color="white")
+                buf = io.BytesIO()
+                img.save(buf, format="PNG")
+                b64_str = base64.b64encode(buf.getvalue()).decode("utf-8")
+                return f"data:image/png;base64,{b64_str}"
+            except Exception as e_png:
+                logger.debug(f"PNG QR generation failed ({e_png}), trying pure-SVG fallback...")
+
+            # 2. Try pure SVG with SvgImage (Zero-dependency, no PIL required)
+            try:
+                if hasattr(qrcode, "image") and hasattr(qrcode.image, "svg"):
+                    qr_svg = qrcode.QRCode(
+                        version=1,
+                        error_correction=qrcode.constants.ERROR_CORRECT_M,
+                        box_size=8,
+                        border=2,
+                        image_factory=qrcode.image.svg.SvgImage
+                    )
+                    qr_svg.add_data(url)
+                    qr_svg.make(fit=True)
+                    svg_img = qr_svg.make_image()
+                    buf = io.BytesIO()
+                    svg_img.save(buf)
+                    b64_svg = base64.b64encode(buf.getvalue()).decode("utf-8")
+                    return f"data:image/svg+xml;base64,{b64_svg}"
+            except Exception as e_svg:
+                logger.warning(f"SVG QR generation failed: {e_svg}")
+
+        # 3. Fallback: return standard HTTPS QR rendering API data URL
+        from urllib.parse import quote
+        return f"https://api.qrserver.com/v1/create-qr-code/?size=200x200&data={quote(url)}"
 
     @staticmethod
     def build_ios_package(config: Optional[Dict[str, Any]] = None, agent_id: Optional[str] = None,

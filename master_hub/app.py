@@ -313,6 +313,7 @@ async def generate_agent(request: Request, req: GenerateAgentRequest):
         from starlette.concurrency import run_in_threadpool
         result = await run_in_threadpool(AgentGenerator.build_package, cfg)
         ret_data = {
+            **result,
             "success": True,
             "agent_id": cfg["agent_id"],
             "arch": result.get("arch", cfg.get("arch", "x64")),
@@ -330,6 +331,10 @@ async def generate_agent(request: Request, req: GenerateAgentRequest):
             "bootstrap_download_url": result.get("bootstrap_download_url"),
             "vbs_filename": result.get("vbs_filename"),
             "vbs_download_url": result.get("vbs_download_url"),
+            "profile_filename": result.get("profile_filename"),
+            "profile_download_url": result.get("profile_download_url"),
+            "enroll_url": result.get("enroll_url"),
+            "qr_data_url": result.get("qr_data_url"),
             "one_liner": result.get("one_liner"),
         }
         return ret_data
@@ -373,7 +378,7 @@ async def download_agent(filename: str):
     elif filename.endswith(".exe"):
         media_type = "application/vnd.microsoft.portable-executable"
     elif filename.endswith(".mobileconfig"):
-        media_type = "application/x-apple-as-config"
+        media_type = "application/x-apple-aspen-config"
 
     return FileResponse(
         file_path,
@@ -863,43 +868,44 @@ async def list_agent_files(request: Request, agent_id: str):
         raise HTTPException(status_code=401, detail="Authentication required")
 
     agent = agent_mgr.get_agent(agent_id)
-    agent_uploads_dir = os.path.join(OUTPUT_DIR, "agent_uploads", agent_id)
-
-    # If the endpoint has uploaded files or is an iOS device, list uploads directly
-    if os.path.isdir(agent_uploads_dir) or (agent and (agent.client_info.get("is_ios") or agent.client_info.get("platform") == "ios")):
-        entries = []
-        if os.path.isdir(agent_uploads_dir):
-            for fn in sorted(os.listdir(agent_uploads_dir)):
-                fp = os.path.join(agent_uploads_dir, fn)
-                if os.path.isfile(fp):
-                    st = os.stat(fp)
-                    entries.append({
-                        "name": fn,
-                        "path": fp,
-                        "is_dir": False,
-                        "size": st.st_size,
-                        "last_modified": int(st.st_mtime),
-                        "readable": True,
-                        "writable": True
-                    })
-        return JSONResponse({
-            "success": True,
-            "path": "/uploads",
-            "parent": "",
-            "shortcuts": ["/uploads"],
-            "entries": entries
-        })
-
-    if not agent or not agent.ws:
-        raise HTTPException(status_code=404, detail="Agent is offline or not currently connected.")
-
     try:
         body = await request.json()
     except Exception:
         body = {}
     path = body.get("path", "")
-    res = await agent.request_file_operation({"type": "file_list", "path": path}, timeout=10.0)
-    return JSONResponse(res)
+
+    # For Android devices: forward requests directly to the live Android agent!
+    is_android = agent and (agent.client_info.get("is_android") or agent.client_info.get("platform") == "android")
+    if is_android and path != "/uploads":
+        if not agent or not agent.ws:
+            raise HTTPException(status_code=404, detail="Android agent is offline or not currently connected.")
+        res = await agent.request_file_operation({"type": "file_list", "path": path}, timeout=10.0)
+        return JSONResponse(res)
+
+    agent_uploads_dir = os.path.join(OUTPUT_DIR, "agent_uploads", agent_id)
+    # For iOS devices or server-side uploaded files:
+    entries = []
+    if os.path.isdir(agent_uploads_dir):
+        for fn in sorted(os.listdir(agent_uploads_dir)):
+            fp = os.path.join(agent_uploads_dir, fn)
+            if os.path.isfile(fp):
+                st = os.stat(fp)
+                entries.append({
+                    "name": fn,
+                    "path": fp,
+                    "is_dir": False,
+                    "size": st.st_size,
+                    "last_modified": int(st.st_mtime),
+                    "readable": True,
+                    "writable": True
+                })
+    return JSONResponse({
+        "success": True,
+        "path": "/uploads",
+        "parent": "",
+        "shortcuts": ["/uploads"],
+        "entries": entries
+    })
 
 
 @app.get("/api/agent/{agent_id}/files/download")
@@ -920,8 +926,12 @@ async def download_agent_file(request: Request, agent_id: str, path: Optional[st
     if not path:
         raise HTTPException(status_code=400, detail="Path parameter is required.")
 
+    agent = agent_mgr.get_agent(agent_id)
+    is_android = agent and (agent.client_info.get("is_android") or agent.client_info.get("platform") == "android")
     agent_uploads_dir = os.path.join(OUTPUT_DIR, "agent_uploads", agent_id)
-    if os.path.isfile(path) and (path.startswith(agent_uploads_dir) or os.path.abspath(path).startswith(os.path.abspath(agent_uploads_dir))):
+
+    # If the file exists in the server uploads directory and this is not an Android internal storage request
+    if os.path.isfile(path) and (not is_android or os.path.abspath(path).startswith(os.path.abspath(agent_uploads_dir))):
         filename = os.path.basename(path)
         with open(path, "rb") as f:
             file_bytes = f.read()
@@ -932,7 +942,6 @@ async def download_agent_file(request: Request, agent_id: str, path: Optional[st
             headers={"Content-Disposition": f'attachment; filename="{filename}"'}
         )
 
-    agent = agent_mgr.get_agent(agent_id)
     if not agent or not agent.ws:
         raise HTTPException(status_code=404, detail="Agent is offline or not currently connected.")
 
@@ -971,15 +980,17 @@ async def delete_agent_file(request: Request, agent_id: str):
     if not path:
         raise HTTPException(status_code=400, detail="Path parameter is required.")
 
+    agent = agent_mgr.get_agent(agent_id)
+    is_android = agent and (agent.client_info.get("is_android") or agent.client_info.get("platform") == "android")
     agent_uploads_dir = os.path.join(OUTPUT_DIR, "agent_uploads", agent_id)
-    if os.path.isfile(path) and (path.startswith(agent_uploads_dir) or os.path.abspath(path).startswith(os.path.abspath(agent_uploads_dir))):
+
+    if os.path.isfile(path) and (not is_android or os.path.abspath(path).startswith(os.path.abspath(agent_uploads_dir))):
         try:
             os.remove(path)
             return JSONResponse({"success": True, "msg": f"Deleted {os.path.basename(path)}"})
         except Exception as e:
             return JSONResponse({"success": False, "msg": str(e)}, status_code=400)
 
-    agent = agent_mgr.get_agent(agent_id)
     if not agent or not agent.ws:
         raise HTTPException(status_code=404, detail="Agent is offline or not currently connected.")
 

