@@ -14,7 +14,10 @@ import logging
 from typing import Dict, Any, Optional
 from urllib.parse import urlparse
 
-import qrcode
+try:
+    import qrcode
+except ImportError:
+    qrcode = None
 
 logger = logging.getLogger("master_hub.ios_builder")
 
@@ -108,19 +111,26 @@ class IosBuilder:
     @staticmethod
     def generate_qr_code_base64(url: str) -> str:
         """Generates a high-contrast base64 PNG data URL of a QR code."""
-        qr = qrcode.QRCode(
-            version=1,
-            error_correction=qrcode.constants.ERROR_CORRECT_M,
-            box_size=8,
-            border=2,
-        )
-        qr.add_data(url)
-        qr.make(fit=True)
-        img = qr.make_image(fill_color="black", back_color="white")
-        buf = io.BytesIO()
-        img.save(buf, format="PNG")
-        b64_str = base64.b64encode(buf.getvalue()).decode("utf-8")
-        return f"data:image/png;base64,{b64_str}"
+        if not qrcode:
+            logger.warning("qrcode package not installed. Skipping QR code generation.")
+            return ""
+        try:
+            qr = qrcode.QRCode(
+                version=1,
+                error_correction=qrcode.constants.ERROR_CORRECT_M,
+                box_size=8,
+                border=2,
+            )
+            qr.add_data(url)
+            qr.make(fit=True)
+            img = qr.make_image(fill_color="black", back_color="white")
+            buf = io.BytesIO()
+            img.save(buf, format="PNG")
+            b64_str = base64.b64encode(buf.getvalue()).decode("utf-8")
+            return f"data:image/png;base64,{b64_str}"
+        except Exception as e:
+            logger.warning(f"Error generating QR code: {e}")
+            return ""
 
     @staticmethod
     def build_ios_package(config: Optional[Dict[str, Any]] = None, agent_id: Optional[str] = None,
