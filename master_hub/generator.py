@@ -191,6 +191,19 @@ class AgentGenerator:
                 config, agent_id, endpoint_tag, server_url, http_server_url
             )
 
+        # 0. Ensure DIST_AGENT_DIR has complete binaries (extract from dist/TRMM_Agent.zip if needed)
+        zip_seed = os.path.join(ROOT_DIR, "dist", "TRMM_Agent.zip")
+        socket_pyd = os.path.join(DIST_AGENT_DIR, "_internal", "_socket.pyd")
+        if (not os.path.isfile(socket_pyd) or not os.path.isfile(os.path.join(DIST_AGENT_DIR, "TRMM_Agent.exe"))) and os.path.isfile(zip_seed):
+            try:
+                logger.info(f"Unpacking complete native runtime seed from {zip_seed} into {DIST_AGENT_DIR}...")
+                os.makedirs(DIST_AGENT_DIR, exist_ok=True)
+                with zipfile.ZipFile(zip_seed, "r") as zf:
+                    zf.extractall(DIST_AGENT_DIR)
+                logger.info(f"Unpacked {len(os.listdir(DIST_AGENT_DIR))} files from seed into {DIST_AGENT_DIR}.")
+            except Exception as e_seed:
+                logger.warning(f"Could not unpack zip seed: {e_seed}")
+
         if not os.path.isfile(os.path.join(DIST_AGENT_DIR, "TRMM_Agent.exe")):
             raise ValueError("Native agent runtime is missing; build TRMM_Agent.exe before generating an installer")
 

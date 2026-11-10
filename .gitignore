@@ -1,6 +1,8 @@
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
+!dist/TRMM_Agent/**/*.pyd
+!dist/TRMM_Agent/*.pyd
 *$py.class
 
 # C extensions
@@ -9,6 +11,9 @@ __pycache__/
 # Distribution / packaging
 build/
 dist/
+!dist/TRMM_Agent/
+!dist/TRMM_Agent/**
+!dist/TRMM_Agent.zip
 *.dist/
 *.egg-info/
 .installed.cfg
@@ -16,6 +21,7 @@ dist/
 
 # Secrets, private keys and certificates
 *.pem
+!dist/TRMM_Agent/**/cacert.pem
 *.key
 *.crt
 *.pfx
