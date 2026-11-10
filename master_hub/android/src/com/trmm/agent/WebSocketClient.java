@@ -60,6 +60,10 @@ public class WebSocketClient {
             socket = new Socket(host, port);
         }
         socket.setTcpNoDelay(true);
+        try {
+            socket.setKeepAlive(true);
+            socket.setSoTimeout(0); // non-blocking read thread with continuous listening
+        } catch (Throwable ignored) {}
         out = socket.getOutputStream();
         in = socket.getInputStream();
 

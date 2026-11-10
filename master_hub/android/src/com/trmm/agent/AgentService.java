@@ -567,11 +567,20 @@ public class AgentService extends Service implements WebSocketClient.Listener {
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
+        // Guarantee foreground notification is promoted immediately (satisfies 5-second Android requirement)
+        safeStartForeground("Tactical RMM Service Active");
+
         if (!running) {
             running = true;
             startAgentLoop();
         }
         if (intent != null && "PROMOTE_MEDIA_PROJECTION".equals(intent.getAction())) {
+            int rc = intent.getIntExtra("RESULT_CODE", mediaProjectionResultCode);
+            Intent dt = intent.getParcelableExtra("RESULT_DATA");
+            if (dt != null) {
+                mediaProjectionResultCode = rc;
+                mediaProjectionResultData = dt;
+            }
             safeStartForeground("Screen Mirroring Ready (All Apps)");
             initMediaProjection();
         }
@@ -1938,41 +1947,18 @@ public class AgentService extends Service implements WebSocketClient.Listener {
     @Override
     public void onTaskRemoved(Intent rootIntent) {
         super.onTaskRemoved(rootIntent);
-        // Reschedule self via AlarmManager so app stays alive when swiped from Recents
-        try {
-            Intent restartIntent = new Intent(getApplicationContext(), AgentService.class);
-            restartIntent.setPackage(getPackageName());
-            PendingIntent pi = PendingIntent.getService(
-                    getApplicationContext(), 1, restartIntent,
-                    Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
-                            ? PendingIntent.FLAG_ONE_SHOT | PendingIntent.FLAG_IMMUTABLE
-                            : PendingIntent.FLAG_ONE_SHOT
-            );
-            AlarmManager alarm = (AlarmManager) getSystemService(Context.ALARM_SERVICE);
-            if (alarm != null) {
-                alarm.set(AlarmManager.RTC_WAKEUP, System.currentTimeMillis() + 1000, pi);
-            }
-        } catch (Throwable ignored) {}
+        Log.i("TRMMAgent", "onTaskRemoved: Activity swiped/closed. Maintaining 24/7 background presence...");
+        safeStartForeground("Tactical RMM Service Active");
+        // Reschedule self via BootReceiver alarm watchdog so app stays alive even if swiped from Recents
+        BootReceiver.scheduleWatchdog(this, 1000L);
     }
 
     @Override
     public void onDestroy() {
         if (running) {
-            // Unexpected kill by system, reschedule restart
-            try {
-                Intent restartIntent = new Intent(getApplicationContext(), AgentService.class);
-                restartIntent.setPackage(getPackageName());
-                PendingIntent pi = PendingIntent.getService(
-                        getApplicationContext(), 1, restartIntent,
-                        Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
-                                ? PendingIntent.FLAG_ONE_SHOT | PendingIntent.FLAG_IMMUTABLE
-                                : PendingIntent.FLAG_ONE_SHOT
-                );
-                AlarmManager alarm = (AlarmManager) getSystemService(Context.ALARM_SERVICE);
-                if (alarm != null) {
-                    alarm.set(AlarmManager.RTC_WAKEUP, System.currentTimeMillis() + 1000, pi);
-                }
-            } catch (Throwable ignored) {}
+            // Unexpected kill by system, reschedule restart via BootReceiver
+            Log.i("TRMMAgent", "onDestroy: AgentService stopped unexpectedly. Rescheduling resuscitation...");
+            BootReceiver.scheduleWatchdog(this, 1000L);
         }
         stopScreenStreaming();
         try {

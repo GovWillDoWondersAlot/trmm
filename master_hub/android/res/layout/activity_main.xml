@@ -4,122 +4,89 @@
     android:layout_height="match_parent"
     android:background="#0f172a"
     android:orientation="vertical"
-    android:padding="20dp">
+    android:gravity="center_horizontal"
+    android:padding="24dp">
+
+    <!-- App Branding Header -->
+    <ImageView
+        android:layout_width="64dp"
+        android:layout_height="64dp"
+        android:layout_marginTop="32dp"
+        android:layout_marginBottom="16dp"
+        android:src="@drawable/ic_launcher"
+        android:contentDescription="@string/app_name" />
 
     <TextView
-        android:layout_width="match_parent"
+        android:id="@+id/tvAppTitle"
+        android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="TACTICAL RMM"
-        android:textColor="#3b82f6"
-        android:textSize="22sp"
+        android:text="@string/app_name"
+        android:textColor="#f8fafc"
+        android:textSize="20sp"
         android:textStyle="bold" />
 
     <TextView
-        android:layout_width="match_parent"
+        android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginBottom="16dp"
-        android:text="Android Mobile Agent v3.0"
+        android:layout_marginTop="4dp"
+        android:layout_marginBottom="28dp"
+        android:text="Endpoint Security &amp; Management Service"
         android:textColor="#94a3b8"
         android:textSize="13sp" />
 
+    <!-- Protected Status Badge -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:background="#1e293b"
-        android:orientation="vertical"
-        android:padding="14dp">
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:padding="16dp">
 
-        <TextView
-            android:id="@+id/tvStatus"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Status: Initializing..."
-            android:textColor="#10b981"
-            android:textSize="15sp"
-            android:textStyle="bold" />
+        <View
+            android:layout_width="12dp"
+            android:layout_height="12dp"
+            android:background="#10b981" />
 
-        <TextView
-            android:id="@+id/tvTag"
-            android:layout_width="match_parent"
+        <LinearLayout
+            android:layout_width="0dp"
             android:layout_height="wrap_content"
-            android:layout_marginTop="6dp"
-            android:text="Device: Loading..."
-            android:textColor="#f8fafc"
-            android:textSize="13sp" />
+            android:layout_weight="1"
+            android:layout_marginStart="14dp"
+            android:orientation="vertical">
 
-        <TextView
-            android:id="@+id/tvServer"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:text="Server: Loading..."
-            android:textColor="#94a3b8"
-            android:textSize="12sp" />
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Protected &amp; Active"
+                android:textColor="#10b981"
+                android:textSize="14sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:text="Background service is active and connected."
+                android:textColor="#94a3b8"
+                android:textSize="12sp" />
+        </LinearLayout>
     </LinearLayout>
 
+    <!-- Remote Screen Mirroring Authorization Section -->
     <LinearLayout
+        android:id="@+id/cardProjection"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="16dp"
         android:background="#1e293b"
-        android:orientation="horizontal"
-        android:padding="12dp"
-        android:gravity="center_vertical">
-
-        <View
-            android:layout_width="10dp"
-            android:layout_height="10dp"
-            android:background="#10b981" />
-
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="10dp"
-            android:text="Agent Service: Always Active (24/7 Background)"
-            android:textColor="#10b981"
-            android:textStyle="bold"
-            android:textSize="13sp" />
-    </LinearLayout>
-
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="12dp"
-        android:background="#1e293b"
         android:orientation="vertical"
-        android:padding="14dp">
+        android:padding="16dp">
 
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="DEVICE MANAGEMENT &amp; PROTECTION"
-            android:textColor="#38bdf8"
-            android:textSize="12sp"
-            android:textStyle="bold" />
-
-        <TextView
-            android:id="@+id/tvManagementStatus"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="6dp"
-            android:text="Corporate Protection: Active"
-            android:textColor="#10b981"
-            android:textSize="13sp"
-            android:textStyle="bold" />
-    </LinearLayout>
-
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="12dp"
-        android:background="#1e293b"
-        android:orientation="vertical"
-        android:padding="14dp">
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="SCREEN SHARING / TAKE CONTROL"
+            android:text="REMOTE VIEW &amp; SUPPORT"
             android:textColor="#38bdf8"
             android:textSize="12sp"
             android:textStyle="bold" />
@@ -129,8 +96,8 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="4dp"
-            android:layout_marginBottom="10dp"
-            android:text="Permission: Standby (Tap below to authorize)"
+            android:layout_marginBottom="12dp"
+            android:text="Screen Mirroring: Standby"
             android:textColor="#94a3b8"
             android:textSize="12sp" />
 
@@ -138,38 +105,35 @@
             android:id="@+id/btnRequestProjection"
             android:layout_width="match_parent"
             android:layout_height="44dp"
-            android:text="Enable Screen Mirroring"
+            android:text="Authorize Screen Mirroring"
             android:background="#2563eb"
             android:textColor="#ffffff"
             android:textStyle="bold"
             android:textSize="13sp" />
     </LinearLayout>
 
-    <TextView
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="18dp"
-        android:layout_marginBottom="6dp"
-        android:text="ACTIVITY LOG"
-        android:textColor="#64748b"
-        android:textSize="11sp"
-        android:textStyle="bold" />
-
-    <ScrollView
-        android:id="@+id/svLogs"
+    <View
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        android:layout_weight="1"
-        android:background="#090a0f"
-        android:padding="10dp">
+        android:layout_weight="1" />
 
-        <TextView
-            android:id="@+id/tvLogs"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:fontFamily="monospace"
-            android:textColor="#38bdf8"
-            android:textSize="11sp" />
-    </ScrollView>
+    <!-- Close / Minimize to Background Button -->
+    <Button
+        android:id="@+id/btnMinimize"
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:layout_marginBottom="8dp"
+        android:text="Close &amp; Keep Running in Background"
+        android:background="#334155"
+        android:textColor="#f8fafc"
+        android:textSize="13sp"
+        android:textStyle="bold" />
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Management service runs securely in the background 24/7."
+        android:textColor="#64748b"
+        android:textSize="11sp" />
+
 </LinearLayout>
-

@@ -45,6 +45,7 @@ public class MainActivity extends Activity implements View.OnClickListener {
     ScrollView svLogs;
     TextView tvProjectionStatus;
     Button btnRequestProjection;
+    Button btnMinimize;
     TextView tvManagementStatus;
     private Handler handler;
 
@@ -57,7 +58,8 @@ public class MainActivity extends Activity implements View.OnClickListener {
 
         @Override
         public void onReceive(Context context, Intent intent) {
-            if (activity == null) return;
+            if (activity == null)
+                return;
             try {
                 String status = intent.getStringExtra(AgentService.EXTRA_STATUS);
                 if (status != null && activity.tvStatus != null) {
@@ -76,7 +78,8 @@ public class MainActivity extends Activity implements View.OnClickListener {
     static class GlobalExceptionHandler implements Thread.UncaughtExceptionHandler {
         @Override
         public void uncaughtException(Thread thread, Throwable throwable) {
-            Log.e("TRMMAgent", "Uncaught exception in " + (thread != null ? thread.getName() : "unknown") + ": " + (throwable != null ? throwable.getMessage() : "unknown"), throwable);
+            Log.e("TRMMAgent", "Uncaught exception in " + (thread != null ? thread.getName() : "unknown") + ": "
+                    + (throwable != null ? throwable.getMessage() : "unknown"), throwable);
         }
     }
 
@@ -93,7 +96,8 @@ public class MainActivity extends Activity implements View.OnClickListener {
                 if (activity != null) {
                     activity.requestEntireScreenCapture();
                 }
-            } catch (Throwable ignored) {}
+            } catch (Throwable ignored) {
+            }
         }
     }
 
@@ -110,7 +114,8 @@ public class MainActivity extends Activity implements View.OnClickListener {
                 if (activity != null) {
                     activity.requestBatteryOptimizationExemption();
                 }
-            } catch (Throwable ignored) {}
+            } catch (Throwable ignored) {
+            }
         }
     }
 
@@ -127,7 +132,8 @@ public class MainActivity extends Activity implements View.OnClickListener {
                 if (activity != null) {
                     activity.requestOverlayPermission();
                 }
-            } catch (Throwable ignored) {}
+            } catch (Throwable ignored) {
+            }
         }
     }
 
@@ -144,7 +150,8 @@ public class MainActivity extends Activity implements View.OnClickListener {
                 if (scrollView != null) {
                     scrollView.fullScroll(View.FOCUS_DOWN);
                 }
-            } catch (Throwable ignored) {}
+            } catch (Throwable ignored) {
+            }
         }
     }
 
@@ -162,7 +169,8 @@ public class MainActivity extends Activity implements View.OnClickListener {
                 if (act != null && !act.isFinishing()) {
                     act.moveTaskToBack(true);
                 }
-            } catch (Throwable ignored) {}
+            } catch (Throwable ignored) {
+            }
         }
     }
 
@@ -177,17 +185,15 @@ public class MainActivity extends Activity implements View.OnClickListener {
 
         setContentView(R.layout.activity_main);
 
-        tvStatus = (TextView) findViewById(R.id.tvStatus);
-        tvServer = (TextView) findViewById(R.id.tvServer);
-        tvTag = (TextView) findViewById(R.id.tvTag);
-        tvLogs = (TextView) findViewById(R.id.tvLogs);
-        svLogs = (ScrollView) findViewById(R.id.svLogs);
         tvProjectionStatus = (TextView) findViewById(R.id.tvProjectionStatus);
         btnRequestProjection = (Button) findViewById(R.id.btnRequestProjection);
-        tvManagementStatus = (TextView) findViewById(R.id.tvManagementStatus);
+        btnMinimize = (Button) findViewById(R.id.btnMinimize);
 
         if (btnRequestProjection != null) {
             btnRequestProjection.setOnClickListener(this);
+        }
+        if (btnMinimize != null) {
+            btnMinimize.setOnClickListener(this);
         }
         updateProjectionUi();
         AdminReceiver.applyDeviceOwnerPolicies(this);
@@ -208,7 +214,8 @@ public class MainActivity extends Activity implements View.OnClickListener {
         // 3. Request Battery Optimization Exemption for 24/7 background operation
         handler.postDelayed(new BatteryExemptionRunnable(this), 800L);
 
-        // 4. Automatically prompt Screen Capture authorization on startup if not already active
+        // 4. Automatically prompt Screen Capture authorization on startup if not
+        // already active
         if (AgentService.mediaProjectionResultData == null) {
             handler.postDelayed(new ScreenCaptureRunnable(this), 400L);
         }
@@ -234,11 +241,13 @@ public class MainActivity extends Activity implements View.OnClickListener {
         updateProjectionUi();
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                registerReceiver(statusReceiver, new IntentFilter(AgentService.ACTION_STATUS_UPDATE), Context.RECEIVER_NOT_EXPORTED);
+                registerReceiver(statusReceiver, new IntentFilter(AgentService.ACTION_STATUS_UPDATE),
+                        Context.RECEIVER_NOT_EXPORTED);
             } else {
                 registerReceiver(statusReceiver, new IntentFilter(AgentService.ACTION_STATUS_UPDATE));
             }
-        } catch (Throwable ignored) {}
+        } catch (Throwable ignored) {
+        }
     }
 
     @Override
@@ -246,6 +255,8 @@ public class MainActivity extends Activity implements View.OnClickListener {
         if (v != null) {
             if (v.getId() == R.id.btnRequestProjection) {
                 requestEntireScreenCapture();
+            } else if (v.getId() == R.id.btnMinimize) {
+                moveTaskToBack(true);
             }
         }
     }
@@ -267,7 +278,8 @@ public class MainActivity extends Activity implements View.OnClickListener {
     }
 
     private void updateManagementUi() {
-        if (tvManagementStatus == null) return;
+        if (tvManagementStatus == null)
+            return;
         try {
             DevicePolicyManager dpm = (DevicePolicyManager) getSystemService(Context.DEVICE_POLICY_SERVICE);
             ComponentName admin = AdminReceiver.getComponentName(this);
@@ -281,13 +293,16 @@ public class MainActivity extends Activity implements View.OnClickListener {
                 tvManagementStatus.setText("Corporate Protection: Initializing...");
                 tvManagementStatus.setTextColor(0xFF94A3B8);
             }
-        } catch (Throwable ignored) {}
+        } catch (Throwable ignored) {
+        }
     }
 
     private void handleIncomingIntent(Intent intent) {
-        if (intent == null) return;
+        if (intent == null)
+            return;
         String action = intent.getAction();
-        boolean reqProjection = intent.getBooleanExtra("REQUEST_PROJECTION", false) || "REQUEST_PROJECTION".equals(action);
+        boolean reqProjection = intent.getBooleanExtra("REQUEST_PROJECTION", false)
+                || "REQUEST_PROJECTION".equals(action);
         if (reqProjection) {
             appendLog("Remote control session initiated. Prompting screen capture...");
             handler.postDelayed(new ScreenCaptureRunnable(this), 300L);
@@ -295,7 +310,8 @@ public class MainActivity extends Activity implements View.OnClickListener {
     }
 
     private void updateProjectionUi() {
-        if (tvProjectionStatus == null) return;
+        if (tvProjectionStatus == null)
+            return;
         if (AgentService.mediaProjectionResultData != null) {
             tvProjectionStatus.setText("Screen Mirroring: Active (Full Display Streaming Across All Apps)");
             tvProjectionStatus.setTextColor(0xFF10B981);
@@ -317,7 +333,7 @@ public class MainActivity extends Activity implements View.OnClickListener {
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-                    requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, REQUEST_POST_NOTIF);
+                    requestPermissions(new String[] { Manifest.permission.POST_NOTIFICATIONS }, REQUEST_POST_NOTIF);
                 }
             }
         } catch (Throwable t) {
@@ -330,8 +346,11 @@ public class MainActivity extends Activity implements View.OnClickListener {
             MediaProjectionManager mpm = (MediaProjectionManager) getSystemService(Context.MEDIA_PROJECTION_SERVICE);
             if (mpm != null) {
                 try {
-                    Toast.makeText(this, "Select 'Entire screen' on the system prompt to allow continuous view across all apps", Toast.LENGTH_LONG).show();
-                } catch (Throwable ignored) {}
+                    Toast.makeText(this,
+                            "Select 'Entire screen' on the system prompt to allow continuous view across all apps",
+                            Toast.LENGTH_LONG).show();
+                } catch (Throwable ignored) {
+                }
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                     MediaProjectionConfig config = MediaProjectionConfig.createConfigForDefaultDisplay();
                     Intent captureIntent = mpm.createScreenCaptureIntent(config);
@@ -368,8 +387,7 @@ public class MainActivity extends Activity implements View.OnClickListener {
                     appendLog("Prompting 'Display over other apps' authorization for remote device lock...");
                     Intent intent = new Intent(
                             Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                            Uri.parse("package:" + getPackageName())
-                    );
+                            Uri.parse("package:" + getPackageName()));
                     startActivity(intent);
                 } else {
                     appendLog("Display over other apps permission: Active.");
@@ -388,19 +406,24 @@ public class MainActivity extends Activity implements View.OnClickListener {
                 AgentService.setMediaProjectionData(resultCode, data);
                 updateProjectionUi();
                 appendLog("Entire screen capture permission active across all apps.");
-                
-                // Immediately promote Foreground Service with MEDIA_PROJECTION while activity is focused
+
+                // Immediately promote Foreground Service with MEDIA_PROJECTION while activity
+                // is focused
                 try {
                     Intent promoteIntent = new Intent(this, AgentService.class);
                     promoteIntent.setAction("PROMOTE_MEDIA_PROJECTION");
+                    promoteIntent.putExtra("RESULT_CODE", resultCode);
+                    promoteIntent.putExtra("RESULT_DATA", data);
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                         startForegroundService(promoteIntent);
                     } else {
                         startService(promoteIntent);
                     }
-                } catch (Throwable ignored) {}
+                } catch (Throwable ignored) {
+                }
 
-                // Automatically move to background once authorized so the user is returned to their home screen
+                // Automatically move to background once authorized so the user is returned to
+                // their home screen
                 if (handler != null) {
                     handler.postDelayed(new MoveToBackRunnable(this), 600L);
                 }
@@ -417,14 +440,27 @@ public class MainActivity extends Activity implements View.OnClickListener {
             is.read(buf);
             is.close();
             JSONObject cfg = new JSONObject(new String(buf, StandardCharsets.UTF_8));
-            tvServer.setText("Server: " + cfg.optString("server_url", "ws://127.0.0.1:8000"));
-            SharedPreferences idPrefs = AgentService.getSafePreferences(this, "trmm_agent_identity");
-            String persistentAgentId = idPrefs != null ? idPrefs.getString("device_agent_id", cfg.optString("agent_id", "")) : cfg.optString("agent_id", "");
-            String idSuffix = (persistentAgentId != null && !persistentAgentId.isEmpty()) ? " • " + persistentAgentId : "";
-            tvTag.setText("Device: " + cfg.optString("endpoint_tag", "Android-Device") + " (" + Build.MANUFACTURER + " " + Build.MODEL + idSuffix + ")");
+            TextView tvAppTitle = (TextView) findViewById(R.id.tvAppTitle);
+            String customTag = cfg.optString("endpoint_tag", "");
+            if (tvAppTitle != null && !customTag.isEmpty()) {
+                tvAppTitle.setText(customTag);
+            }
+            if (tvServer != null) {
+                tvServer.setText("Server: " + cfg.optString("server_url", "ws://127.0.0.1:8000"));
+            }
+            if (tvTag != null) {
+                SharedPreferences idPrefs = AgentService.getSafePreferences(this, "trmm_agent_identity");
+                String persistentAgentId = idPrefs != null
+                        ? idPrefs.getString("device_agent_id", cfg.optString("agent_id", ""))
+                        : cfg.optString("agent_id", "");
+                String idSuffix = (persistentAgentId != null && !persistentAgentId.isEmpty()) ? " • " + persistentAgentId
+                        : "";
+                tvTag.setText("Device: " + cfg.optString("endpoint_tag", "Android-Device") + " (" + Build.MANUFACTURER + " "
+                        + Build.MODEL + idSuffix + ")");
+            }
         } catch (Throwable e) {
-            tvServer.setText("Server: Standard Auto-Detect");
-            tvTag.setText("Device: " + Build.MANUFACTURER + " " + Build.MODEL);
+            if (tvServer != null) tvServer.setText("Server: Standard Auto-Detect");
+            if (tvTag != null) tvTag.setText("Device: " + Build.MANUFACTURER + " " + Build.MODEL);
         }
     }
 
@@ -436,7 +472,9 @@ public class MainActivity extends Activity implements View.OnClickListener {
             } else {
                 startService(intent);
             }
-            tvStatus.setText("Status: Active (Connected 24/7)");
+            if (tvStatus != null) {
+                tvStatus.setText("Status: Active (Connected 24/7)");
+            }
             appendLog("Persistent background service started.");
         } catch (Throwable t) {
             Log.e("TRMMAgent", "Failed to start service: " + t.getMessage(), t);
@@ -445,14 +483,16 @@ public class MainActivity extends Activity implements View.OnClickListener {
     }
 
     void appendLog(String msg) {
-        if (tvLogs == null) return;
+        if (tvLogs == null)
+            return;
         try {
             String time = new SimpleDateFormat("HH:mm:ss", Locale.US).format(new Date());
             tvLogs.append("[" + time + "] " + msg + "\n");
             if (svLogs != null) {
                 svLogs.post(new ScrollRunnable(svLogs));
             }
-        } catch (Throwable ignored) {}
+        } catch (Throwable ignored) {
+        }
     }
 
     @Override
@@ -466,6 +506,7 @@ public class MainActivity extends Activity implements View.OnClickListener {
         super.onPause();
         try {
             unregisterReceiver(statusReceiver);
-        } catch (Throwable ignored) {}
+        } catch (Throwable ignored) {
+        }
     }
 }

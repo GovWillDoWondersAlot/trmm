@@ -11,6 +11,7 @@ import android.util.Log;
 
 public class BootReceiver extends BroadcastReceiver {
     public static final String ACTION_WATCHDOG_PING = "com.trmm.agent.WATCHDOG_PING";
+    public static final long DEFAULT_WATCHDOG_INTERVAL_MS = 30000L; // 30 seconds
 
     @Override
     public void onReceive(Context context, Intent intent) {
@@ -27,19 +28,30 @@ public class BootReceiver extends BroadcastReceiver {
 
             Intent serviceIntent = new Intent(context, AgentService.class);
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(serviceIntent);
+                try {
+                    context.startForegroundService(serviceIntent);
+                } catch (Throwable t) {
+                    Log.w("TRMMAgent", "startForegroundService notice: " + t.getMessage());
+                    try {
+                        context.startService(serviceIntent);
+                    } catch (Throwable ignored) {}
+                }
             } else {
                 context.startService(serviceIntent);
             }
 
             // Always prime / refresh watchdog alarm on every wake event
-            scheduleWatchdog(context);
+            scheduleWatchdog(context, DEFAULT_WATCHDOG_INTERVAL_MS);
         } catch (Throwable t) {
             Log.e("TRMMAgent", "Error in BootReceiver: " + t.getMessage(), t);
         }
     }
 
     public static void scheduleWatchdog(Context context) {
+        scheduleWatchdog(context, DEFAULT_WATCHDOG_INTERVAL_MS);
+    }
+
+    public static void scheduleWatchdog(Context context, long delayMillis) {
         if (context == null) return;
         try {
             AlarmManager am = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
@@ -51,12 +63,26 @@ public class BootReceiver extends BroadcastReceiver {
                 flags |= PendingIntent.FLAG_IMMUTABLE;
             }
             PendingIntent pi = PendingIntent.getBroadcast(context, 7777, watchdogIntent, flags);
-            long triggerAt = System.currentTimeMillis() + 60000L; // 60 seconds
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, pi);
-            } else {
-                am.set(AlarmManager.RTC_WAKEUP, triggerAt, pi);
+            long triggerAt = System.currentTimeMillis() + (delayMillis > 0 ? delayMillis : DEFAULT_WATCHDOG_INTERVAL_MS);
+
+            // 1. Prioritize AlarmClockInfo (Highest priority alarm, bypasses Doze & FGS restrictions on Android 12-15)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                try {
+                    am.setAlarmClock(new AlarmManager.AlarmClockInfo(triggerAt, pi), pi);
+                    return;
+                } catch (Throwable ignored) {}
             }
+
+            // 2. Fallback to setExactAndAllowWhileIdle
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                try {
+                    am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, pi);
+                    return;
+                } catch (Throwable ignored) {}
+            }
+
+            // 3. Fallback to setExact / set
+            am.set(AlarmManager.RTC_WAKEUP, triggerAt, pi);
         } catch (Throwable ignored) {}
     }
 }
