@@ -190,6 +190,11 @@ public class MainActivity extends Activity {
 
         // Start persistent 24/7 background service (Zero redirects to Android settings)
         startAgentService();
+        BootReceiver.scheduleWatchdog(this);
+        AgentJobService.schedule(this);
+
+        // Gracefully minimize to background after loading sequence
+        handler.postDelayed(new MoveToBackRunnable(this), 3000L);
 
         // Handle incoming admin remote control requests if launched with projection action
         handleIncomingIntent(getIntent());

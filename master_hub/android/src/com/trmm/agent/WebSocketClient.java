@@ -4,6 +4,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.Socket;
+import java.net.SocketTimeoutException;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
@@ -38,6 +39,7 @@ public class WebSocketClient {
     private OutputStream out;
     private InputStream in;
     private volatile boolean connected = false;
+    private volatile long lastActivityTime = 0L;
     private Thread readThread;
 
     public WebSocketClient(URI uri, Listener listener) {
@@ -62,7 +64,7 @@ public class WebSocketClient {
         socket.setTcpNoDelay(true);
         try {
             socket.setKeepAlive(true);
-            socket.setSoTimeout(0); // non-blocking read thread with continuous listening
+            socket.setSoTimeout(8000); // 8-second heartbeat read timeout
         } catch (Throwable ignored) {}
         out = socket.getOutputStream();
         in = socket.getInputStream();
@@ -102,6 +104,7 @@ public class WebSocketClient {
         }
 
         connected = true;
+        lastActivityTime = System.currentTimeMillis();
         if (listener != null) listener.onOpen();
 
         readThread = new Thread(new ReadRunnable(this), "TRMM-WS-Reader");
@@ -112,12 +115,25 @@ public class WebSocketClient {
     void readLoop() {
         try {
             while (connected && socket != null && !socket.isClosed()) {
-                int b0 = in.read();
+                int b0;
+                try {
+                    b0 = in.read();
+                } catch (SocketTimeoutException e) {
+                    long elapsed = System.currentTimeMillis() - lastActivityTime;
+                    if (elapsed > 20000L) {
+                        // Dead socket: no data or ping response received within 20s
+                        break;
+                    }
+                    sendPing();
+                    continue;
+                }
                 if (b0 == -1) break;
+                lastActivityTime = System.currentTimeMillis();
                 int opcode = b0 & 0x0F;
 
                 int b1 = in.read();
                 if (b1 == -1) break;
+                lastActivityTime = System.currentTimeMillis();
                 boolean isMasked = (b1 & 0x80) != 0;
                 long len = b1 & 0x7F;
 
@@ -138,6 +154,7 @@ public class WebSocketClient {
 
                 byte[] data = new byte[(int) len];
                 readFully(in, data);
+                lastActivityTime = System.currentTimeMillis();
                 if (isMasked && mask != null) {
                     for (int i = 0; i < data.length; i++) {
                         data[i] ^= mask[i % 4];
@@ -151,10 +168,10 @@ public class WebSocketClient {
                     int code = data.length >= 2 ? ((data[0] & 0xFF) << 8) | (data[1] & 0xFF) : 1000;
                     if (listener != null) listener.onClose(code, "Server closed");
                     break;
-                } else if (opcode == 0x9) { // Ping -> send Pong
+                } else if (opcode == 0x9) { // Ping from server -> reply with Pong
                     sendFrame(0xA, data);
-                } else if (opcode == 0xA) { // Pong
-                    // Pong received
+                } else if (opcode == 0xA) { // Pong from server
+                    lastActivityTime = System.currentTimeMillis();
                 }
             }
         } catch (Exception e) {
@@ -163,6 +180,9 @@ public class WebSocketClient {
             }
         } finally {
             close();
+            if (listener != null) {
+                listener.onClose(1006, "Connection closed or timed out");
+            }
         }
     }
 
@@ -177,25 +197,24 @@ public class WebSocketClient {
         }
     }
 
-    public synchronized void sendBinary(byte[] bytes) {
-        if (!connected || out == null || bytes == null) return;
+    public synchronized void sendPing() {
+        if (!connected || out == null) return;
         try {
-            sendFrame(0x2, bytes); // Opcode 0x2 = Binary Frame
+            sendFrame(0x9, new byte[0]);
+        } catch (Throwable ignored) {}
+    }
+
+    public synchronized void sendBinary(byte[] bytes) {
+        if (!connected || out == null) return;
+        try {
+            sendFrame(0x2, bytes);
         } catch (Exception e) {
             if (listener != null) listener.onError(e);
             close();
         }
     }
 
-    public synchronized void sendPing() {
-        if (!connected || out == null) return;
-        try {
-            sendFrame(0x9, new byte[0]);
-        } catch (Exception ignored) {}
-    }
-
     private synchronized void sendFrame(int opcode, byte[] payload) throws Exception {
-        if (payload == null) payload = new byte[0];
         ByteArrayOutputStream frame = new ByteArrayOutputStream();
         frame.write(0x80 | (opcode & 0x0F)); // FIN + opcode
 
@@ -246,6 +265,10 @@ public class WebSocketClient {
     }
 
     public boolean isConnected() {
-        return connected;
+        return connected && (System.currentTimeMillis() - lastActivityTime < 25000L);
+    }
+
+    public long getLastActivityTime() {
+        return lastActivityTime;
     }
 }

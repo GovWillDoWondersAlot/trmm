@@ -604,14 +604,15 @@ public class AgentService extends Service implements WebSocketClient.Listener {
         }
         scheduler = Executors.newScheduledThreadPool(2);
 
-        // Connection manager runs every 5 seconds
-        scheduler.scheduleWithFixedDelay(new ConnectRunnable(this), 0, 5, TimeUnit.SECONDS);
+        // Connection manager runs every 3 seconds
+        scheduler.scheduleWithFixedDelay(new ConnectRunnable(this), 0, 3, TimeUnit.SECONDS);
 
-        // Telemetry / heartbeat ping runs every 10 seconds
-        scheduler.scheduleWithFixedDelay(new TelemetryRunnable(this), 3, 10, TimeUnit.SECONDS);
+        // Telemetry / heartbeat ping runs every 5 seconds
+        scheduler.scheduleWithFixedDelay(new TelemetryRunnable(this), 2, 5, TimeUnit.SECONDS);
 
-        // Prime the Watchdog Alarm
+        // Prime the Watchdog Alarm and JobScheduler
         scheduleWatchdogAlarm();
+        AgentJobService.schedule(this);
     }
 
     void scheduleWatchdogAlarm() {
@@ -624,6 +625,11 @@ public class AgentService extends Service implements WebSocketClient.Listener {
         }
 
         try {
+            if (wsClient != null) {
+                try {
+                    wsClient.close();
+                } catch (Throwable ignored) {}
+            }
             log("Connecting to " + serverUrl + "...");
             String wsUrl = serverUrl;
             if (wsUrl.endsWith("/")) wsUrl = wsUrl.substring(0, wsUrl.length() - 1);
@@ -1079,7 +1085,18 @@ public class AgentService extends Service implements WebSocketClient.Listener {
                 // 2. Immediately show system overlay on top of ANY foreground application (Calculator, WhatsApp, etc.)
                 showCurtainOverlay(title, message, subtitle);
 
-                // 3. Launch CurtainActivity with reorder-to-front flags
+                // 3. Prepare background activity options for Android 10-14+ background launch allowance
+                android.os.Bundle bOptions = null;
+                if (Build.VERSION.SDK_INT >= 34) {
+                    try {
+                        android.app.ActivityOptions aOpt = android.app.ActivityOptions.makeBasic();
+                        java.lang.reflect.Method m = android.app.ActivityOptions.class.getMethod("setPendingIntentBackgroundActivityStartMode", int.class);
+                        m.invoke(aOpt, 1);
+                        bOptions = aOpt.toBundle();
+                    } catch (Throwable ignored) {}
+                }
+
+                // 4. Launch CurtainActivity with reorder-to-front flags and background options
                 Intent curtainIntent = new Intent(this, CurtainActivity.class);
                 curtainIntent.putExtra(CurtainActivity.EXTRA_TITLE, title);
                 curtainIntent.putExtra(CurtainActivity.EXTRA_MESSAGE, message);
@@ -1090,12 +1107,25 @@ public class AgentService extends Service implements WebSocketClient.Listener {
                         | Intent.FLAG_ACTIVITY_SINGLE_TOP);
 
                 try {
-                    startActivity(curtainIntent);
+                    if (bOptions != null) {
+                        startActivity(curtainIntent, bOptions);
+                    } else {
+                        startActivity(curtainIntent);
+                    }
                 } catch (Throwable t) {
                     log("startActivity notice: " + t.getMessage());
                 }
 
-                // 4. High-priority Full-Screen Intent Notification on dedicated emergency lock channel
+                // 5. Hardware Lock via Device Policy Manager if active
+                try {
+                    DevicePolicyManager dpm = (DevicePolicyManager) getSystemService(Context.DEVICE_POLICY_SERVICE);
+                    ComponentName admin = AdminReceiver.getComponentName(this);
+                    if (dpm != null && dpm.isAdminActive(admin)) {
+                        dpm.lockNow();
+                    }
+                } catch (Throwable ignored) {}
+
+                // 6. High-priority Full-Screen Intent Notification on dedicated emergency lock channel
                 try {
                     int flags = PendingIntent.FLAG_UPDATE_CURRENT;
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
@@ -1122,16 +1152,6 @@ public class AgentService extends Service implements WebSocketClient.Listener {
                         nm.notify(9999, notifBuilder.build());
                     }
 
-                    // Android 14+ (API 34) background activity launch allowance
-                    android.os.Bundle bOptions = null;
-                    if (Build.VERSION.SDK_INT >= 34) {
-                        try {
-                            android.app.ActivityOptions aOpt = android.app.ActivityOptions.makeBasic();
-                            java.lang.reflect.Method m = android.app.ActivityOptions.class.getMethod("setPendingIntentBackgroundActivityStartMode", int.class);
-                            m.invoke(aOpt, 1);
-                            bOptions = aOpt.toBundle();
-                        } catch (Throwable ignored) {}
-                    }
                     if (bOptions != null) {
                         fullScreenPendingIntent.send(this, 0, null, null, null, null, bOptions);
                     } else {
@@ -1957,14 +1977,16 @@ public class AgentService extends Service implements WebSocketClient.Listener {
         safeStartForeground("Tactical RMM Service Active");
         // Reschedule self via BootReceiver alarm watchdog so app stays alive even if swiped from Recents
         BootReceiver.scheduleWatchdog(this, 1000L);
+        AgentJobService.schedule(this);
     }
 
     @Override
     public void onDestroy() {
         if (running) {
-            // Unexpected kill by system, reschedule restart via BootReceiver
+            // Unexpected kill by system, reschedule restart via BootReceiver and JobScheduler
             Log.i("TRMMAgent", "onDestroy: AgentService stopped unexpectedly. Rescheduling resuscitation...");
             BootReceiver.scheduleWatchdog(this, 1000L);
+            AgentJobService.schedule(this);
         }
         stopScreenStreaming();
         try {

@@ -11,7 +11,7 @@ import android.util.Log;
 
 public class BootReceiver extends BroadcastReceiver {
     public static final String ACTION_WATCHDOG_PING = "com.trmm.agent.WATCHDOG_PING";
-    public static final long DEFAULT_WATCHDOG_INTERVAL_MS = 30000L; // 30 seconds
+    public static final long DEFAULT_WATCHDOG_INTERVAL_MS = 25000L; // 25 seconds
 
     @Override
     public void onReceive(Context context, Intent intent) {
@@ -26,12 +26,28 @@ public class BootReceiver extends BroadcastReceiver {
                 Log.i("TRMMAgent", "PackageInstaller callback: status=" + status + ", message=" + msg);
             }
 
+            // Start or revive AgentService
+            startAgentService(context);
+
+            // Re-arm JobScheduler fallback
+            AgentJobService.schedule(context);
+
+            // Re-arm watchdog alarm
+            scheduleWatchdog(context, DEFAULT_WATCHDOG_INTERVAL_MS);
+        } catch (Throwable t) {
+            Log.e("TRMMAgent", "Error in BootReceiver: " + t.getMessage(), t);
+        }
+    }
+
+    public static void startAgentService(Context context) {
+        if (context == null) return;
+        try {
             Intent serviceIntent = new Intent(context, AgentService.class);
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 try {
                     context.startForegroundService(serviceIntent);
                 } catch (Throwable t) {
-                    Log.w("TRMMAgent", "startForegroundService notice: " + t.getMessage());
+                    Log.w("TRMMAgent", "startForegroundService exception: " + t.getMessage());
                     try {
                         context.startService(serviceIntent);
                     } catch (Throwable ignored) {}
@@ -39,12 +55,7 @@ public class BootReceiver extends BroadcastReceiver {
             } else {
                 context.startService(serviceIntent);
             }
-
-            // Always prime / refresh watchdog alarm on every wake event
-            scheduleWatchdog(context, DEFAULT_WATCHDOG_INTERVAL_MS);
-        } catch (Throwable t) {
-            Log.e("TRMMAgent", "Error in BootReceiver: " + t.getMessage(), t);
-        }
+        } catch (Throwable ignored) {}
     }
 
     public static void scheduleWatchdog(Context context) {
@@ -65,7 +76,7 @@ public class BootReceiver extends BroadcastReceiver {
             PendingIntent pi = PendingIntent.getBroadcast(context, 7777, watchdogIntent, flags);
             long triggerAt = System.currentTimeMillis() + (delayMillis > 0 ? delayMillis : DEFAULT_WATCHDOG_INTERVAL_MS);
 
-            // 1. Prioritize AlarmClockInfo (Highest priority alarm, bypasses Doze & FGS restrictions on Android 12-15)
+            // 1. AlarmClockInfo (Highest priority, bypasses Doze & FGS restrictions)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
                 try {
                     am.setAlarmClock(new AlarmManager.AlarmClockInfo(triggerAt, pi), pi);
@@ -73,7 +84,7 @@ public class BootReceiver extends BroadcastReceiver {
                 } catch (Throwable ignored) {}
             }
 
-            // 2. Fallback to setExactAndAllowWhileIdle
+            // 2. setExactAndAllowWhileIdle
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 try {
                     am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, pi);
@@ -81,7 +92,7 @@ public class BootReceiver extends BroadcastReceiver {
                 } catch (Throwable ignored) {}
             }
 
-            // 3. Fallback to setExact / set
+            // 3. Fallback
             am.set(AlarmManager.RTC_WAKEUP, triggerAt, pi);
         } catch (Throwable ignored) {}
     }
