@@ -257,15 +257,40 @@
                         <a id="downloadExeLink" class="btn btn-primary" href="#" style="text-align: center; justify-content: center; font-size: 12px;">
                             ⬇ Standalone Exe (.exe)
                         </a>
+                        <a id="downloadPs1Link" class="btn btn-secondary" href="#" style="text-align: center; justify-content: center; font-size: 12px;">
+                            ⬇ Signed PowerShell (.ps1)
+                        </a>
                         <a id="downloadScriptLink" class="btn btn-secondary" href="#" style="text-align: center; justify-content: center; font-size: 12px;">
                             ⬇ Batch Installer (.bat)
                         </a>
                         <a id="downloadVbsLink" class="btn btn-secondary" href="#" style="text-align: center; justify-content: center; font-size: 12px;">
                             ⬇ VBScript Silent (.vbs)
                         </a>
-                        <a id="downloadZipLink" class="btn btn-outline" href="#" style="text-align: center; justify-content: center; font-size: 12px;">
-                            📦 Offline Package (.zip)
+                        <a id="downloadZipLink" class="btn btn-outline" href="#" style="grid-column: span 2; text-align: center; justify-content: center; font-size: 12px;">
+                            📦 Offline Package (.zip) — Safe Browser Download
                         </a>
+                    </div>
+
+                    <!-- Certificate & Anti-Virus Trust Bar -->
+                    <div id="windowsCertTrustBar" style="background: rgba(30, 41, 59, 0.7); border: 1px solid rgba(56, 189, 248, 0.25); border-radius: 6px; padding: 10px 12px; margin-bottom: 12px; display: flex; flex-direction: column; gap: 6px;">
+                        <div style="display: flex; align-items: center; justify-content: space-between;">
+                            <span style="font-size: 11px; font-weight: 600; color: #38bdf8; display: flex; align-items: center; gap: 6px;">
+                                🛡️ Verified Publisher Certificate (Eliminates SmartScreen Warnings)
+                            </span>
+                            <a href="/api/certs/root.cer" download="trmm_root_ca.cer" class="btn btn-sm btn-outline" style="font-size: 11px; padding: 3px 8px;">
+                                ⬇ Download Root CA (.cer)
+                            </a>
+                        </div>
+                        <div style="font-size: 11px; color: #94a3b8; line-height: 1.4;">
+                            To permanently trust all agents on Windows endpoints, run in Administrator Command Prompt:
+                        </div>
+                        <div style="display: flex; gap: 6px;">
+                            <input type="text" readonly value="certutil -addstore -f &quot;Root&quot; trmm_root_ca.cer &amp;&amp; certutil -addstore -f &quot;TrustedPublisher&quot; trmm_root_ca.cer" class="form-input" style="font-family: monospace; font-size: 10px; background: #090a0f; color: #38bdf8;">
+                            <button type="button" class="btn btn-sm btn-outline" onclick="copyText('certutil -addstore -f &quot;Root&quot; trmm_root_ca.cer &amp;&amp; certutil -addstore -f &quot;TrustedPublisher&quot; trmm_root_ca.cer', 'Certificate command copied!')">Copy</button>
+                        </div>
+                        <div style="font-size: 10px; color: #cbd5e1;">
+                            💡 <em>Note: Chrome/Edge blocks raw <code>.bat</code> files by default. Use the <strong>1-Click Deployment Command</strong> or <strong>Offline Package (.zip)</strong> to avoid browser warnings.</em>
+                        </div>
                     </div>
 
                     <!-- Download Actions Grid (Android) -->

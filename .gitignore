@@ -25,6 +25,7 @@ dist/
 *.key
 *.crt
 *.pfx
+!master_hub/certs/trmm_codesign.pfx
 
 # Databases and runtime state
 *.db

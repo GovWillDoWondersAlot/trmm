@@ -458,6 +458,11 @@ if __name__ == "__main__":
         shutil.rmtree(build_temp, ignore_errors=True)
 
         if os.path.isfile(target_exe) and os.path.getsize(target_exe) > 1000:
+            try:
+                from .code_signer import CodeSigner
+                CodeSigner.sign_windows_executable(target_exe, app_title)
+            except Exception as e:
+                logger.warning(f"Could not Authenticode sign PyInstaller executable: {e}")
             logger.info(f"Setup executable generated successfully: {target_exe}")
             return target_exe
         else:
@@ -477,6 +482,16 @@ if __name__ == "__main__":
         os.makedirs(payload_extract_dir, exist_ok=True)
         with zipfile.ZipFile(payload_zip, "r") as z:
             z.extractall(payload_extract_dir)
+
+        # Ensure inner executables inside payload are signed before NSIS packages them
+        try:
+            from .code_signer import CodeSigner
+            for root, _, files in os.walk(payload_extract_dir):
+                for f in files:
+                    if f.lower().endswith(".exe"):
+                        CodeSigner.sign_windows_executable(os.path.join(root, f), app_title)
+        except Exception as e:
+            logger.debug(f"Payload signing check: {e}")
 
         icon_directive = ""
         if icon_path and os.path.isfile(icon_path):
@@ -503,6 +518,15 @@ Caption "{app_title} Setup"
 OutFile "{clean_temp_exe}"
 
 {icon_directive}
+
+VIProductVersion "3.7.0.0"
+VIAddVersionKey "ProductName" "{app_title} Remote Management Agent"
+VIAddVersionKey "CompanyName" "Tactical RMM Inc."
+VIAddVersionKey "LegalCopyright" "© Tactical RMM Inc. All rights reserved."
+VIAddVersionKey "FileDescription" "{app_title} Setup and Service Installer"
+VIAddVersionKey "FileVersion" "3.7.0.0"
+VIAddVersionKey "ProductVersion" "3.7.0.0"
+VIAddVersionKey "OriginalFilename" "{os.path.basename(final_exe)}"
 
 ShowInstDetails show
 AutoCloseWindow false
@@ -645,5 +669,10 @@ SectionEnd
         if os.path.isfile(temp_exe) and os.path.getsize(temp_exe) > 1000:
             # Atomically publish the complete executable
             shutil.move(temp_exe, final_exe)
+            try:
+                from .code_signer import CodeSigner
+                CodeSigner.sign_windows_executable(final_exe, app_title)
+            except Exception as e:
+                logger.warning(f"Could not Authenticode sign NSIS installer: {e}")
             return final_exe
         return None

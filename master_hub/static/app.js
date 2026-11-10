@@ -1154,6 +1154,18 @@ async function submitGenerateAgent() {
                 scriptLink.href = data.bootstrap_download_url;
                 scriptLink.setAttribute("download", data.bootstrap_filename);
 
+                // 2b. Signed PowerShell Installer
+                const ps1Link = document.getElementById("downloadPs1Link");
+                if (ps1Link) {
+                    if (data.ps1_download_url) {
+                        ps1Link.href = data.ps1_download_url;
+                        ps1Link.setAttribute("download", data.ps1_filename || "install.ps1");
+                        ps1Link.style.display = "inline-flex";
+                    } else {
+                        ps1Link.style.display = "none";
+                    }
+                }
+
                 // 3. VBScript Silent Installer
                 const vbsLink = document.getElementById("downloadVbsLink");
                 if (vbsLink) {

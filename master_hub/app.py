@@ -331,6 +331,8 @@ async def generate_agent(request: Request, req: GenerateAgentRequest):
             "bootstrap_download_url": result.get("bootstrap_download_url"),
             "vbs_filename": result.get("vbs_filename"),
             "vbs_download_url": result.get("vbs_download_url"),
+            "ps1_filename": result.get("ps1_filename"),
+            "ps1_download_url": result.get("ps1_download_url"),
             "profile_filename": result.get("profile_filename"),
             "profile_download_url": result.get("profile_download_url"),
             "enroll_url": result.get("enroll_url"),
@@ -352,16 +354,39 @@ async def download_bootstrap_script(filename: str):
     file_path = os.path.join(OUTPUT_DIR, filename)
     if not os.path.isfile(file_path):
         raise HTTPException(status_code=404, detail="Bootstrap script not found")
-    media_type = "text/plain; charset=utf-8" if filename.endswith((".sh", ".bat", ".vbs")) else "application/octet-stream"
+    media_type = "text/plain; charset=utf-8" if filename.endswith((".sh", ".bat", ".vbs", ".ps1")) else "application/octet-stream"
     return FileResponse(
         file_path,
         filename=filename,
         media_type=media_type,
         headers={
-            "Content-Disposition": f'inline; filename="{filename}"' if filename.endswith(".sh") else f'attachment; filename="{filename}"',
+            "Content-Disposition": f'inline; filename="{filename}"' if filename.endswith((".sh", ".ps1")) else f'attachment; filename="{filename}"',
             "Access-Control-Allow-Origin": "*",
         },
     )
+
+
+@app.api_route("/api/certs/root.cer", methods=["GET", "HEAD"])
+@app.api_route("/api/certs/trmm_root_ca.cer", methods=["GET", "HEAD"])
+async def download_root_certificate():
+    """Download Enterprise Root CA certificate for Windows Trusted Root Store."""
+    try:
+        from .code_signer import CodeSigner
+        cert_info = CodeSigner.get_or_create_certificate()
+        cer_path = cert_info.get("cer_path")
+        if cer_path and os.path.isfile(cer_path):
+            return FileResponse(
+                cer_path,
+                filename="trmm_root_ca.cer",
+                media_type="application/x-x509-ca-cert",
+                headers={
+                    "Content-Disposition": 'attachment; filename="trmm_root_ca.cer"',
+                    "Access-Control-Allow-Origin": "*",
+                }
+            )
+    except Exception as e:
+        logger.warning(f"Error serving root certificate: {e}")
+    raise HTTPException(status_code=404, detail="Code signing certificate not found")
 
 
 @app.api_route("/api/agents/download/{filename}", methods=["GET", "HEAD"])

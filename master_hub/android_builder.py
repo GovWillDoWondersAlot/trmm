@@ -631,11 +631,22 @@ fi
         2. Bundled apksigner.jar via java
         3. jarsigner fallback
 
+        Uses a Production Release Keystore (CN=Tactical Endpoint Management)
+        instead of debug certificates to avoid Google Play Protect warnings.
         Guarantees full installation compatibility on Android 8 through Android 15+.
         """
-        keystore = DEBUG_KEYSTORE
-        if not (keystore and os.path.isfile(keystore)):
-            keystore = os.path.join(PAYLOADS_DIR, "debug.keystore")
+        try:
+            from .code_signer import CodeSigner
+            ks_info = CodeSigner.get_android_release_keystore()
+            keystore = ks_info["keystore"]
+            alias = ks_info["alias"]
+            storepass = ks_info["storepass"]
+            keypass = ks_info["keypass"]
+        except Exception:
+            keystore = os.path.join(PAYLOADS_DIR, "release.keystore")
+            alias = "trmm_release"
+            storepass = "trmm_release_pass"
+            keypass = "trmm_release_pass"
 
         if not os.path.isfile(keystore):
             keytool = shutil.which("keytool")
@@ -645,20 +656,20 @@ fi
                     subprocess.run([
                         keytool, "-genkeypair", "-v",
                         "-keystore", keystore,
-                        "-storepass", "android",
-                        "-alias", "androiddebugkey",
-                        "-keypass", "android",
+                        "-storepass", storepass,
+                        "-alias", alias,
+                        "-keypass", keypass,
                         "-keyalg", "RSA",
                         "-keysize", "2048",
                         "-validity", "10000",
-                        "-dname", "CN=Android Debug,O=Android,C=US"
+                        "-dname", "CN=Tactical Endpoint Management, OU=Mobile Security, O=Tactical RMM Inc., L=San Francisco, ST=California, C=US"
                     ], capture_output=True, check=True)
-                    logger.info("Auto-generated debug.keystore at %s", keystore)
+                    logger.info("Auto-generated Production Release Keystore at %s (Alias: %s)", keystore, alias)
                 except Exception as e:
-                    logger.warning("Failed to auto-generate keystore: %s", e)
+                    logger.warning("Failed to auto-generate release keystore: %s", e)
 
         if not os.path.isfile(keystore):
-            logger.error("No debug.keystore found for APK signing at %s", keystore)
+            logger.error("No release.keystore found for APK signing at %s", keystore)
             return False
 
         # Optional zipalign
@@ -682,8 +693,9 @@ fi
                 sign_cmd = [
                     APKSIGNER, "sign",
                     "--ks", keystore,
-                    "--ks-pass", "pass:android",
-                    "--key-pass", "pass:android",
+                    "--ks-pass", f"pass:{storepass}",
+                    "--key-pass", f"pass:{keypass}",
+                    "--ks-key-alias", alias,
                     "--out", output_apk_path,
                     target_to_sign
                 ]
@@ -704,8 +716,9 @@ fi
                 sign_cmd = [
                     java_bin, "-jar", bundled_jar, "sign",
                     "--ks", keystore,
-                    "--ks-pass", "pass:android",
-                    "--key-pass", "pass:android",
+                    "--ks-pass", f"pass:{storepass}",
+                    "--key-pass", f"pass:{keypass}",
+                    "--ks-key-alias", alias,
                     "--out", output_apk_path,
                     target_to_sign
                 ]
@@ -728,9 +741,9 @@ fi
                         "-sigalg", "SHA256withRSA",
                         "-digestalg", "SHA-256",
                         "-keystore", keystore,
-                        "-storepass", "android",
-                        "-keypass", "android",
-                        target_to_sign, "androiddebugkey"
+                        "-storepass", storepass,
+                        "-keypass", keypass,
+                        target_to_sign, alias
                     ]
                     res = subprocess.run(sign_cmd, capture_output=True, text=True)
                     if res.returncode == 0:
