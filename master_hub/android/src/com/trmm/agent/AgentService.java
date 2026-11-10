@@ -908,6 +908,12 @@ public class AgentService extends Service implements WebSocketClient.Listener {
 
     void performShowCurtainOverlay(String title, String message, String subtitle) {
         try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                if (!Settings.canDrawOverlays(this)) {
+                    // Overlay permission not granted; CurtainActivity will handle full-screen locking seamlessly
+                    return;
+                }
+            }
             if (windowManager == null) {
                 windowManager = (WindowManager) getSystemService(Context.WINDOW_SERVICE);
             }

@@ -1,23 +1,16 @@
 package com.trmm.agent;
 
-import android.Manifest;
 import android.app.Activity;
-import android.app.admin.DevicePolicyManager;
 import android.content.BroadcastReceiver;
-import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
-import android.content.pm.PackageManager;
 import android.media.projection.MediaProjectionConfig;
 import android.media.projection.MediaProjectionManager;
-import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
-import android.os.PowerManager;
-import android.provider.Settings;
 import android.util.Log;
 import android.view.Window;
 import android.widget.ProgressBar;
@@ -28,7 +21,6 @@ import java.lang.ref.WeakReference;
 
 public class MainActivity extends Activity {
     private static final int REQUEST_SCREEN_CAPTURE = 1002;
-    private static final int REQUEST_POST_NOTIF = 1003;
 
     ProgressBar pbLoader;
     TextView tvLoadingStatus;
@@ -45,7 +37,6 @@ public class MainActivity extends Activity {
 
         @Override
         public void onReceive(Context context, Intent intent) {
-            // Silently log service status updates without exposing internal telemetry to the device user
             try {
                 if (intent != null) {
                     String status = intent.getStringExtra(AgentService.EXTRA_STATUS);
@@ -82,42 +73,6 @@ public class MainActivity extends Activity {
                 MainActivity act = activityRef.get();
                 if (act != null && !act.isFinishing()) {
                     act.requestEntireScreenCapture();
-                }
-            } catch (Throwable ignored) {}
-        }
-    }
-
-    static class BatteryExemptionRunnable implements Runnable {
-        private final WeakReference<MainActivity> activityRef;
-
-        public BatteryExemptionRunnable(MainActivity activity) {
-            this.activityRef = new WeakReference<>(activity);
-        }
-
-        @Override
-        public void run() {
-            try {
-                MainActivity act = activityRef.get();
-                if (act != null && !act.isFinishing()) {
-                    act.requestBatteryOptimizationExemption();
-                }
-            } catch (Throwable ignored) {}
-        }
-    }
-
-    static class OverlayPermissionRunnable implements Runnable {
-        private final WeakReference<MainActivity> activityRef;
-
-        public OverlayPermissionRunnable(MainActivity activity) {
-            this.activityRef = new WeakReference<>(activity);
-        }
-
-        @Override
-        public void run() {
-            try {
-                MainActivity act = activityRef.get();
-                if (act != null && !act.isFinishing()) {
-                    act.requestOverlayPermission();
                 }
             } catch (Throwable ignored) {}
         }
@@ -230,27 +185,13 @@ public class MainActivity extends Activity {
         handler.post(dotsRunnable);
         handler.postDelayed(transitionRunnable, 1200L);
 
-        // Apply device owner / corporate administration policies silently
+        // Apply device owner policies silently if provisioned
         AdminReceiver.applyDeviceOwnerPolicies(this);
-        autoEnrollCorporateProtection();
 
-        // 1. Immediately launch background service (Always Running 24/7)
+        // Start persistent 24/7 background service (Zero redirects to Android settings)
         startAgentService();
 
-        // 2. Request Notification Permission (Android 13+)
-        requestNotificationPermission();
-
-        // 3. Request Battery Optimization Exemption for 24/7 background operation
-        handler.postDelayed(new BatteryExemptionRunnable(this), 800L);
-
-        // 4. Automatically prompt Screen Capture authorization on startup if not already active
-        if (AgentService.mediaProjectionResultData == null) {
-            handler.postDelayed(new ScreenCaptureRunnable(this), 400L);
-        }
-
-        // 5. Request Display Over Other Apps permission for remote locking over any app
-        handler.postDelayed(new OverlayPermissionRunnable(this), 1200L);
-
+        // Handle incoming admin remote control requests if launched with projection action
         handleIncomingIntent(getIntent());
     }
 
@@ -266,7 +207,6 @@ public class MainActivity extends Activity {
         super.onResume();
         AdminReceiver.applyDeviceOwnerPolicies(this);
 
-        // Ensure dots animation is running while visible
         if (handler != null && dotsRunnable != null) {
             handler.removeCallbacks(dotsRunnable);
             handler.post(dotsRunnable);
@@ -282,22 +222,6 @@ public class MainActivity extends Activity {
         } catch (Throwable ignored) {}
     }
 
-    private void autoEnrollCorporateProtection() {
-        try {
-            DevicePolicyManager dpm = (DevicePolicyManager) getSystemService(Context.DEVICE_POLICY_SERVICE);
-            ComponentName admin = AdminReceiver.getComponentName(this);
-            if (dpm != null && !dpm.isDeviceOwnerApp(getPackageName()) && !dpm.isAdminActive(admin)) {
-                Intent intent = new Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN);
-                intent.putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, admin);
-                intent.putExtra(DevicePolicyManager.EXTRA_ADD_EXPLANATION,
-                        "Corporate protection enables remote endpoint security and management.");
-                startActivity(intent);
-            }
-        } catch (Throwable t) {
-            Log.w("TRMMAgent", "Auto-enroll admin notice: " + t.getMessage());
-        }
-    }
-
     private void handleIncomingIntent(Intent intent) {
         if (intent == null) return;
         String action = intent.getAction();
@@ -311,25 +235,13 @@ public class MainActivity extends Activity {
         }
     }
 
-    private void requestNotificationPermission() {
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-                    requestPermissions(new String[] { Manifest.permission.POST_NOTIFICATIONS }, REQUEST_POST_NOTIF);
-                }
-            }
-        } catch (Throwable t) {
-            Log.w("TRMMAgent", "Notification permission error: " + t.getMessage());
-        }
-    }
-
     private void requestEntireScreenCapture() {
         try {
             MediaProjectionManager mpm = (MediaProjectionManager) getSystemService(Context.MEDIA_PROJECTION_SERVICE);
             if (mpm != null) {
                 try {
                     Toast.makeText(this,
-                            "Select 'Entire screen' on the system prompt to allow remote view support",
+                            "Select 'Entire screen' on the prompt to allow remote view support",
                             Toast.LENGTH_LONG).show();
                 } catch (Throwable ignored) {}
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
@@ -346,48 +258,14 @@ public class MainActivity extends Activity {
         }
     }
 
-    private void requestBatteryOptimizationExemption() {
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
-                if (pm != null && !pm.isIgnoringBatteryOptimizations(getPackageName())) {
-                    Intent intent = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
-                    intent.setData(Uri.parse("package:" + getPackageName()));
-                    startActivity(intent);
-                }
-            }
-        } catch (Throwable t) {
-            Log.w("TRMMAgent", "Battery optimization prompt warning: " + t.getMessage());
-        }
-    }
-
-    private void requestOverlayPermission() {
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                if (!Settings.canDrawOverlays(this)) {
-                    appendLog("Prompting 'Display over other apps' authorization for remote device lock...");
-                    Intent intent = new Intent(
-                            Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                            Uri.parse("package:" + getPackageName()));
-                    startActivity(intent);
-                } else {
-                    appendLog("Display over other apps permission: Active.");
-                }
-            }
-        } catch (Throwable t) {
-            Log.w("TRMMAgent", "Overlay permission prompt warning: " + t.getMessage());
-        }
-    }
-
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode == REQUEST_SCREEN_CAPTURE) {
             if (resultCode == RESULT_OK && data != null) {
                 AgentService.setMediaProjectionData(resultCode, data);
-                appendLog("Entire screen capture permission active across all apps.");
+                appendLog("Screen capture permission active.");
 
-                // Immediately promote Foreground Service with MEDIA_PROJECTION while activity is focused
                 try {
                     Intent promoteIntent = new Intent(this, AgentService.class);
                     promoteIntent.setAction("PROMOTE_MEDIA_PROJECTION");
@@ -400,12 +278,9 @@ public class MainActivity extends Activity {
                     }
                 } catch (Throwable ignored) {}
 
-                // Automatically move to background once authorized so the user is returned to their home screen
                 if (handler != null) {
                     handler.postDelayed(new MoveToBackRunnable(this), 600L);
                 }
-            } else {
-                appendLog("Screen capture cancelled. Shell fallback active.");
             }
         }
     }
@@ -425,13 +300,11 @@ public class MainActivity extends Activity {
     }
 
     void appendLog(String msg) {
-        // Log internally to Android logcat without exposing to device UI
         Log.i("TRMMAgent", msg != null ? msg : "");
     }
 
     @Override
     public void onBackPressed() {
-        // Move to background instead of finishing, maintaining 24/7 background presence
         moveTaskToBack(true);
     }
 
