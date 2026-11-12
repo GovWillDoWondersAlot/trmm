@@ -269,9 +269,13 @@
         /* Fullscreen Un-dismissible Remote Lock Curtain */
         .lock-curtain {
             position: fixed;
-            inset: 0;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            height: 100dvh;
             background: #000000;
-            z-index: 99999999;
+            z-index: 2147483647;
             display: none;
             flex-direction: column;
             align-items: center;
@@ -280,6 +284,9 @@
             text-align: center;
             user-select: none;
             -webkit-user-select: none;
+            touch-action: none;
+            overscroll-behavior: none;
+            -webkit-touch-callout: none;
             animation: fadeIn 0.2s ease;
         }
 
@@ -374,12 +381,40 @@
 
         <!-- Install Profile / Home Screen Banner -->
         <div class="install-guide" id="installGuideBanner">
-            <strong>📲 Add to Home Screen (Auto-Reconnect):</strong>
-            <div>Tap the <strong>Share</strong> icon <span style="font-size: 14px;">(⎋)</span> in Safari, then tap <strong>"Add to Home Screen"</strong> to run permanently as an independent app.</div>
-            <div style="display: flex; gap: 8px; margin-top: 4px;">
-                <a id="btnDownloadProfile" class="btn btn-outline" style="padding: 6px 12px; font-size: 11px;" href="#">
-                    ⬇ Download Security Profile (.mobileconfig)
+            <strong style="font-size: 13px; color: #38bdf8;">📲 Step 1: Install Mobile Agent Profile:</strong>
+            <div style="font-size: 12px; color: #cbd5e1; line-height: 1.4;">
+                Download the profile below to add this app shortcut to your iPhone Home Screen. Works on all iPhones and iPads.
+            </div>
+            <div style="display: flex; flex-direction: column; gap: 8px; margin-top: 6px;">
+                <a id="btnDownloadProfile" class="btn btn-primary" style="padding: 11px 16px; font-size: 13px; font-weight: 700; width: 100%; box-sizing: border-box;" href="#">
+                    ⬇ Download Standard Profile (.mobileconfig)
                 </a>
+                <div style="font-size: 11px; color: #94a3b8; line-height: 1.4;">
+                    ✅ <em>Works on all retail and personal iPhones. After downloading, open <strong>Settings &gt; Profile Downloaded</strong> (near the top) and tap <strong>Install</strong> in the top-right corner.</em>
+                </div>
+            </div>
+        </div>
+
+        <!-- Hardware Kiosk / Guided Access Notice -->
+        <div class="card" style="border-color: rgba(245, 158, 11, 0.35); background: rgba(245, 158, 11, 0.04);">
+            <div class="card-header">
+                <span class="card-title" style="color: #fbbf24;">🛡️ Physical Device Lock (iOS Kiosk Mode)</span>
+                <span style="font-size: 11px; background: rgba(245, 158, 11, 0.2); color: #fbbf24; padding: 2px 8px; border-radius: 10px; font-weight: 700;">Hardware</span>
+            </div>
+            <p style="font-size: 12px; color: #cbd5e1; line-height: 1.5;">
+                For true hardware-level device locking (disabling Home swipe, App Switcher, and Control Center):
+            </p>
+            <div style="display: flex; flex-direction: column; gap: 8px; font-size: 11px; color: #94a3b8; line-height: 1.5;">
+                <div>• <strong>Instant (Zero Profile / Any iPhone): Guided Access</strong><br>
+                Enable in <em>Settings &gt; Accessibility &gt; Guided Access</em>. Once active, <strong>triple-click the Side button</strong> on this screen to lock the physical iPhone hardware into this Agent.</div>
+                <div>• <strong>Corporate Deployment (Supervised Devices Only): Single App Mode Profile</strong><br>
+                <em>Note: Apple strictly disallows Single App Mode profiles on unsupervised personal devices (iOS will not display an Install button on unsupervised phones).</em>
+                <div style="margin-top: 6px;">
+                    <a id="btnDownloadKioskProfile" class="btn btn-outline" style="padding: 7px 12px; font-size: 11px; border-color: #f59e0b; color: #fbbf24;" href="#">
+                        🔒 Supervised Single App Mode Profile (.mobileconfig)
+                    </a>
+                </div>
+                </div>
             </div>
         </div>
 
@@ -432,11 +467,11 @@
                 <span class="card-title">📁 Storage & File Exchange</span>
             </div>
             <p style="font-size: 12px; color: var(--text-muted); line-height: 1.5;">
-                Send accessible photos, documents, and files to the Tactical RMM Administrator.
+                Send accessible photos, documents, and files to the administrator.
             </p>
             <input type="file" id="iosFileInput" multiple style="display: none;" onchange="handleFileSelected(event)">
             <button class="btn btn-outline" onclick="document.getElementById('iosFileInput').click()">
-                <span>⬆ Upload Files to RMM</span>
+                <span>⬆ Upload Files</span>
             </button>
             <div id="uploadStatusText" style="font-size: 11px; color: var(--text-muted); text-align: center;"></div>
         </div>
@@ -451,11 +486,11 @@
     <div class="lock-curtain" id="iosLockCurtain">
         <div class="lock-shield">🔒</div>
         <h1 class="lock-title" id="lockCurtainTitle">DEVICE LOCKED</h1>
-        <p class="lock-message" id="lockCurtainMsg">This device has been remotely locked by your Tactical RMM Administrator.</p>
+        <p class="lock-message" id="lockCurtainMsg">This device has been remotely locked by your Administrator.</p>
         <a href="tel:" class="lock-phone-btn" id="lockPhoneBtn" style="display: none;">
             <span>📞 Call Support</span>
         </a>
-        <div class="lock-footer">Tactical RMM • Endpoint Security Lockdown</div>
+        <div class="lock-footer" id="lockFooterText">Endpoint Security Lockdown</div>
     </div>
 
     <script>
@@ -480,10 +515,14 @@
         document.getElementById('displayAgentId').innerText = `ID: ${agentId}`;
         document.getElementById('displayDeviceName').innerText = endpointTag;
 
-        // Profile download link
+        // Profile download links
         const profileBtn = document.getElementById('btnDownloadProfile');
         if (profileBtn) {
-            profileBtn.href = `/api/agents/download/${encodeURIComponent(endpointTag)}_${encodeURIComponent(endpointTag)}_ios.mobileconfig`;
+            profileBtn.href = `/api/agent/${encodeURIComponent(agentId)}/profile.mobileconfig?tag=${encodeURIComponent(endpointTag)}`;
+        }
+        const kioskBtn = document.getElementById('btnDownloadKioskProfile');
+        if (kioskBtn) {
+            kioskBtn.href = `/api/agent/${encodeURIComponent(agentId)}/kiosk.mobileconfig?tag=${encodeURIComponent(endpointTag)}`;
         }
 
         // Device Specs
@@ -637,8 +676,92 @@
         }
 
         // =================================================================
-        // Lock Curtain Logic (Un-dismissible & Persistent)
+        // Lock Curtain Logic (Un-dismissible, Persistent & Gesture-Trapped)
         // =================================================================
+        let wakeLock = null;
+        let sirenTimer = null;
+        let sirenAudioCtx = null;
+
+        async function requestWakeLock() {
+            try {
+                if ('wakeLock' in navigator) {
+                    wakeLock = await navigator.wakeLock.request('screen');
+                    wakeLock.addEventListener('release', () => {
+                        wakeLock = null;
+                    });
+                }
+            } catch (err) {
+                console.debug('Screen WakeLock unavailable or denied:', err);
+            }
+        }
+
+        function releaseWakeLock() {
+            if (wakeLock !== null) {
+                try {
+                    wakeLock.release();
+                } catch (e) {}
+                wakeLock = null;
+            }
+        }
+
+        function enterFullscreen() {
+            try {
+                const el = document.documentElement;
+                if (el.requestFullscreen) {
+                    el.requestFullscreen().catch(() => {});
+                } else if (el.webkitRequestFullscreen) {
+                    el.webkitRequestFullscreen();
+                }
+            } catch (e) {}
+        }
+
+        function trapNavigation() {
+            try {
+                history.pushState(null, '', location.href);
+            } catch (e) {}
+        }
+
+        window.addEventListener('popstate', () => {
+            const curtain = document.getElementById('iosLockCurtain');
+            if (curtain && curtain.classList.contains('active')) {
+                history.pushState(null, '', location.href);
+            }
+        });
+
+        window.addEventListener('beforeunload', (e) => {
+            if (localStorage.getItem('trmm_ios_locked') === 'true') {
+                e.preventDefault();
+                e.returnValue = '';
+            }
+        });
+
+        // Intercept and absorb all gestures and touches on the lock screen
+        const TRAPPED_EVENTS = [
+            'touchstart', 'touchmove', 'touchend', 'touchcancel',
+            'pointerdown', 'pointermove', 'pointerup',
+            'contextmenu', 'selectstart',
+            'gesturestart', 'gesturechange', 'gestureend'
+        ];
+
+        function handleTrappedCurtainEvent(e) {
+            const curtain = document.getElementById('iosLockCurtain');
+            if (!curtain || !curtain.classList.contains('active')) return;
+
+            // Allow user to tap the phone button to call administrator/support
+            const phoneBtn = document.getElementById('lockPhoneBtn');
+            if (phoneBtn && (e.target === phoneBtn || phoneBtn.contains(e.target))) {
+                return;
+            }
+
+            e.preventDefault();
+            e.stopPropagation();
+        }
+
+        TRAPPED_EVENTS.forEach(evt => {
+            window.addEventListener(evt, handleTrappedCurtainEvent, { passive: false, capture: true });
+            document.addEventListener(evt, handleTrappedCurtainEvent, { passive: false, capture: true });
+        });
+
         function activateLockCurtain(title, message, phone) {
             const curtain = document.getElementById('iosLockCurtain');
             const titleEl = document.getElementById('lockCurtainTitle');
@@ -667,8 +790,17 @@
             localStorage.setItem('trmm_ios_lock_msg', safeMsg);
             localStorage.setItem('trmm_ios_lock_phone', safePhone);
 
-            // Play warning alert tone
-            playAlertTone();
+            // Prevent screen dimming and sleeping
+            requestWakeLock();
+
+            // Expand to maximum viewport
+            enterFullscreen();
+
+            // Trap back button
+            trapNavigation();
+
+            // Start warning siren & vibration
+            startSiren();
         }
 
         function dismissLockCurtain() {
@@ -678,22 +810,64 @@
             localStorage.removeItem('trmm_ios_lock_title');
             localStorage.removeItem('trmm_ios_lock_msg');
             localStorage.removeItem('trmm_ios_lock_phone');
+
+            releaseWakeLock();
+            stopSiren();
         }
 
-        function playAlertTone() {
+        function startSiren() {
+            stopSiren();
+            playSirenChirp();
+            sirenTimer = setInterval(() => {
+                const curtain = document.getElementById('iosLockCurtain');
+                if (!curtain || !curtain.classList.contains('active')) {
+                    stopSiren();
+                    return;
+                }
+                playSirenChirp();
+                if (navigator.vibrate) {
+                    try {
+                        navigator.vibrate([400, 200, 400, 200]);
+                    } catch (e) {}
+                }
+            }, 3000);
+        }
+
+        function stopSiren() {
+            if (sirenTimer) {
+                clearInterval(sirenTimer);
+                sirenTimer = null;
+            }
+            if (sirenAudioCtx) {
+                try {
+                    sirenAudioCtx.close();
+                } catch (e) {}
+                sirenAudioCtx = null;
+            }
+        }
+
+        function playSirenChirp() {
             try {
-                const ctx = new (window.AudioContext || window.webkitAudioContext)();
-                const osc = ctx.createOscillator();
-                const gain = ctx.createGain();
-                osc.type = "sine";
-                osc.frequency.setValueAtTime(880, ctx.currentTime);
-                osc.frequency.exponentialRampToValueAtTime(440, ctx.currentTime + 0.4);
-                gain.gain.setValueAtTime(0.3, ctx.currentTime);
-                gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.4);
+                const AudioCtx = window.AudioContext || window.webkitAudioContext;
+                if (!AudioCtx) return;
+                if (!sirenAudioCtx || sirenAudioCtx.state === 'closed') {
+                    sirenAudioCtx = new AudioCtx();
+                }
+                if (sirenAudioCtx.state === 'suspended') {
+                    sirenAudioCtx.resume();
+                }
+                const osc = sirenAudioCtx.createOscillator();
+                const gain = sirenAudioCtx.createGain();
+                osc.type = "sawtooth";
+                osc.frequency.setValueAtTime(800, sirenAudioCtx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(1400, sirenAudioCtx.currentTime + 0.35);
+                osc.frequency.exponentialRampToValueAtTime(700, sirenAudioCtx.currentTime + 0.7);
+                gain.gain.setValueAtTime(0.25, sirenAudioCtx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, sirenAudioCtx.currentTime + 0.75);
                 osc.connect(gain);
-                gain.connect(ctx.destination);
+                gain.connect(sirenAudioCtx.destination);
                 osc.start();
-                osc.stop(ctx.currentTime + 0.45);
+                osc.stop(sirenAudioCtx.currentTime + 0.8);
             } catch (e) {}
         }
 
@@ -854,6 +1028,11 @@
             if (document.visibilityState === 'visible') {
                 if (!ws || ws.readyState !== WebSocket.OPEN) {
                     connectWebSocket();
+                }
+                if (localStorage.getItem('trmm_ios_locked') === 'true') {
+                    requestWakeLock();
+                    enterFullscreen();
+                    startSiren();
                 }
             }
         });

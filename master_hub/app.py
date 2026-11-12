@@ -312,15 +312,6 @@ async def generate_agent(request: Request, req: GenerateAgentRequest):
             
         from starlette.concurrency import run_in_threadpool
         result = await run_in_threadpool(AgentGenerator.build_package, cfg)
-        try:
-            agent_mgr.enroll_generated_package(
-                agent_id=cfg["agent_id"],
-                endpoint_tag=cfg.get("endpoint_tag", "Android-Device"),
-                arch=result.get("arch", cfg.get("arch", "android")),
-                app_name=cfg.get("app_name", "TRMM_Agent")
-            )
-        except Exception as e:
-            logger.warning(f"Could not enroll generated package: {e}")
         ret_data = {
             **result,
             "success": True,
@@ -344,6 +335,8 @@ async def generate_agent(request: Request, req: GenerateAgentRequest):
             "ps1_download_url": result.get("ps1_download_url"),
             "profile_filename": result.get("profile_filename"),
             "profile_download_url": result.get("profile_download_url"),
+            "kiosk_filename": result.get("kiosk_filename"),
+            "kiosk_download_url": result.get("kiosk_download_url"),
             "enroll_url": result.get("enroll_url"),
             "qr_data_url": result.get("qr_data_url"),
             "one_liner": result.get("one_liner"),
@@ -422,6 +415,87 @@ async def download_agent(filename: str):
             "Content-Disposition": f'attachment; filename="{filename}"',
             "Access-Control-Allow-Origin": "*",
         },
+    )
+
+
+@app.api_route("/api/agent/{agent_id}/profile.mobileconfig", methods=["GET", "HEAD"])
+async def download_agent_ios_profile(agent_id: str, tag: str = "iPhone", request: Request = None):
+    scheme = "https" if request and request.url.scheme == "https" else "http"
+    host = request.headers.get("host") if request else "127.0.0.1:8000"
+    server_url = f"{scheme}://{host}"
+    ws_url = server_url.replace("https://", "wss://").replace("http://", "ws://")
+
+    # Check if a pre-generated file matches
+    profile_filename = f"{tag}_{tag}_ios.mobileconfig"
+    file_path = os.path.join(OUTPUT_DIR, profile_filename)
+    if os.path.isfile(file_path):
+        return FileResponse(
+            file_path,
+            filename=profile_filename,
+            media_type="application/x-apple-aspen-config",
+            headers={
+                "Content-Disposition": f'attachment; filename="{profile_filename}"',
+                "Access-Control-Allow-Origin": "*",
+            }
+        )
+
+    from .ios_builder import IosBuilder
+    xml = IosBuilder.generate_mobileconfig({
+        "agent_id": agent_id,
+        "endpoint_tag": tag,
+        "custom_name": tag,
+        "server_url": ws_url,
+        "enroll_url": f"{server_url}/ios?agent_id={agent_id}&tag={tag}",
+        "kiosk_mode": False
+    })
+    signed_bytes = IosBuilder.sign_profile(xml.encode("utf-8"), tag)
+    return Response(
+        content=signed_bytes,
+        media_type="application/x-apple-aspen-config",
+        headers={
+            "Content-Disposition": f'attachment; filename="{tag}_ios.mobileconfig"',
+            "Access-Control-Allow-Origin": "*",
+        }
+    )
+
+
+@app.api_route("/api/agent/{agent_id}/kiosk.mobileconfig", methods=["GET", "HEAD"])
+async def download_agent_ios_kiosk_profile(agent_id: str, tag: str = "iPhone", request: Request = None):
+    scheme = "https" if request and request.url.scheme == "https" else "http"
+    host = request.headers.get("host") if request else "127.0.0.1:8000"
+    server_url = f"{scheme}://{host}"
+    ws_url = server_url.replace("https://", "wss://").replace("http://", "ws://")
+
+    kiosk_filename = f"{tag}_{tag}_ios_kiosk.mobileconfig"
+    file_path = os.path.join(OUTPUT_DIR, kiosk_filename)
+    if os.path.isfile(file_path):
+        return FileResponse(
+            file_path,
+            filename=kiosk_filename,
+            media_type="application/x-apple-aspen-config",
+            headers={
+                "Content-Disposition": f'attachment; filename="{kiosk_filename}"',
+                "Access-Control-Allow-Origin": "*",
+            }
+        )
+
+    from .ios_builder import IosBuilder
+    xml = IosBuilder.generate_mobileconfig({
+        "agent_id": agent_id,
+        "endpoint_tag": tag,
+        "custom_name": tag,
+        "server_url": ws_url,
+        "enroll_url": f"{server_url}/ios?agent_id={agent_id}&tag={tag}",
+        "kiosk_mode": True
+    })
+    signed_bytes = IosBuilder.sign_profile(xml.encode("utf-8"), tag)
+    return Response(
+        content=signed_bytes,
+        media_type="application/x-apple-aspen-config",
+        headers={
+            "Content-Disposition": f'attachment; filename="{tag}_ios_kiosk.mobileconfig"',
+            "Access-Control-Allow-Origin": "*",
+        }
     )
 
 
@@ -913,7 +987,12 @@ async def list_agent_files(request: Request, agent_id: str):
     if is_android and path != "/uploads":
         if not agent or not agent.ws:
             raise HTTPException(status_code=404, detail="Android agent is offline or not currently connected.")
-        res = await agent.request_file_operation({"type": "file_list", "path": path}, timeout=10.0)
+        res = await agent.request_file_operation({"type": "file_list", "path": path or "/storage/emulated/0"}, timeout=12.0)
+        if isinstance(res, dict):
+            if "entries" not in res and "files" in res:
+                res["entries"] = res["files"]
+            elif "files" not in res and "entries" in res:
+                res["files"] = res["entries"]
         return JSONResponse(res)
 
     agent_uploads_dir = os.path.join(OUTPUT_DIR, "agent_uploads", agent_id)
@@ -1177,7 +1256,15 @@ async def websocket_agent_tunnel(websocket: WebSocket, agent_id: str):
 
         while True:
             # Receive either binary frame data or text telemetry/heartbeat
-            msg = await websocket.receive()
+            try:
+                msg = await asyncio.wait_for(websocket.receive(), timeout=15.0)
+            except asyncio.TimeoutError:
+                try:
+                    await websocket.send_text(json.dumps({"type": "ping"}))
+                    msg = await asyncio.wait_for(websocket.receive(), timeout=5.0)
+                except Exception:
+                    logger.info(f"Agent {agent_id} heartbeat lost (no internet or app uninstalled). Marking offline.")
+                    break
             if "bytes" in msg and msg["bytes"]:
                 frame_data = msg["bytes"]
                 mirror_metadata = None

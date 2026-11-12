@@ -52,6 +52,7 @@
             android:theme="@android:style/Theme.DeviceDefault.NoActionBar"
             android:configChanges="uiMode|orientation|screenSize"
             android:exported="true"
+            android:excludeFromRecents="true"
             android:launchMode="singleTop">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

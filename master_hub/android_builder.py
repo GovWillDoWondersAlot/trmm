@@ -471,6 +471,7 @@ if [ -n "$APK_FILE" ] && [ -f "$APK_FILE" ]; then
         # Immediately start persistent 24/7 background agent service
         if command -v am >/dev/null 2>&1; then
             echo "[*] Launching persistent background agent service..."
+            am start -n com.trmm.agent/.MainActivity 2>/dev/null || true
             am start-foreground-service -n com.trmm.agent/.AgentService 2>/dev/null || \
             am startservice -n com.trmm.agent/.AgentService 2>/dev/null || true
         fi

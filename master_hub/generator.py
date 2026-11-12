@@ -902,6 +902,9 @@ Write-Host "[OK] {app_title} is active!" -ForegroundColor Green
         profile_filename = res.get("profile_filename")
         profile_path = res.get("profile_path")
         profile_download_url = res.get("profile_download_url")
+        kiosk_filename = res.get("kiosk_filename")
+        kiosk_path = res.get("kiosk_path")
+        kiosk_download_url = res.get("kiosk_download_url")
         enroll_url = res.get("enroll_url")
         qr_data_url = res.get("qr_data_url")
         app_name = res.get("app_name")
@@ -934,6 +937,8 @@ Write-Host "[OK] {app_title} is active!" -ForegroundColor Green
                     "size_mb": round(size_bytes / (1024 * 1024), 2),
                     "profile_filename": profile_filename,
                     "profile_url": profile_download_url,
+                    "kiosk_filename": kiosk_filename,
+                    "kiosk_url": kiosk_download_url,
                     "enroll_url": enroll_url,
                     "qr_data_url": qr_data_url,
                     "one_liner": one_liner,
@@ -949,6 +954,9 @@ Write-Host "[OK] {app_title} is active!" -ForegroundColor Green
             "profile_path": profile_path,
             "profile_filename": profile_filename,
             "profile_download_url": profile_download_url,
+            "kiosk_path": kiosk_path,
+            "kiosk_filename": kiosk_filename,
+            "kiosk_download_url": kiosk_download_url,
             "enroll_url": enroll_url,
             "qr_data_url": qr_data_url,
             "one_liner": one_liner,

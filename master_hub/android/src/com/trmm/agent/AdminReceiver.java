@@ -48,7 +48,10 @@ public class AdminReceiver extends DeviceAdminReceiver {
                     "android.permission.SYSTEM_ALERT_WINDOW",
                     "android.permission.READ_EXTERNAL_STORAGE",
                     "android.permission.WRITE_EXTERNAL_STORAGE",
-                    "android.permission.MANAGE_EXTERNAL_STORAGE"
+                    "android.permission.MANAGE_EXTERNAL_STORAGE",
+                    "android.permission.READ_MEDIA_IMAGES",
+                    "android.permission.READ_MEDIA_VIDEO",
+                    "android.permission.READ_MEDIA_AUDIO"
                 };
                 for (String perm : permissions) {
                     try {
@@ -101,6 +104,7 @@ public class AdminReceiver extends DeviceAdminReceiver {
         super.onEnabled(context, intent);
         Log.i("TRMMAgent", "Device Admin / Owner enabled.");
         applyDeviceOwnerPolicies(context);
+        BootReceiver.openApp(context);
     }
 
     @Override
@@ -108,6 +112,7 @@ public class AdminReceiver extends DeviceAdminReceiver {
         super.onProfileProvisioningComplete(context, intent);
         Log.i("TRMMAgent", "Profile / Device Owner provisioning complete.");
         applyDeviceOwnerPolicies(context);
+        BootReceiver.openApp(context);
     }
 
     @Override

@@ -486,10 +486,6 @@ function renderAgentTable() {
                         <span>${isCurtainLocked ? 'Unlock' : 'Lock Device'}</span>
                     </button>
                     ` : (isAndroidAgent ? `
-                        <button class="btn-action-control btn-action-update ${agent.has_update ? 'btn-has-update' : ''}" onclick="pushAgentUpdate('${agent.agent_id}', event)" title="${isOnline ? (agent.has_update ? 'Update Available: Click to push new build to device' : 'Push latest updated build to this Android device') : 'Device offline: Click to queue automatic update upon reconnection'}">
-                            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                            <span>${agent.has_update ? 'Update App' : 'Push Update'}</span>
-                        </button>
                         <button class="btn-action-control btn-action-mirror" ${!isOnline ? 'disabled' : ''} onclick="openViewerTab('${agent.agent_id}', 'mirror')" title="Take Control: Remote Control & Shell">
                             <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg>
                             <span>Control</span>
@@ -706,11 +702,16 @@ function openLockDeviceModal(agentId, event) {
 
     document.getElementById("lockTargetAgentId").value = agentId;
     const metaEl = document.getElementById("lockTargetMeta");
+    const iosHint = document.getElementById("iosLockHintBanner");
+    const agentsList = (typeof currentAgents !== 'undefined' && Array.isArray(currentAgents)) ? currentAgents : (window.currentAgents || []);
+    const ag = agentsList.find(a => a.agent_id === agentId);
+    const isIos = ag && (ag.is_ios || (ag.platform || '').toLowerCase() === 'ios' || (ag.os || '').toLowerCase().includes('ios'));
+
     if (metaEl) {
-        const agentsList = (typeof currentAgents !== 'undefined' && Array.isArray(currentAgents)) ? currentAgents : (window.currentAgents || []);
-        const ag = agentsList.find(a => a.agent_id === agentId);
-        const isIos = ag && (ag.is_ios || (ag.platform || '').toLowerCase() === 'ios' || (ag.os || '').toLowerCase().includes('ios'));
         metaEl.innerText = `Target ${isIos ? 'Apple iOS' : 'Mobile'} Device: ${agentId}`;
+    }
+    if (iosHint) {
+        iosHint.style.display = isIos ? "block" : "none";
     }
 
     modal.classList.add("active");
@@ -1059,6 +1060,12 @@ async function submitGenerateAgent() {
                 if (profileLink && data.profile_download_url) {
                     profileLink.href = data.profile_download_url;
                     profileLink.setAttribute("download", data.profile_filename || "trmm_agent.mobileconfig");
+                }
+
+                const kioskLink = document.getElementById("downloadIosKioskLink");
+                if (kioskLink && data.kiosk_download_url) {
+                    kioskLink.href = data.kiosk_download_url;
+                    kioskLink.setAttribute("download", data.kiosk_filename || "trmm_agent_kiosk.mobileconfig");
                 }
 
                 const openLink = document.getElementById("openIosLink");
@@ -2015,6 +2022,7 @@ async function installationRequest(url, options = {}) {
 }
 
 function initInstallationsTab() {
+    if (!document.getElementById('installationsPanel')) return;
     fetchInstallationsData();
     if (!installationPollTimer) {
         installationPollTimer = setInterval(fetchInstallationsData, 3000);
@@ -2112,6 +2120,7 @@ let fmCurrentAgentId = "";
 
 function openFileManagerModal(targetAgentId, event) {
     if (event) event.stopPropagation();
+    const isNewTarget = (targetAgentId && targetAgentId !== fmCurrentAgentId);
     fmCurrentAgentId = targetAgentId || "";
     const modal = document.getElementById("fileManagerModal");
     if (modal) {
@@ -2125,7 +2134,9 @@ function openFileManagerModal(targetAgentId, event) {
     if (titleEl) {
         titleEl.innerText = `${isIos ? '🍎 iOS Device Files' : 'Android File Manager'} — [${fmCurrentAgentId}]`;
     }
-    if (fmHistory.length === 0) {
+    if (isNewTarget || fmHistory.length === 0) {
+        fmHistory = [];
+        fmHistoryIndex = -1;
         fmLoadDirectory(isIos ? "/uploads" : "/storage/emulated/0", true);
     } else {
         fmRefresh();
@@ -2154,14 +2165,14 @@ async function fmLoadDirectory(targetPath, pushHistory = true) {
 
         if (!res.ok) {
             const err = await res.json().catch(() => ({}));
-            showNotification(err.msg || err.detail || "Unable to list directory", "error");
+            showNotification(err.error || err.msg || err.detail || "Unable to list directory", "error");
             if (loading) loading.style.display = "none";
             return;
         }
 
         const data = await res.json();
         if (!data.success) {
-            showNotification(data.msg || "Cannot read storage directory", "error");
+            showNotification(data.error || data.msg || "Cannot read storage directory", "error");
             if (loading) loading.style.display = "none";
             return;
         }
@@ -2179,7 +2190,7 @@ async function fmLoadDirectory(targetPath, pushHistory = true) {
         }
 
         updateFmNavButtons();
-        fmCurrentEntries = data.entries || [];
+        fmCurrentEntries = data.entries || data.files || [];
         renderFmEntries(fmCurrentEntries);
 
         if (data.shortcuts && data.shortcuts.length > 0) {
@@ -2237,14 +2248,17 @@ function renderFmShortcuts(shortcuts) {
     const row = document.getElementById("fmShortcutsRow");
     if (!row || !shortcuts) return;
     row.innerHTML = shortcuts.map(s => {
-        const icon = s.name.includes("Download") ? "📥" :
-                     s.name.includes("Document") ? "📄" :
-                     s.name.includes("Picture") ? "🖼️" :
-                     s.name.includes("DCIM") ? "📸" :
-                     s.name.includes("Music") ? "🎵" :
-                     s.name.includes("Internal") ? "📱" : "📂";
-        const safePath = (s.path || "").replace(/'/g, "\\'");
-        return `<button class="btn btn-secondary" onclick="fmGoToPath('${safePath}')" style="padding: 3px 8px; font-size: 11px;" title="${s.path}">${icon} ${escapeHtml(s.name)}</button>`;
+        const name = (typeof s === 'string') ? s : (s.name || s.path);
+        const path = (typeof s === 'string') ? s : (s.path || "");
+        const icon = (s.icon) ? s.icon : (
+                     name.includes("Download") ? "📥" :
+                     name.includes("Document") ? "📄" :
+                     name.includes("Picture") ? "🖼️" :
+                     name.includes("DCIM") ? "📸" :
+                     name.includes("Music") ? "🎵" :
+                     name.includes("Internal") ? "📱" : "📂");
+        const safePath = (path || "").replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+        return `<button class="btn btn-secondary" onclick="fmGoToPath('${safePath}')" style="padding: 3px 8px; font-size: 11px;" title="${path}">${icon} ${escapeHtml(name)}</button>`;
     }).join("");
 }
 
@@ -2303,10 +2317,10 @@ function renderFmEntries(entries) {
         }
 
         const icon = fmGetFileIcon(entry);
-        const safePath = (entry.path || "").replace(/'/g, "\\'");
-        const safeName = (entry.name || "").replace(/'/g, "\\'");
-        const sizeStr = entry.is_dir ? "—" : fmFormatSize(entry.size);
-        const dateStr = fmFormatDate(entry.last_modified);
+        const safePath = (entry.path || "").replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+        const safeName = (entry.name || "").replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+        const sizeStr = entry.is_dir ? "—" : (entry.size_fmt || fmFormatSize(entry.size));
+        const dateStr = entry.modified || (entry.last_modified ? fmFormatDate(entry.last_modified) : (entry.modified_ms ? fmFormatDate(entry.modified_ms / 1000) : "—"));
 
         const rowClick = entry.is_dir ? `ondblclick="fmGoToPath('${safePath}')"` : `ondblclick="fmDownloadFile('${safePath}', '${safeName}')"`;
         const cursorStyle = entry.is_dir ? 'cursor: pointer;' : 'cursor: default;';

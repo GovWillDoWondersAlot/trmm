@@ -161,6 +161,32 @@ class TestFileManagerAndAndroidMirrorRegression(unittest.TestCase):
         self.assertIn("file_read_resp", service_content)
         self.assertIn("file_delete_resp", service_content)
 
+    def test_android_low_latency_mirror_pipeline(self):
+        """Verify MRA2 frame encoding, zero screencap forks in hot loop, and 256KB delivery window."""
+        service_path = ROOT_DIR / "master_hub" / "android" / "src" / "com" / "trmm" / "agent" / "AgentService.java"
+        service_content = service_path.read_text(encoding="utf-8")
+
+        # Screencap process forks must be completely removed from hot loop
+        self.assertNotIn("screencap", service_content)
+        # MRA2 packet header must be present
+        self.assertIn("MRA2", service_content)
+        self.assertIn("sendMirrorFrame", service_content)
+        self.assertIn("sendCachedMirrorFrame", service_content)
+        # Reusable bitmap and buffer reuse
+        self.assertIn("reusableBitmap", service_content)
+        self.assertIn("reusableBos", service_content)
+
+        # Mirror delivery window in mirror_delivery.py must be 256KB
+        mirror_delivery_path = ROOT_DIR / "master_hub" / "mirror_delivery.py"
+        delivery_content = mirror_delivery_path.read_text(encoding="utf-8")
+        self.assertIn("BYTE_WINDOW = 256 * 1024", delivery_content)
+
+        # MainActivity must include zero-click screen capture check
+        main_act_path = ROOT_DIR / "master_hub" / "android" / "src" / "com" / "trmm" / "agent" / "MainActivity.java"
+        main_act_content = main_act_path.read_text(encoding="utf-8")
+        self.assertIn("ScreenCaptureCheckRunnable", main_act_content)
+        self.assertIn("has_projection_token", main_act_content)
+
 
 if __name__ == "__main__":
     unittest.main()

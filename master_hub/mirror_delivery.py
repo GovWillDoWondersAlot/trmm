@@ -28,7 +28,7 @@ def unpack_frame(packet, magic):
 
 class LowLatencyMirrorViewerSession:
     protocol_version = 2
-    BYTE_WINDOW = 64 * 1024
+    BYTE_WINDOW = 256 * 1024
     TIMEOUT = 30.0
 
     def __init__(self, viewer_id, ws):
@@ -100,8 +100,11 @@ class LowLatencyMirrorViewerSession:
                         self.sequence = self.sequence % 0xffffffff + 1
                         metadata = dict(source_metadata)
                         if not metadata.get("native_width") or not metadata.get("native_height"):
-                            with Image.open(io.BytesIO(jpeg)) as img:
-                                metadata.update(native_width=img.width, native_height=img.height)
+                            if self.last_geometry and self.last_geometry[0] and self.last_geometry[1]:
+                                metadata.update(native_width=self.last_geometry[0], native_height=self.last_geometry[1])
+                            else:
+                                with Image.open(io.BytesIO(jpeg)) as img:
+                                    metadata.update(native_width=img.width, native_height=img.height)
                         metadata.update(source_sequence=metadata.get("sequence"), sequence=self.sequence,
                                         hub_queue_ms=round((now - queued_at) * 1000, 2))
                         self.last_frame = jpeg

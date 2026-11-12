@@ -54,6 +54,12 @@ class TestIosAgentSuite(unittest.TestCase):
         self.assertIn("<true/>", xml_content)
         self.assertIn(self.test_tag, xml_content)
 
+        # Confirm strictly valid XML Plist without unescaped tokens
+        import plistlib
+        parsed = plistlib.loads(xml_content.encode("utf-8"))
+        self.assertEqual(parsed["PayloadType"], "Configuration")
+        self.assertEqual(parsed["PayloadContent"][0]["PayloadType"], "com.apple.webClip.managed")
+
     def test_02_ios_builder_qr_code(self):
         """Test QR code generation creates a valid base64 PNG data URL."""
         qr_url = IosBuilder.generate_qr_code_base64("https://rmm.example.com/ios?agent_id=xyz")
@@ -109,8 +115,17 @@ class TestIosAgentSuite(unittest.TestCase):
         profile_fn = builder_res["profile_filename"]
         res_dl = self.client.get(f"/api/agents/download/{profile_fn}")
         self.assertEqual(res_dl.status_code, 200)
-        self.assertIn(res_dl.headers.get("content-type"), ("application/x-apple-aspen-config", "application/x-apple-as-config"))
+        self.assertIn("application/x-apple-aspen-config", res_dl.headers.get("content-type"))
         self.assertIn("com.apple.webClip.managed", res_dl.text)
+
+        # Test dedicated profile and kiosk routes
+        res_prof = self.client.get(f"/api/agent/mime-check-agent/profile.mobileconfig?tag=MimePhone")
+        self.assertEqual(res_prof.status_code, 200)
+        self.assertIn("application/x-apple-aspen-config", res_prof.headers.get("content-type"))
+
+        res_kiosk = self.client.get(f"/api/agent/mime-check-agent/kiosk.mobileconfig?tag=MimePhone")
+        self.assertEqual(res_kiosk.status_code, 200)
+        self.assertIn("application/x-apple-aspen-config", res_kiosk.headers.get("content-type"))
 
     def test_05_ios_file_upload_and_management(self):
         """Test iOS device file upload, listing, download, and delete via RMM File Manager API."""

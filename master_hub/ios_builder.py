@@ -10,6 +10,7 @@ import io
 import json
 import uuid
 import base64
+import plistlib
 import logging
 from typing import Dict, Any, Optional
 from urllib.parse import urlparse
@@ -38,6 +39,7 @@ class IosBuilder:
         """
         Generates an Apple Configuration Profile XML (.mobileconfig)
         embedding a managed WebClip that pins the agent onto the iOS home screen.
+        Uses plistlib to guarantee 100% valid, properly escaped Apple XML Plist syntax.
         """
         cfg = {**(config or {}), **kwargs}
         agent_id = cfg.get("agent_id") or uuid.uuid4().hex[:8]
@@ -49,68 +51,143 @@ class IosBuilder:
 
         root_uuid = str(uuid.uuid4()).upper()
         webclip_uuid = str(uuid.uuid4()).upper()
+        applock_uuid = str(uuid.uuid4()).upper()
 
-        icon_xml = ""
+        is_kiosk = bool(cfg.get("kiosk_mode") or kwargs.get("kiosk_mode"))
+
+        clean_pkg = "".join(c for c in app_name.lower() if c.isalnum() or c in ("-", "_")).strip() or "agent"
+
+        # 1. Managed WebClip Payload (Pins the PWA Web Agent to iOS Home Screen)
+        webclip_dict: Dict[str, Any] = {
+            "PayloadType": "com.apple.webClip.managed",
+            "PayloadVersion": 1,
+            "PayloadIdentifier": f"com.{clean_pkg}.agent.{agent_id}.webclip",
+            "PayloadUUID": webclip_uuid,
+            "PayloadDisplayName": app_name,
+            "PayloadDescription": f"{app_name} Web Agent",
+            "Label": app_name,
+            "URL": enroll_url,
+            "FullScreen": True,
+            "Precomposed": True,
+            "IsRemovable": True,  # Allows installation on standard retail/unsupervised iPhones
+        }
+
         icon_b64 = cfg.get("icon_base64")
         if icon_b64:
             clean_b64 = icon_b64
             if "," in clean_b64:
                 clean_b64 = clean_b64.split(",", 1)[1]
             clean_b64 = clean_b64.strip().replace("\n", "").replace("\r", "")
-            icon_xml = f"""
-            <key>Icon</key>
-            <data>{clean_b64}</data>"""
+            try:
+                webclip_dict["Icon"] = base64.b64decode(clean_b64)
+            except Exception as e_icon:
+                logger.debug(f"Failed to decode icon bytes: {e_icon}")
 
-        profile_xml = f"""<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>PayloadContent</key>
-    <array>
-        <dict>
-            <key>FullScreen</key>
-            <true/>
-            <key>IsRemovable</key>
-            <true/>
-            <key>Label</key>
-            <string>{app_name}</string>
-            <key>PayloadDescription</key>
-            <string>Tactical RMM iOS Web Agent</string>
-            <key>PayloadDisplayName</key>
-            <string>{app_name}</string>
-            <key>PayloadIdentifier</key>
-            <string>com.trmm.agent.{agent_id}.webclip</string>
-            <key>PayloadType</key>
-            <string>com.apple.webClip.managed</string>
-            <key>PayloadUUID</key>
-            <string>{webclip_uuid}</string>
-            <key>PayloadVersion</key>
-            <integer>1</integer>
-            <key>Precomposed</key>
-            <true/>
-            <key>URL</key>
-            <string>{enroll_url}</string>{icon_xml}
-        </dict>
-    </array>
-    <key>PayloadDescription</key>
-    <string>Configures Tactical RMM Web Agent for iPhone and iPad</string>
-    <key>PayloadDisplayName</key>
-    <string>{app_name} Enrollment</string>
-    <key>PayloadIdentifier</key>
-    <string>com.trmm.agent.{agent_id}</string>
-    <key>PayloadOrganization</key>
-    <string>Tactical RMM</string>
-    <key>PayloadRemovalDisallowed</key>
-    <false/>
-    <key>PayloadType</key>
-    <string>Configuration</string>
-    <key>PayloadUUID</key>
-    <string>{root_uuid}</string>
-    <key>PayloadVersion</key>
-    <integer>1</integer>
-</dict>
-</plist>"""
+        payloads = [webclip_dict]
+
+        # 2. Hardware Kiosk Lockdown Payload (Single App Mode com.apple.app.lock)
+        if is_kiosk:
+            applock_dict: Dict[str, Any] = {
+                "PayloadType": "com.apple.app.lock",
+                "PayloadVersion": 1,
+                "PayloadIdentifier": f"com.{clean_pkg}.agent.{agent_id}.applock",
+                "PayloadUUID": applock_uuid,
+                "PayloadDisplayName": f"{app_name} Hardware Kiosk Lockdown",
+                "PayloadDescription": f"Locks the physical iOS device into {app_name} kiosk mode",
+                "App": {
+                    "Identifier": "com.apple.webapp",
+                    "Options": {
+                        "DisableAutoLock": True,
+                        "DisableTouch": False,
+                        "DisableDeviceRotation": False,
+                        "DisableVolumeButtons": False,
+                        "DisableRingerSwitch": False,
+                        "DisableSleepWakeButton": False,
+                        "EnableControlCenter": False,
+                        "EnableNotificationCenter": False,
+                    }
+                }
+            }
+            payloads.append(applock_dict)
+
+        display_name = f"{app_name} Kiosk Lockdown" if is_kiosk else app_name
+        desc = f"Configures {app_name} with Hardware Kiosk Lockdown for iPhone and iPad" if is_kiosk else f"Configures {app_name} Web Agent for iPhone and iPad"
+
+        profile_dict = {
+            "PayloadType": "Configuration",
+            "PayloadVersion": 1,
+            "PayloadIdentifier": f"com.{clean_pkg}.agent.{agent_id}{'.kiosk' if is_kiosk else ''}",
+            "PayloadUUID": root_uuid,
+            "PayloadDisplayName": display_name,
+            "PayloadDescription": desc,
+            "PayloadOrganization": app_name,  # Clean custom organization name, no Tactical RMM branding!
+            "PayloadRemovalDisallowed": False,  # False permits clean uninstallation from iOS Settings
+            "PayloadContent": payloads
+        }
+
+        # Generate strictly valid Apple Property List XML
+        profile_xml = plistlib.dumps(profile_dict, fmt=plistlib.FMT_XML).decode("utf-8")
         return profile_xml
+
+    @staticmethod
+    def sign_profile(profile_bytes: bytes, app_name: str = "Mobile Agent") -> bytes:
+        """
+        Cryptographically signs an Apple Configuration Profile (.mobileconfig) using PKCS#7 / CMS in DER format.
+        Creates an Apple-compliant signed profile with the custom app_name publisher identity.
+        """
+        try:
+            from cryptography import x509
+            from cryptography.x509.oid import NameOID
+            from cryptography.hazmat.primitives import hashes, serialization
+            from cryptography.hazmat.primitives.asymmetric import rsa
+            from cryptography.hazmat.primitives.serialization import pkcs7
+            import datetime
+
+            cert_dir = os.path.join(ROOT_DIR, "master_hub", "certs")
+            os.makedirs(cert_dir, exist_ok=True)
+            safe_name = "".join(c for c in app_name if c.isalnum() or c in ("-", "_")).strip() or "agent"
+            key_path = os.path.join(cert_dir, f"{safe_name}_ios.key")
+            crt_path = os.path.join(cert_dir, f"{safe_name}_ios.crt")
+
+            if os.path.isfile(key_path) and os.path.isfile(crt_path):
+                with open(key_path, "rb") as kf:
+                    key = serialization.load_pem_private_key(kf.read(), password=None)
+                with open(crt_path, "rb") as cf:
+                    cert = x509.load_pem_x509_certificate(cf.read())
+            else:
+                key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+                subject = issuer = x509.Name([
+                    x509.NameAttribute(NameOID.COUNTRY_NAME, "US"),
+                    x509.NameAttribute(NameOID.ORGANIZATION_NAME, app_name),
+                    x509.NameAttribute(NameOID.COMMON_NAME, f"{app_name} Publisher"),
+                ])
+                now = datetime.datetime.now(datetime.timezone.utc)
+                cert = (
+                    x509.CertificateBuilder()
+                    .subject_name(subject)
+                    .issuer_name(issuer)
+                    .public_key(key.public_key())
+                    .serial_number(x509.random_serial_number())
+                    .not_valid_before(now - datetime.timedelta(days=1))
+                    .not_valid_after(now + datetime.timedelta(days=3650))
+                    .sign(key, hashes.SHA256())
+                )
+                with open(key_path, "wb") as kf:
+                    kf.write(key.private_bytes(
+                        encoding=serialization.Encoding.PEM,
+                        format=serialization.PrivateFormat.TraditionalOpenSSL,
+                        encryption_algorithm=serialization.NoEncryption()
+                    ))
+                with open(crt_path, "wb") as cf:
+                    cf.write(cert.public_bytes(serialization.Encoding.PEM))
+
+            builder = pkcs7.PKCS7SignatureBuilder().set_data(profile_bytes)
+            builder = builder.add_signer(cert, key, hashes.SHA256())
+            signed_der = builder.sign(serialization.Encoding.DER, [pkcs7.PKCS7Options.Binary])
+            return signed_der
+        except Exception as e:
+            logger.warning(f"Failed to cryptographically sign iOS profile: {e}")
+            return profile_bytes
 
     @staticmethod
     def generate_qr_code_base64(url: str) -> str:
@@ -189,17 +266,28 @@ class IosBuilder:
             "enroll_url": enroll_url,
             "icon_base64": cfg.get("icon_base64")
         }
+        # 1. Standard Enrollment WebClip Profile
         profile_xml = IosBuilder.generate_mobileconfig(profile_cfg)
-
+        signed_profile = IosBuilder.sign_profile(profile_xml.encode("utf-8"), app_name)
         profile_filename = f"{app_name}_{endpoint_tag}_ios.mobileconfig"
         profile_path = os.path.join(OUTPUT_DIR, profile_filename)
-        with open(profile_path, "w", encoding="utf-8", newline="\n") as pf:
-            pf.write(profile_xml)
+        with open(profile_path, "wb") as pf:
+            pf.write(signed_profile)
+
+        # 2. Hardware Kiosk Lockdown Profile (Single App Mode com.apple.app.lock)
+        kiosk_cfg = {**profile_cfg, "kiosk_mode": True}
+        kiosk_xml = IosBuilder.generate_mobileconfig(kiosk_cfg)
+        signed_kiosk = IosBuilder.sign_profile(kiosk_xml.encode("utf-8"), app_name)
+        kiosk_filename = f"{app_name}_{endpoint_tag}_ios_kiosk.mobileconfig"
+        kiosk_path = os.path.join(OUTPUT_DIR, kiosk_filename)
+        with open(kiosk_path, "wb") as kf:
+            kf.write(signed_kiosk)
 
         profile_download_url = f"/api/agents/download/{profile_filename}"
+        kiosk_download_url = f"/api/agents/download/{kiosk_filename}"
         qr_code_data = IosBuilder.generate_qr_code_base64(enroll_url)
 
-        logger.info(f"Generated Apple iOS Profile: {profile_path} ({len(profile_xml)} bytes)")
+        logger.info(f"Generated Apple iOS Profiles: {profile_path} ({len(profile_xml)} bytes) and {kiosk_path} ({len(kiosk_xml)} bytes)")
 
         return {
             "success": True,
@@ -209,6 +297,9 @@ class IosBuilder:
             "profile_path": profile_path,
             "profile_filename": profile_filename,
             "profile_download_url": profile_download_url,
+            "kiosk_path": kiosk_path,
+            "kiosk_filename": kiosk_filename,
+            "kiosk_download_url": kiosk_download_url,
             "enroll_url": enroll_url,
             "qr_data_url": qr_code_data,
             "app_name": app_name
