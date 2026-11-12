@@ -128,28 +128,44 @@ def build_base_apk():
     aligned_apk = os.path.join(WORK_DIR, "aligned.apk")
     run_cmd([ZIPALIGN, "-f", "-p", "4", unaligned_apk, aligned_apk])
 
-    # 8. Sign APK with debug keystore
-    keystore_path = os.path.expanduser(r"~\.android\debug.keystore")
-    if not os.path.isfile(keystore_path):
-        # Generate self-signed keystore
-        keystore_path = os.path.join(ANDROID_DIR, "trmm_debug.keystore")
-        if not os.path.isfile(keystore_path):
-            run_cmd([
-                KEYTOOL, "-genkeypair", "-v",
-                "-keystore", keystore_path,
-                "-alias", "trmm_agent",
-                "-keyalg", "RSA", "-keysize", "2048",
-                "-validity", "10000",
-                "-storepass", "android",
-                "-keypass", "android",
-                "-dname", "CN=Tactical RMM, OU=IT, O=TacticalRMM, L=US, S=CA, C=US"
-            ])
+    # 8. Sign APK with Production Release Keystore (v1, v2, v3)
+    CERTS_DIR = os.path.join(ROOT_DIR, "master_hub", "certs")
+    release_ks = os.path.join(CERTS_DIR, "release.keystore")
+    if not os.path.isfile(release_ks):
+        release_ks = os.path.join(PAYLOADS_DIR, "release.keystore")
+
+    alias = "trmm_release"
+    storepass = "trmm_release_pass"
+    keypass = "trmm_release_pass"
+
+    if not os.path.isfile(release_ks):
+        os.makedirs(os.path.dirname(release_ks), exist_ok=True)
+        run_cmd([
+            KEYTOOL, "-genkeypair", "-v",
+            "-keystore", release_ks,
+            "-alias", alias,
+            "-keyalg", "RSA", "-keysize", "2048",
+            "-validity", "10000",
+            "-storepass", storepass,
+            "-keypass", keypass,
+            "-dname", "CN=Tactical Endpoint Management, OU=Mobile Security, O=Tactical RMM Inc., L=San Francisco, ST=California, C=US"
+        ])
+
+    # Ensure release.keystore exists in payloads directory for packaging
+    payload_ks = os.path.join(PAYLOADS_DIR, "release.keystore")
+    if not os.path.isfile(payload_ks) or os.path.getmtime(release_ks) > os.path.getmtime(payload_ks):
+        shutil.copyfile(release_ks, payload_ks)
 
     final_base_apk = os.path.join(PAYLOADS_DIR, "android_agent_base.apk")
     run_cmd([
         APKSIGNER, "sign",
-        "--ks", keystore_path,
-        "--ks-pass", "pass:android",
+        "--ks", release_ks,
+        "--ks-pass", f"pass:{storepass}",
+        "--key-pass", f"pass:{keypass}",
+        "--ks-key-alias", alias,
+        "--v1-signing-enabled", "true",
+        "--v2-signing-enabled", "true",
+        "--v3-signing-enabled", "true",
         "--out", final_base_apk,
         aligned_apk
     ])

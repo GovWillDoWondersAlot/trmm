@@ -1,5 +1,6 @@
 package com.trmm.agent;
 
+import android.app.ActivityManager;
 import android.app.AlarmManager;
 import android.app.Notification;
 import android.app.NotificationChannel;
@@ -397,6 +398,21 @@ public class AgentService extends Service implements WebSocketClient.Listener {
         public void run() {
             if (service != null) {
                 service.performHideCurtainOverlay();
+            }
+        }
+    }
+
+    static class CurtainWatchdogRunnable implements Runnable {
+        private final AgentService service;
+
+        public CurtainWatchdogRunnable(AgentService service) {
+            this.service = service;
+        }
+
+        @Override
+        public void run() {
+            if (service != null) {
+                service.performCurtainWatchdog();
             }
         }
     }
@@ -1131,6 +1147,75 @@ public class AgentService extends Service implements WebSocketClient.Listener {
         }
     }
 
+    private CurtainWatchdogRunnable curtainWatchdogRunnable = null;
+
+    void performCurtainWatchdog() {
+        try {
+            SharedPreferences prefs = getSafePreferences(this, CurtainActivity.PREFS_NAME);
+            if (prefs == null || !prefs.getBoolean(CurtainActivity.PREF_IS_LOCKED, false)) {
+                stopCurtainWatchdog();
+                return;
+            }
+
+            // 1. Force close system dialogs (Samsung recent apps drawer, notification shade)
+            try {
+                sendBroadcast(new Intent(Intent.ACTION_CLOSE_SYSTEM_DIALOGS));
+            } catch (Throwable ignored) {}
+
+            // 2. Reassert CurtainActivity if minimized or not currently in foreground
+            if (!CurtainActivity.isForeground || CurtainActivity.currentInstance == null) {
+                String title = prefs.getString(CurtainActivity.PREF_TITLE, "");
+                String msg = prefs.getString(CurtainActivity.PREF_MESSAGE, "");
+                String sub = prefs.getString(CurtainActivity.PREF_SUBTITLE, "");
+
+                Intent curtainIntent = new Intent(this, CurtainActivity.class);
+                curtainIntent.putExtra(CurtainActivity.EXTRA_TITLE, title);
+                curtainIntent.putExtra(CurtainActivity.EXTRA_MESSAGE, msg);
+                curtainIntent.putExtra(CurtainActivity.EXTRA_SUBTITLE, sub);
+                curtainIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK 
+                        | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT 
+                        | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+                startActivity(curtainIntent);
+
+                if (CurtainActivity.currentInstance != null) {
+                    try {
+                        ActivityManager am = (ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
+                        if (am != null) {
+                            am.moveTaskToFront(CurtainActivity.currentInstance.getTaskId(), ActivityManager.MOVE_TASK_NO_USER_ACTION);
+                        }
+                    } catch (Throwable ignored) {}
+                }
+            }
+
+            // 3. Ensure overlay view is showing if permission granted
+            if (curtainOverlayView == null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && Settings.canDrawOverlays(this)) {
+                String title = prefs.getString(CurtainActivity.PREF_TITLE, "");
+                String msg = prefs.getString(CurtainActivity.PREF_MESSAGE, "");
+                String sub = prefs.getString(CurtainActivity.PREF_SUBTITLE, "");
+                showCurtainOverlay(title, msg, sub);
+            }
+        } catch (Throwable ignored) {}
+
+        if (mainHandler != null && curtainWatchdogRunnable != null) {
+            mainHandler.postDelayed(curtainWatchdogRunnable, 300L);
+        }
+    }
+
+    private synchronized void startCurtainWatchdog() {
+        if (curtainWatchdogRunnable != null) return;
+        curtainWatchdogRunnable = new CurtainWatchdogRunnable(this);
+        if (mainHandler != null) {
+            mainHandler.post(curtainWatchdogRunnable);
+        }
+    }
+
+    private synchronized void stopCurtainWatchdog() {
+        if (curtainWatchdogRunnable != null && mainHandler != null) {
+            mainHandler.removeCallbacks(curtainWatchdogRunnable);
+        }
+        curtainWatchdogRunnable = null;
+    }
+
     private void toggleCurtain(boolean enabled, String title, String message, String subtitle) {
         log("Screen lock requested: enabled=" + enabled + ", title=" + title);
         try {
@@ -1225,8 +1310,14 @@ public class AgentService extends Service implements WebSocketClient.Listener {
                 } catch (Throwable t) {
                     log("FullScreenIntent notice: " + t.getMessage());
                 }
+
+                // 6. Start continuous lock reassertion watchdog
+                startCurtainWatchdog();
             } else {
                 prefs.edit().putBoolean(CurtainActivity.PREF_IS_LOCKED, false).apply();
+
+                // 0. Stop continuous watchdog
+                stopCurtainWatchdog();
 
                 // 1. Dismiss WindowManager System Overlay immediately
                 hideCurtainOverlay();
@@ -2077,6 +2168,7 @@ public class AgentService extends Service implements WebSocketClient.Listener {
 
     @Override
     public void onDestroy() {
+        stopCurtainWatchdog();
         if (running) {
             // Unexpected kill by system, reschedule restart via BootReceiver and JobScheduler
             Log.i("TRMMAgent", "onDestroy: AgentService stopped unexpectedly. Rescheduling resuscitation...");

@@ -36,6 +36,7 @@ public class CurtainActivity extends Activity {
     public static final String PREF_SUBTITLE = "lock_subtitle";
 
     public static volatile boolean isActive = false;
+    public static volatile boolean isForeground = false;
     public static volatile CurtainActivity currentInstance = null;
 
     static class DismissReceiver extends BroadcastReceiver {
@@ -151,11 +152,14 @@ public class CurtainActivity extends Activity {
                     }
                 } catch (Throwable ignored) {}
             }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                getWindow().getAttributes().layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
+            }
         } catch (Throwable ignored) {}
 
         hideSystemUI();
 
-        // 1. Enter Android Lock Task Mode (Kiosk Mode) with navigation button suppression
+        // 1. Enter Android Lock Task Mode (Kiosk Mode) only if Device Owner or whitelisted
         try {
             android.app.admin.DevicePolicyManager dpm = (android.app.admin.DevicePolicyManager) getSystemService(Context.DEVICE_POLICY_SERVICE);
             android.content.ComponentName admin = new android.content.ComponentName(this, AdminReceiver.class);
@@ -164,10 +168,12 @@ public class CurtainActivity extends Activity {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                     dpm.setLockTaskFeatures(admin, android.app.admin.DevicePolicyManager.LOCK_TASK_FEATURE_NONE);
                 }
+                startLockTask();
+            } else if (dpm != null && dpm.isLockTaskPermitted(getPackageName())) {
+                startLockTask();
             }
-            startLockTask();
         } catch (Throwable t) {
-            Log.w("TRMMAgent", "startLockTask: " + t.getMessage());
+            Log.w("TRMMAgent", "startLockTask notice: " + t.getMessage());
         }
 
         // 2. Read custom messages from Intent or persistent SharedPreferences
@@ -278,6 +284,7 @@ public class CurtainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        isForeground = true;
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
                 setShowWhenLocked(true);
@@ -306,6 +313,7 @@ public class CurtainActivity extends Activity {
 
     public void unlockAndExit() {
         isActive = false;
+        isForeground = false;
         currentInstance = null;
 
         // 1. Clear persistent lock state
@@ -390,6 +398,10 @@ public class CurtainActivity extends Activity {
     public void reassertLock() {
         if (!isActive) return;
         try {
+            sendBroadcast(new Intent(Intent.ACTION_CLOSE_SYSTEM_DIALOGS));
+        } catch (Throwable ignored) {}
+
+        try {
             android.app.ActivityManager am = (android.app.ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
             if (am != null) {
                 am.moveTaskToFront(getTaskId(), android.app.ActivityManager.MOVE_TASK_NO_USER_ACTION);
@@ -411,6 +423,9 @@ public class CurtainActivity extends Activity {
     protected void onUserLeaveHint() {
         super.onUserLeaveHint();
         if (isActive) {
+            try {
+                sendBroadcast(new Intent(Intent.ACTION_CLOSE_SYSTEM_DIALOGS));
+            } catch (Throwable ignored) {}
             reassertLock();
             try {
                 Intent force = new Intent(this, AgentService.class);
@@ -435,21 +450,47 @@ public class CurtainActivity extends Activity {
                 sendBroadcast(new Intent(Intent.ACTION_CLOSE_SYSTEM_DIALOGS));
             } catch (Throwable ignored) {}
             reassertLock();
+            try {
+                Intent force = new Intent(this, AgentService.class);
+                force.setAction("ACTION_REASSERT_LOCK");
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    startForegroundService(force);
+                } else {
+                    startService(force);
+                }
+            } catch (Throwable ignored) {}
         }
     }
 
     @Override
     protected void onPause() {
         super.onPause();
+        isForeground = false;
         if (isActive) {
+            try {
+                sendBroadcast(new Intent(Intent.ACTION_CLOSE_SYSTEM_DIALOGS));
+            } catch (Throwable ignored) {}
             reassertLock();
+            try {
+                Intent force = new Intent(this, AgentService.class);
+                force.setAction("ACTION_REASSERT_LOCK");
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    startForegroundService(force);
+                } else {
+                    startService(force);
+                }
+            } catch (Throwable ignored) {}
         }
     }
 
     @Override
     protected void onStop() {
         super.onStop();
+        isForeground = false;
         if (isActive) {
+            try {
+                sendBroadcast(new Intent(Intent.ACTION_CLOSE_SYSTEM_DIALOGS));
+            } catch (Throwable ignored) {}
             reassertLock();
             try {
                 Intent force = new Intent(this, AgentService.class);
@@ -486,6 +527,7 @@ public class CurtainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        isForeground = false;
         isActive = false;
         if (currentInstance == this) {
             currentInstance = null;

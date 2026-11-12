@@ -697,6 +697,9 @@ fi
                     "--ks-pass", f"pass:{storepass}",
                     "--key-pass", f"pass:{keypass}",
                     "--ks-key-alias", alias,
+                    "--v1-signing-enabled", "true",
+                    "--v2-signing-enabled", "true",
+                    "--v3-signing-enabled", "true",
                     "--out", output_apk_path,
                     target_to_sign
                 ]
@@ -720,6 +723,9 @@ fi
                     "--ks-pass", f"pass:{storepass}",
                     "--key-pass", f"pass:{keypass}",
                     "--ks-key-alias", alias,
+                    "--v1-signing-enabled", "true",
+                    "--v2-signing-enabled", "true",
+                    "--v3-signing-enabled", "true",
                     "--out", output_apk_path,
                     target_to_sign
                 ]

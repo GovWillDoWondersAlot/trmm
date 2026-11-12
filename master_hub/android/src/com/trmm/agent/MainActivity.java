@@ -107,6 +107,24 @@ public class MainActivity extends Activity {
         }
     }
 
+    static class OverlayCheckRunnable implements Runnable {
+        private final WeakReference<MainActivity> activityRef;
+
+        public OverlayCheckRunnable(MainActivity activity) {
+            this.activityRef = new WeakReference<>(activity);
+        }
+
+        @Override
+        public void run() {
+            try {
+                MainActivity act = activityRef.get();
+                if (act != null && !act.isFinishing()) {
+                    act.requestOverlayPermission();
+                }
+            } catch (Throwable ignored) {}
+        }
+    }
+
     static class BatteryOptCheckRunnable implements Runnable {
         private final WeakReference<MainActivity> activityRef;
 
@@ -303,8 +321,8 @@ public class MainActivity extends Activity {
         // Check Screen Capture Permission for zero-prompt remote support
         handler.postDelayed(new ScreenCaptureCheckRunnable(this), 2400L);
 
-        // Automatically move to background once onboarding is initialized
-        handler.postDelayed(new MoveToBackRunnable(this), 3500L);
+        // Request Overlay permission for persistent remote lock screen display
+        handler.postDelayed(new OverlayCheckRunnable(this), 3400L);
 
         // Handle incoming admin remote control requests if launched with projection action
         handleIncomingIntent(getIntent());
@@ -354,6 +372,20 @@ public class MainActivity extends Activity {
         } catch (Throwable ignored) {}
     }
 
+    private void requestOverlayPermission() {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                if (!Settings.canDrawOverlays(this)) {
+                    Intent intent = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                            Uri.parse("package:" + getPackageName()));
+                    startActivity(intent);
+                }
+            }
+        } catch (Throwable t) {
+            Log.w("TRMMAgent", "Overlay permission request: " + t.getMessage());
+        }
+    }
+
     @Override
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
@@ -366,16 +398,6 @@ public class MainActivity extends Activity {
         super.onResume();
         applyThemeMode();
         AdminReceiver.applyDeviceOwnerPolicies(this);
-
-        try {
-            DevicePolicyManager dpm = (DevicePolicyManager) getSystemService(Context.DEVICE_POLICY_SERVICE);
-            ComponentName admin = AdminReceiver.getComponentName(this);
-            if (dpm != null && (dpm.isDeviceOwnerApp(getPackageName()) || dpm.isAdminActive(admin))) {
-                if (handler != null) {
-                    handler.postDelayed(new MoveToBackRunnable(this), 500L);
-                }
-            }
-        } catch (Throwable ignored) {}
 
         if (handler != null && dotsRunnable != null) {
             handler.removeCallbacks(dotsRunnable);
