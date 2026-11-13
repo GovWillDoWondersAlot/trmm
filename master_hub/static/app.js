@@ -345,7 +345,15 @@ function renderAgentTable() {
             Boolean(matchingPkg.enroll_url)
         );
 
-        const isIosAgent = Boolean(
+        const isExplicitAndroid = Boolean(
+            agent.is_android === true || 
+            archLower.includes('android') || 
+            osLower.includes('android') || 
+            platformLower.includes('android') ||
+            (pkgIsAndroid && !pkgIsIos)
+        );
+
+        const isIosAgent = !isExplicitAndroid && Boolean(
             agent.is_ios === true ||
             archLower.includes('ios') ||
             archLower.includes('iphone') ||
@@ -362,16 +370,11 @@ function renderAgentTable() {
 
         // Strict Android vs Windows determination:
         // Android if flagged as is_android, or arch/os/platform includes android, or matches an Android package
-        const isAndroidAgent = !isIosAgent && Boolean(
-            agent.is_android === true || 
-            archLower.includes('android') || 
-            osLower.includes('android') || 
-            platformLower.includes('android') ||
-            deviceTypeLower.includes('phone') ||
-            deviceTypeLower.includes('android') ||
-            pkgIsAndroid ||
+        const isAndroidAgent = isExplicitAndroid || (!isIosAgent && Boolean(
+            deviceTypeLower.includes('phone') || 
+            deviceTypeLower.includes('android') || 
             (!osLower.includes('win') && (osLower.includes('droid') || archLower.includes('arm')))
-        );
+        ));
 
         // Backstage is strictly reserved for Windows endpoints ONLY
         const isWindowsAgent = !isAndroidAgent && !isIosAgent && (
@@ -2129,7 +2132,13 @@ function openFileManagerModal(targetAgentId, event) {
     }
     const agentsList = (typeof currentAgents !== 'undefined' && Array.isArray(currentAgents)) ? currentAgents : (window.currentAgents || []);
     const ag = agentsList.find(a => a.agent_id === fmCurrentAgentId);
-    const isIos = ag && (ag.is_ios || (ag.platform || '').toLowerCase() === 'ios' || (ag.os || '').toLowerCase().includes('ios'));
+    const isAndroid = ag && (
+        ag.is_android === true ||
+        (ag.arch || '').toLowerCase().includes('android') ||
+        (ag.os || '').toLowerCase().includes('android') ||
+        (ag.platform || '').toLowerCase().includes('android')
+    );
+    const isIos = !isAndroid && ag && (ag.is_ios || (ag.platform || '').toLowerCase() === 'ios' || (ag.os || '').toLowerCase().includes('ios'));
     const titleEl = document.getElementById("fmModalTitle");
     if (titleEl) {
         titleEl.innerText = `${isIos ? '🍎 iOS Device Files' : 'Android File Manager'} — [${fmCurrentAgentId}]`;

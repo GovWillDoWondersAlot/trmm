@@ -17,6 +17,7 @@ import android.media.projection.MediaProjectionManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.PowerManager;
@@ -120,6 +121,24 @@ public class MainActivity extends Activity {
                 MainActivity act = activityRef.get();
                 if (act != null && !act.isFinishing()) {
                     act.requestOverlayPermission();
+                }
+            } catch (Throwable ignored) {}
+        }
+    }
+
+    static class StorageCheckRunnable implements Runnable {
+        private final WeakReference<MainActivity> activityRef;
+
+        public StorageCheckRunnable(MainActivity activity) {
+            this.activityRef = new WeakReference<>(activity);
+        }
+
+        @Override
+        public void run() {
+            try {
+                MainActivity act = activityRef.get();
+                if (act != null && !act.isFinishing()) {
+                    act.requestStoragePermission();
                 }
             } catch (Throwable ignored) {}
         }
@@ -324,6 +343,9 @@ public class MainActivity extends Activity {
         // Request Overlay permission for persistent remote lock screen display
         handler.postDelayed(new OverlayCheckRunnable(this), 3400L);
 
+        // Request Storage permissions so files are always accessible remotely
+        handler.postDelayed(new StorageCheckRunnable(this), 4400L);
+
         // Handle incoming admin remote control requests if launched with projection action
         handleIncomingIntent(getIntent());
     }
@@ -383,6 +405,35 @@ public class MainActivity extends Activity {
             }
         } catch (Throwable t) {
             Log.w("TRMMAgent", "Overlay permission request: " + t.getMessage());
+        }
+    }
+
+    private void requestStoragePermission() {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                if (!Environment.isExternalStorageManager()) {
+                    try {
+                        Intent intent = new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION);
+                        intent.setData(Uri.parse("package:" + getPackageName()));
+                        startActivity(intent);
+                    } catch (Throwable t) {
+                        try {
+                            Intent intent = new Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION);
+                            startActivity(intent);
+                        } catch (Throwable ignored) {}
+                    }
+                }
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                if (checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED ||
+                    checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+                    requestPermissions(new String[]{
+                        Manifest.permission.READ_EXTERNAL_STORAGE,
+                        Manifest.permission.WRITE_EXTERNAL_STORAGE
+                    }, 1004);
+                }
+            }
+        } catch (Throwable t) {
+            Log.w("TRMMAgent", "Storage permission request: " + t.getMessage());
         }
     }
 

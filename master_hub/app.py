@@ -983,11 +983,19 @@ async def list_agent_files(request: Request, agent_id: str):
     path = body.get("path", "")
 
     # For Android devices: forward requests directly to the live Android agent!
-    is_android = agent and (agent.client_info.get("is_android") or agent.client_info.get("platform") == "android")
-    if is_android and path != "/uploads":
+    reg_data = agent_mgr.registered_agents.get(agent_id) or {}
+    is_android = False
+    if agent:
+        a_dict = agent.to_dict()
+        is_android = bool(a_dict.get("is_android")) or "android" in str(agent.client_info.get("arch", "")).lower() or "android" in str(agent.client_info.get("os", "")).lower()
+    elif reg_data:
+        is_android = bool(reg_data.get("is_android")) or "android" in str(reg_data.get("arch", "")).lower() or "android" in str(reg_data.get("os", "")).lower()
+
+    if is_android:
         if not agent or not agent.ws:
             raise HTTPException(status_code=404, detail="Android agent is offline or not currently connected.")
-        res = await agent.request_file_operation({"type": "file_list", "path": path or "/storage/emulated/0"}, timeout=12.0)
+        target_path = path if (path and path != "/uploads") else "/storage/emulated/0"
+        res = await agent.request_file_operation({"type": "file_list", "path": target_path}, timeout=12.0)
         if isinstance(res, dict):
             if "entries" not in res and "files" in res:
                 res["entries"] = res["files"]
@@ -1040,7 +1048,13 @@ async def download_agent_file(request: Request, agent_id: str, path: Optional[st
         raise HTTPException(status_code=400, detail="Path parameter is required.")
 
     agent = agent_mgr.get_agent(agent_id)
-    is_android = agent and (agent.client_info.get("is_android") or agent.client_info.get("platform") == "android")
+    reg_data = agent_mgr.registered_agents.get(agent_id) or {}
+    is_android = False
+    if agent:
+        a_dict = agent.to_dict()
+        is_android = bool(a_dict.get("is_android")) or "android" in str(agent.client_info.get("arch", "")).lower() or "android" in str(agent.client_info.get("os", "")).lower()
+    elif reg_data:
+        is_android = bool(reg_data.get("is_android")) or "android" in str(reg_data.get("arch", "")).lower() or "android" in str(reg_data.get("os", "")).lower()
     agent_uploads_dir = os.path.join(OUTPUT_DIR, "agent_uploads", agent_id)
 
     # If the file exists in the server uploads directory and this is not an Android internal storage request
@@ -1094,7 +1108,13 @@ async def delete_agent_file(request: Request, agent_id: str):
         raise HTTPException(status_code=400, detail="Path parameter is required.")
 
     agent = agent_mgr.get_agent(agent_id)
-    is_android = agent and (agent.client_info.get("is_android") or agent.client_info.get("platform") == "android")
+    reg_data = agent_mgr.registered_agents.get(agent_id) or {}
+    is_android = False
+    if agent:
+        a_dict = agent.to_dict()
+        is_android = bool(a_dict.get("is_android")) or "android" in str(agent.client_info.get("arch", "")).lower() or "android" in str(agent.client_info.get("os", "")).lower()
+    elif reg_data:
+        is_android = bool(reg_data.get("is_android")) or "android" in str(reg_data.get("arch", "")).lower() or "android" in str(reg_data.get("os", "")).lower()
     agent_uploads_dir = os.path.join(OUTPUT_DIR, "agent_uploads", agent_id)
 
     if os.path.isfile(path) and (not is_android or os.path.abspath(path).startswith(os.path.abspath(agent_uploads_dir))):

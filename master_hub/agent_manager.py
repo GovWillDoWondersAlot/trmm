@@ -199,8 +199,9 @@ class ConnectedAgent:
         if current_tag:
             info["endpoint_tag"] = current_tag
         # Preserve Android flags & metadata across heartbeats
-        if self.client_info.get("is_android") or "android" in str(self.client_info.get("arch", "")).lower() or "android" in str(self.client_info.get("os", "")).lower():
+        if self.client_info.get("is_android") or "android" in str(self.client_info.get("arch", "")).lower() or "android" in str(self.client_info.get("os", "")).lower() or "android" in str(info.get("arch", "")).lower() or "android" in str(info.get("os", "")).lower():
             info["is_android"] = True
+            info["is_ios"] = False
             info["arch"] = "android"
             info["os"] = "Android device"
             info["platform"] = "android"
@@ -218,7 +219,14 @@ class ConnectedAgent:
         dev_type = str(self.client_info.get("device_type", "")).lower()
         dev_name = str(self.client_info.get("device_name", "")).lower()
 
-        is_ios = (
+        is_android = (
+            self.client_info.get("is_android") is True or
+            "android" in arch_str or
+            "android" in os_str or
+            "android" in platform_str
+        )
+
+        is_ios = not is_android and (
             self.client_info.get("is_ios") is True or
             arch_str == "ios" or
             "ios" in os_str or
@@ -227,14 +235,6 @@ class ConnectedAgent:
             "ipad" in dev_type or
             "iphone" in dev_name or
             "ipad" in dev_name
-        )
-
-        is_android = not is_ios and (
-            self.client_info.get("is_android") is True or
-            "android" in arch_str or
-            "android" in os_str or
-            "android" in platform_str or
-            "phone" in dev_type
         )
 
         if not is_android and not is_ios:
